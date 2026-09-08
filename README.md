@@ -21,13 +21,18 @@ Phase 4; the QA that referees it ships first.
                       the one-command strip-QA report (PNG + world-file
                       rasters, no GDAL)
     pyargus/align     Phase 4, the custom strip-adjustment core (plan only)
-    pyargus/classify  Phases 3/5 (plan only)
-    pyargus/surfaces  Phases 3/6 (plan only)
+    pyargus/classify  in-core SMRF ground classification (no PDAL: it has
+                      no Windows wheel; same algorithm, ~150 lines of
+                      numpy/scipy)
+    pyargus/surfaces  DTM gridding + ESRI ASCII export; TIN/contours later
 
-The report:
+The commands:
 
     pyargus qa-report cloud.las --out qa/ \
       --control marks.csv --control-order pnez --sbet trajectory.out
+    pyargus classify-ground cloud.las --out classified.las --cell 3 \
+      --window 60 --threshold 1.5
+    pyargus dtm classified.las --out dtm.asc --cell 3
 
 ## Running
 

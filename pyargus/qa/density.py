@@ -2,14 +2,9 @@
 
 import numpy as np
 
+from pyargus.core.gridding import grid_edges  # shared; re-exported here
 
-def grid_edges(x, y, cell):
-    """Cell edges covering the data, aligned to multiples of ``cell``."""
-    x0 = np.floor(x.min() / cell) * cell
-    y0 = np.floor(y.min() / cell) * cell
-    nx = int(np.ceil((x.max() - x0) / cell)) or 1
-    ny = int(np.ceil((y.max() - y0) / cell)) or 1
-    return x0 + np.arange(nx + 1) * cell, y0 + np.arange(ny + 1) * cell
+__all__ = ["grid_edges", "density_grid"]
 
 
 def density_grid(x, y, cell=1.0):

@@ -1,8 +1,9 @@
 # HANDOFF
 
-Updated 2026-09-08: Phase 2 delivered — `pyargus qa-report` produces
-the strip-QA report in one command and reproduces every Summerville
-reference number (Phase 0 also complete the same day).
+Updated 2026-09-08: Phase 3 delivered — in-core SMRF ground
+classification (`pyargus classify-ground`) and DTM export
+(`pyargus dtm`), accepted against Summerville's delivered
+classification. Phases 0 and 2 landed the same day.
 
 ## Where this stands
 
@@ -99,16 +100,47 @@ decisions that should survive:
 The acceptance command and its expected numbers are at the top of
 `reference/RESULTS.md`. Rerun after any QA change.
 
+## Phase 3: ground classification + DTM, delivered
+
+**PDAL did not enter.** python-pdal has no Windows wheel (pip build
+demands the C++ SDK and a compiler; measured, not assumed), and conda
+would fork the environment story for one filter. Instead SMRF (Pingel
+et al. 2013 -- the same algorithm as PDAL's filters.smrf) lives in the
+math core as ~150 lines of numpy/scipy: `classify.ground.smrf`, 10 s
+on Summerville's 12.78M last returns. `surfaces.dtm` grids ground to
+a DTM and writes ESRI ASCII (.asc -- plain text, GIS-ready, still no
+GDAL). CLI: `classify-ground` (writes a NEW file, never in place,
+last returns as candidates) and `dtm`.
+
+Accepted against Summerville's delivered classification
+(`python -m reference.summerville_ground`, numbers in
+reference/RESULTS.md): recall 0.9992 of delivered ground, extra points
+hug the surface (96.2% within 1 ft of the delivered-ground DTM), DTMs
+agree to +0.111 ft median / 0.126 nmad. Point precision against the
+delivery is 0.22 and that is a labeling convention, not an error --
+the delivery keeps a thin ground class; judge by surface metrics.
+
+Findings that cost time, in classify/ground.py's docstring and
+RESULTS.md: **cell-level low-outlier cutting destroys under-canopy
+ground** (the min-surface is salt-and-pepper in forest; 144k
+Summerville cells flagged, DEM in the canopy, false ground 39 ft up).
+Three designs were measured before the cause was understood. low_cut
+exists for open-terrain clouds with clustered low blunders and
+defaults off.
+
 ## Next step, with reasoning
 
-**Phase 3: ground classification + DTM.** PDAL enters the dependency
-tree here (on Windows decide between conda-forge and a pinned wheel at
-that moment). Tune SMRF and CSF against Summerville's existing class 2
-as the comparison target -- 1.01M delivered ground points are a free
-answer key: classify the same cloud from class 0, difference against
-the delivered classification, and the confusion matrix is the
-acceptance test. The QA report then grows a classification-agreement
-section the same way it grew the control table.
+**Phase 4: strip alignment, the custom core.** The reason the suite
+exists, and everything it needs is now in place: the georef forward
+model, SBET interpolation, ground surfaces per strip, and the QA that
+referees it. Summerville is already aligned (dZ medians <= 0.03 ft),
+so build the proof harness first: inject known boresight/per-strip
+errors through `core.georef` into Summerville-derived (or synthetic)
+strips, then require the solver to recover the injected truth AND
+collapse the strip_dz maps back. Plan of record in
+`pyargus/align/__init__.py`. Alternatively Phase 5/6 (above-ground
+classes, contours) are shallower next steps if a delivery needs them
+first.
 
 ## Findings so far
 

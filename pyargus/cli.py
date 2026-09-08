@@ -1,8 +1,10 @@
-"""Command line: the three commands that are real today.
+"""Command line: the commands that are real today.
 
     pyargus sbet-info trajectory.sbet
     pyargus density cloud.las --cell 2.0
     pyargus qa-report cloud.las --out qa/ --control pts.csv --control-order pnez
+    pyargus classify-ground cloud.las --out classified.las --cell 3
+    pyargus dtm classified.las --out dtm.asc --cell 3
 
 More subcommands arrive as their phases land; nothing appears here
 before it works.
@@ -98,6 +100,75 @@ def _cmd_qa_report(args):
     return 0
 
 
+def _cmd_classify_ground(args):
+    from pathlib import Path
+
+    import laspy
+
+    from pyargus.classify import ground
+
+    src, dst = Path(args.path), Path(args.out)
+    if src.resolve() == dst.resolve():
+        raise SystemExit("refusing to overwrite the input cloud; --out must "
+                         "be a new file")
+    if dst.exists() and not args.force:
+        raise SystemExit(f"{dst} exists; pass --force to replace it")
+
+    with laspy.open(str(src)) as reader:
+        las = reader.read()
+    x = np.asarray(las.x)
+    y = np.asarray(las.y)
+    z = np.asarray(las.z)
+
+    # Only returns that can see the ground are candidates: last returns
+    # when the file carries return numbers, everything otherwise.
+    try:
+        eligible = (np.asarray(las.return_number)
+                    == np.asarray(las.number_of_returns))
+    except AttributeError:
+        eligible = np.ones(x.size, dtype=bool)
+
+    result = ground.smrf(
+        x[eligible], y[eligible], z[eligible], cell=args.cell,
+        slope=args.slope, window=args.window, threshold=args.threshold,
+        scalar=args.scalar, low_cut=args.low_cut)
+
+    classification = np.ones(x.size, dtype=np.uint8)  # 1: processed, unclassified
+    idx = np.flatnonzero(eligible)
+    classification[idx[result.ground]] = 2
+    las.classification = classification
+    las.write(str(dst))
+
+    n_ground = int(result.ground.sum())
+    print(f"points:  {x.size:,} ({int(eligible.sum()):,} last-return candidates)")
+    print(f"ground:  {n_ground:,} ({100.0 * n_ground / x.size:.1f}% of cloud)")
+    print(f"cells:   {int(result.object_cells.sum()):,} object, "
+          f"{int(result.low_cells.sum()):,} low-outlier")
+    print(f"wrote:   {dst}")
+    return 0
+
+
+def _cmd_dtm(args):
+    from pyargus.formats import las
+    from pyargus.surfaces import dtm
+
+    points = las.read_points(args.path, fields=("x", "y", "z", "classification"))
+    m = points["classification"] == args.ground_class
+    if not m.any():
+        raise SystemExit(f"no class-{args.ground_class} points in {args.path}; "
+                         f"classify first or pass --ground-class")
+    grid, x_edges, y_edges = dtm.dtm_grid(
+        points["x"][m], points["y"][m], points["z"][m], args.cell,
+        max_fill=args.max_fill)
+    dtm.write_esri_ascii(args.out, grid, x_edges, y_edges)
+    finite = grid[np.isfinite(grid)]
+    print(f"ground:  {int(m.sum()):,} points -> {grid.shape[0]}x{grid.shape[1]} "
+          f"cells at {args.cell:g} ({finite.size:,} with data)")
+    print(f"z:       {finite.min():.2f} .. {finite.max():.2f}")
+    print(f"wrote:   {args.out}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="pyargus", description=pyargus.__doc__)
     parser.add_argument("--version", action="version", version=pyargus.__version__)
@@ -130,6 +201,35 @@ def main(argv=None):
                       help="control gather radius")
     p_qa.add_argument("--units", default="ft")
     p_qa.set_defaults(func=_cmd_qa_report)
+
+    p_cls = sub.add_parser("classify-ground",
+                           help="SMRF ground classification to a NEW file")
+    p_cls.add_argument("path")
+    p_cls.add_argument("--out", required=True,
+                       help="output LAS/LAZ (never the input)")
+    p_cls.add_argument("--force", action="store_true",
+                       help="replace --out if it exists")
+    p_cls.add_argument("--cell", type=float, default=1.0)
+    p_cls.add_argument("--slope", type=float, default=0.15)
+    p_cls.add_argument("--window", type=float, default=18.0,
+                       help="largest opening radius, map units")
+    p_cls.add_argument("--threshold", type=float, default=0.5,
+                       help="point-to-DEM elevation threshold, map units")
+    p_cls.add_argument("--scalar", type=float, default=1.25,
+                       help="threshold growth per unit of DEM slope")
+    p_cls.add_argument("--low-cut", type=float, default=None,
+                       help="discard low-outlier cells deeper than this below "
+                            "the opened inverted surface (map units)")
+    p_cls.set_defaults(func=_cmd_classify_ground)
+
+    p_dtm = sub.add_parser("dtm", help="mean-ground DTM as ESRI ASCII")
+    p_dtm.add_argument("path")
+    p_dtm.add_argument("--out", required=True, help="output .asc")
+    p_dtm.add_argument("--cell", type=float, default=1.0)
+    p_dtm.add_argument("--ground-class", type=int, default=2)
+    p_dtm.add_argument("--max-fill", type=int, default=10,
+                       help="max gap fill distance, cells (0 disables)")
+    p_dtm.set_defaults(func=_cmd_dtm)
 
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):

@@ -74,3 +74,38 @@ It disagrees with the local measure by design: interpolation admits
 marks without local ground returns and spans kerbs and ditches. Quote
 the local measure; use the TIN measure only where its assumptions are
 stated.
+
+## Phase 3: SMRF ground classification vs the delivered ground
+
+Measured 2026-09-08 by `reference/summerville_ground.py` (in-core SMRF,
+`python -m reference.summerville_ground`). Parameters: cell 3, slope
+0.15, window 60, threshold 1.5, scalar 1.25, low_cut OFF (see below).
+Runtime 10 s on the 12.78M last returns.
+
+The delivered classification labels a deliberately thin ground class,
+so raw point precision against it measures a labeling convention, not
+surface error. The acceptance numbers:
+
+* **Recall 0.9992** -- essentially every delivered ground point is
+  SMRF ground.
+* **FP height above the delivered-ground DTM**: median +0.15 ft,
+  96.2% within +/-1.0 ft, p99 +1.31 ft. The 3.5M extra points hug the
+  surface (delivered class 1/3, near-ground returns).
+* **DTM vs DTM** over 109,525 common 3-ft cells: median +0.111 ft,
+  nmad 0.126, p95 0.567.
+* **Control** (3-ft local median on SMRF ground): n 6, median
+  +0.193 ft, nmad 0.133 -- beside the delivered ground's +0.146/0.148,
+  the +0.05 shift consistent with SMRF's slightly thicker ground.
+* Context: point confusion agreement 0.771, precision 0.224,
+  kappa 0.289. Recorded, not the acceptance.
+
+Honest gaps: 1,622 of 4,951 delivered-noise (class 7) points classify
+as ground (they anchor min-cells; a point-level low filter at this
+density is the fix if it matters); the FP tail to +1.31 ft is
+near-ground vegetation inherent to a one-surface filter.
+
+**low_cut must stay OFF under canopy**: cell-level low cutting flagged
+144k cells -- the under-canopy ground penetrations themselves -- and
+pushed the DEM into the canopy (FP p90 +39 ft). Measured twice with
+two designs before the cause was understood; details in
+`classify/ground.py`'s docstring.

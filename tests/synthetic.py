@@ -44,3 +44,39 @@ def linear_sbet(n=100, t0=1000.0, dt=0.005, heading0=0.0, heading_rate=0.0):
 def write_sbet(path, data):
     data.tofile(path)
     return path
+
+
+def classification_scene(seed=0, slope_x=0.02):
+    """Ground plane, three flat-roofed buildings, floating canopy.
+
+    Returns (points dict, truth) where truth marks the ground points.
+    Everything a ground filter needs to get right, with the answer
+    constructed: terrain must survive, roofs and canopy must not.
+    """
+    rng = np.random.default_rng(seed)
+
+    def ground_z(x, y):
+        return 50.0 + slope_x * x
+
+    gx = rng.uniform(0, 100, 20000)
+    gy = rng.uniform(0, 100, 20000)
+    gz = ground_z(gx, gy) + rng.normal(0, 0.03, gx.size)
+
+    roofs = []
+    for x0, y0, size, height in ((15, 15, 14, 8.0), (60, 20, 10, 5.0),
+                                 (35, 65, 16, 12.0)):
+        bx = rng.uniform(x0, x0 + size, 2500)
+        by = rng.uniform(y0, y0 + size, 2500)
+        bz = ground_z(bx, by) + height + rng.normal(0, 0.05, bx.size)
+        roofs.append((bx, by, bz))
+
+    cx = rng.uniform(0, 100, 4000)
+    cy = rng.uniform(0, 100, 4000)
+    cz = ground_z(cx, cy) + rng.uniform(3.0, 15.0, cx.size)
+
+    x = np.concatenate([gx] + [r[0] for r in roofs] + [cx])
+    y = np.concatenate([gy] + [r[1] for r in roofs] + [cy])
+    z = np.concatenate([gz] + [r[2] for r in roofs] + [cz])
+    truth = np.zeros(x.size, dtype=bool)
+    truth[:gx.size] = True
+    return {"x": x, "y": y, "z": z}, truth
