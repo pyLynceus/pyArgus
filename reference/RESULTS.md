@@ -1,5 +1,16 @@
 # Summerville reference results
 
+2026-09-08, Phase 2: `pyargus qa-report` reproduces every number below
+in one command (same density stats, same three dZ pairs, same
++0.146 / nmad 0.148 over six marks with seven skipped, week 2385 at
+100.00%). Rerun it after any QA change:
+
+    pyargus qa-report Z:/Users/BJordan/Summerville_SS/Summerville_SS.las \
+      --out reference/reports/summerville --control-order pnez \
+      --control "Z:/Users/BJordan/Summerville_SS/1-4,200-207.csv" \
+      --control "Z:/Users/BJordan/Summerville_SS/205.csv" \
+      --sbet "Z:/Users/BJordan/Summerville_SS/Area_/Cycle_250926_134000_122SN030/POS/sbet_NAD83(2011)[2010.0].out"
+
 Measured 2026-09-08 by `reference/summerville.py` against
 `Z:\Users\BJordan\Summerville_SS\Summerville_SS.las` (15,284,332 points,
 four strips, classified) and the surveyed control (13 marks, P,N,E,Z

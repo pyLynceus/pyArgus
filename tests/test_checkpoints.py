@@ -46,3 +46,25 @@ def test_asprs_refuses_nan():
 def test_asprs_refuses_empty():
     with pytest.raises(ValueError):
         checkpoints.asprs_vertical(np.array([]))
+
+
+def test_local_median_recovers_offset_and_skips_isolated_marks():
+    strip = planar_strip(20000, (0, 100), (0, 100),
+                         plane=(0.0, 0.0, 50.0), noise=0.02, seed=9)
+    ground = _as_xyz(strip)
+    ids = ["A", "B", "FAR"]
+    checks = np.array([[25.0, 25.0, 49.9], [75.0, 75.0, 49.9],
+                       [500.0, 500.0, 49.9]])
+    cmp_ = checkpoints.local_median_residuals(ground, ids, checks, radius=3.0)
+    assert set(cmp_.residuals) == {"A", "B"}
+    assert np.allclose(list(cmp_.residuals.values()), 0.1, atol=0.02)
+    assert "FAR" in cmp_.skipped and "nearest" in cmp_.skipped["FAR"]
+
+
+def test_robust_summary_matches_hand_arithmetic():
+    dz = np.array([0.1, 0.2, 0.3, 0.4, 10.0])
+    s = checkpoints.robust_summary(dz)
+    assert s["n"] == 5 and np.isclose(s["median"], 0.3)
+    assert np.isclose(s["nmad"], 1.4826 * 0.1)
+    with pytest.raises(ValueError):
+        checkpoints.robust_summary(np.array([]))

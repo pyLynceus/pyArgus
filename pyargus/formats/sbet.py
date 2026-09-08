@@ -43,6 +43,35 @@ def read_sbet(path):
     return data
 
 
+def week_alignment(adjusted_gps_time, traj_time):
+    """Join LAS Adjusted Standard GPS Time to a trajectory's seconds-of-week.
+
+    LAS 1.4 clouds carry Adjusted Standard GPS Time (true GPS seconds
+    minus 1e9); SBETs carry GPS seconds of the week. The week is
+    recovered by rounding the median offset, and the returned fraction
+    says how many returns land inside the trajectory window -- on a
+    healthy project that is 1.0, and anything less means the wrong
+    SBET, the wrong week, or a time base this function does not cover
+    (it refuses seconds-of-week input outright).
+
+    Returns (gps_week, fraction_inside).
+    """
+    adjusted = np.asarray(adjusted_gps_time, dtype=float)
+    if adjusted.size == 0:
+        raise ValueError("no gps times")
+    if np.median(adjusted) < 604800.0:
+        raise ValueError(
+            "gps_time looks like seconds-of-week, not Adjusted Standard "
+            "GPS Time; this cloud predates LAS 1.4 conventions and needs "
+            "its week supplied by hand")
+    true_seconds = adjusted + 1_000_000_000.0
+    week = int(np.floor((np.median(true_seconds) - np.median(traj_time))
+                        / 604800.0 + 0.5))
+    sow = true_seconds - week * 604800.0
+    inside = (sow >= traj_time[0]) & (sow <= traj_time[-1])
+    return week, float(inside.mean())
+
+
 def interpolate(sbet, times, fields=("lat", "lon", "alt", "roll", "pitch", "heading")):
     """Linearly interpolate trajectory fields at GPS ``times``.
 

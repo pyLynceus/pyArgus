@@ -52,3 +52,28 @@ def test_extrapolation_refuses():
     data = linear_sbet(n=10, t0=1000.0, dt=0.005)
     with pytest.raises(ValueError, match="extrapolate"):
         sbet.interpolate(data, np.array([999.0]))
+
+
+def test_week_alignment_recovers_the_week():
+    week = 2385
+    traj = linear_sbet(n=1000, t0=481000.0, dt=0.5)  # sow 481000..481499.5
+    sow = np.linspace(481050.0, 481400.0, 200)
+    adjusted = sow + week * 604800.0 - 1_000_000_000.0
+    got_week, inside = sbet.week_alignment(adjusted, traj["time"])
+    assert got_week == week
+    assert inside == 1.0
+
+
+def test_week_alignment_flags_wrong_trajectory():
+    week = 2385
+    traj = linear_sbet(n=100, t0=200000.0, dt=0.5)
+    sow = np.linspace(481050.0, 481400.0, 50)
+    adjusted = sow + week * 604800.0 - 1_000_000_000.0
+    _, inside = sbet.week_alignment(adjusted, traj["time"])
+    assert inside == 0.0
+
+
+def test_week_alignment_refuses_seconds_of_week():
+    traj = linear_sbet(n=100, t0=481000.0, dt=0.5)
+    with pytest.raises(ValueError, match="seconds-of-week"):
+        sbet.week_alignment(np.array([481200.0]), traj["time"])

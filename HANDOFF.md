@@ -1,7 +1,8 @@
 # HANDOFF
 
-Updated 2026-09-08: Phase 0 complete — Summerville is the reference
-dataset and the acceptance checks passed.
+Updated 2026-09-08: Phase 2 delivered — `pyargus qa-report` produces
+the strip-QA report in one command and reproduces every Summerville
+reference number (Phase 0 also complete the same day).
 
 ## Where this stands
 
@@ -74,14 +75,40 @@ regressions but cannot demonstrate a fix -- Phase 4 will need a
 deliberately mis-adjusted copy or synthetic misalignment injected
 through `core.georef`.
 
+## Phase 2: the QA report, delivered
+
+`pyargus qa-report cloud.las --out dir [--control csv --control-order
+pnez|penz] [--sbet path]` writes `report.html` (self-contained, maps
+embedded) plus `density.png` and `dz_<a>-<b>.png`, each with a `.pgw`
+world file so they drop into QGIS/LP360 beside the delivery. Design
+decisions that should survive:
+
+* Rasters are stdlib-zlib RGBA PNGs + world files (`qa/raster.py`),
+  keeping GDAL out of the dependency tree until Phase 3 needs it.
+  `grid_to_image` is the ONE place [ix, iy] grids become north-up
+  image rows; nothing else reorients rasters.
+* The control number quoted is the local-median measure
+  (`qa.checkpoints.local_median_residuals`, the pyLynceus-equivalent
+  method); the TIN measure stays for dense surfaces. Column order for
+  control CSVs is a required argument, never guessed.
+* `formats.sbet.week_alignment` joins LAS Adjusted Standard GPS Time
+  to an SBET and refuses seconds-of-week input.
+* `report.generate` returns its numbers as a dict; tests and the
+  reference run assert on data, not scraped HTML.
+
+The acceptance command and its expected numbers are at the top of
+`reference/RESULTS.md`. Rerun after any QA change.
+
 ## Next step, with reasoning
 
-**Phase 2 proper: make the QA a product.** The machinery just proved
-itself; what is missing is the deliverable -- a strip-QA report (dZ
-rasters written to GeoTIFF or rendered, density map, the control table)
-produced by one CLI command against a project folder. Build it against
-Summerville, compare its numbers to `reference/RESULTS.md` every time.
-PDAL still arrives with Phase 3, not now.
+**Phase 3: ground classification + DTM.** PDAL enters the dependency
+tree here (on Windows decide between conda-forge and a pinned wheel at
+that moment). Tune SMRF and CSF against Summerville's existing class 2
+as the comparison target -- 1.01M delivered ground points are a free
+answer key: classify the same cloud from class 0, difference against
+the delivered classification, and the confusion matrix is the
+acceptance test. The QA report then grows a classification-agreement
+section the same way it grew the control table.
 
 ## Findings so far
 

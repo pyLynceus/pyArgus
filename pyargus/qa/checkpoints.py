@@ -44,6 +44,53 @@ def vertical_residuals(surface_xyz, check_xyz):
     return surface_z - check_xyz[:, 2]
 
 
+@dataclass
+class LocalComparison:
+    residuals: dict   # point id -> lidar - control, marks with local returns
+    skipped: dict     # point id -> reason, reported rather than dropped
+
+    def values(self):
+        return np.array(list(self.residuals.values()))
+
+
+def local_median_residuals(ground_xyz, check_ids, check_xyz,
+                           radius=3.0, min_neighbours=5):
+    """dz per mark from the median of ground returns within ``radius``.
+
+    This is the measure to quote (same semantics as pyLynceus's
+    ``compare_to_control``, which it reproduces on Summerville to the
+    millifoot): it only answers at marks that actually have local
+    ground returns, and reports the others in ``skipped`` with a reason
+    instead of interpolating across kerbs and ditches the way a TIN
+    does. Sign is lidar minus control throughout.
+    """
+    from scipy.spatial import cKDTree
+
+    ground_xyz = np.asarray(ground_xyz, dtype=float)
+    check_xyz = np.asarray(check_xyz, dtype=float)
+    tree = cKDTree(ground_xyz[:, :2])
+    residuals, skipped = {}, {}
+    for pid, (e, n, z) in zip(check_ids, check_xyz):
+        idx = tree.query_ball_point([e, n], radius)
+        if len(idx) < min_neighbours:
+            distance, _ = tree.query([e, n])
+            skipped[pid] = (f"{len(idx)} ground return(s) within {radius:g}; "
+                            f"nearest is {distance:.1f} away")
+            continue
+        residuals[pid] = float(np.median(ground_xyz[idx, 2])) - z
+    return LocalComparison(residuals=residuals, skipped=skipped)
+
+
+def robust_summary(dz):
+    """Median and NMAD -- the robust pair the local measure is quoted by."""
+    dz = np.asarray(dz, dtype=float)
+    if dz.size == 0:
+        raise ValueError("no residuals")
+    med = float(np.median(dz))
+    return {"n": int(dz.size), "median": med,
+            "nmad": float(1.4826 * np.median(np.abs(dz - med)))}
+
+
 def asprs_vertical(dz):
     """Vertical accuracy statistics from finite residuals.
 

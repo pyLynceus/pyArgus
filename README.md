@@ -15,11 +15,19 @@ Phase 4; the QA that referees it ships first.
 
     pyargus/core      pure math: units, rotation conventions, the
                       direct-georeferencing forward model
-    pyargus/formats   SBET trajectories, LAS/LAZ (laspy, optional)
-    pyargus/qa        density, strip-overlap dZ, ASPRS checkpoint stats
+    pyargus/formats   SBET trajectories, control CSVs, LAS/LAZ (laspy,
+                      optional)
+    pyargus/qa        density, strip-overlap dZ, checkpoint stats, and
+                      the one-command strip-QA report (PNG + world-file
+                      rasters, no GDAL)
     pyargus/align     Phase 4, the custom strip-adjustment core (plan only)
     pyargus/classify  Phases 3/5 (plan only)
     pyargus/surfaces  Phases 3/6 (plan only)
+
+The report:
+
+    pyargus qa-report cloud.las --out qa/ \
+      --control marks.csv --control-order pnez --sbet trajectory.out
 
 ## Running
 

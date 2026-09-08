@@ -1,7 +1,8 @@
-"""Command line: the two commands that are real today.
+"""Command line: the three commands that are real today.
 
     pyargus sbet-info trajectory.sbet
     pyargus density cloud.las --cell 2.0
+    pyargus qa-report cloud.las --out qa/ --control pts.csv --control-order pnez
 
 More subcommands arrive as their phases land; nothing appears here
 before it works.
@@ -40,6 +41,63 @@ def _cmd_density(args):
     return 0
 
 
+def _cmd_qa_report(args):
+    from pathlib import Path
+
+    from pyargus.formats import las
+    from pyargus.qa import report
+
+    if args.control and not args.control_order:
+        raise SystemExit("--control-order is required with --control; the "
+                         "column order is never guessed (pnez or penz)")
+
+    fields = ["x", "y", "z", "classification", "point_source_id"]
+    if args.sbet:
+        fields.append("gps_time")
+    points = las.read_points(args.path, fields=tuple(fields))
+
+    control = None
+    if args.control:
+        from pyargus.formats import control as control_mod
+        control = control_mod.read_control_csvs(args.control, args.control_order)
+
+    traj_time = None
+    if args.sbet:
+        from pyargus.formats import sbet
+        traj_time = sbet.read_sbet(args.sbet)["time"]
+
+    summary = report.generate(
+        points, args.out, title=args.title or Path(args.path).name,
+        control=control, traj_time=traj_time, ground_class=args.ground_class,
+        density_cell=args.density_cell, dz_cell=args.dz_cell,
+        dz_limit=args.dz_limit, control_radius=args.radius, units=args.units)
+
+    d = summary["density"]
+    print(f"points:  {summary['points']:,} ({summary['ground_points']:,} ground, "
+          f"{len(summary['strips'])} strips)")
+    if "time_base" in summary:
+        tb = summary["time_base"]
+        print(f"time:    week {tb['gps_week']}, "
+              f"{100 * tb['fraction_inside']:.2f}% inside trajectory")
+    print(f"density: median {d['median']:.2f} pts/{args.units}^2 "
+          f"(p5 {d['p5']:.2f}, p95 {d['p95']:.2f})")
+    for p in summary["strip_dz"]:
+        print(f"dz {p['a']}-{p['b']}:  median {p['median']:+.3f}  "
+              f"rmse {p['rmse']:.3f}  p95|dz| {p['p95_abs']:.3f}  "
+              f"({p['cells']} cells)")
+    if "control" in summary:
+        c = summary["control"]
+        if "median" in c:
+            print(f"control: n {c['n']}  median {c['median']:+.3f}  "
+                  f"nmad {c['nmad']:.3f}  rmse {c['rmse_z']:.3f} {args.units} "
+                  f"({len(c['skipped'])} skipped)")
+        else:
+            print(f"control: no marks with local ground returns "
+                  f"({len(c['skipped'])} skipped)")
+    print(f"report:  {summary['report']}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="pyargus", description=pyargus.__doc__)
     parser.add_argument("--version", action="version", version=pyargus.__version__)
@@ -53,6 +111,25 @@ def main(argv=None):
     p_dens.add_argument("path")
     p_dens.add_argument("--cell", type=float, default=1.0)
     p_dens.set_defaults(func=_cmd_density)
+
+    p_qa = sub.add_parser("qa-report", help="strip QA report for a LAS/LAZ file")
+    p_qa.add_argument("path")
+    p_qa.add_argument("--out", required=True, help="output directory")
+    p_qa.add_argument("--title", help="report title (default: file name)")
+    p_qa.add_argument("--control", action="append",
+                      help="control CSV (repeatable)")
+    p_qa.add_argument("--control-order", choices=("pnez", "penz"),
+                      help="control column order; required with --control")
+    p_qa.add_argument("--sbet", help="SBET trajectory for the time-base check")
+    p_qa.add_argument("--ground-class", type=int, default=2)
+    p_qa.add_argument("--density-cell", type=float, default=3.0)
+    p_qa.add_argument("--dz-cell", type=float, default=6.0)
+    p_qa.add_argument("--dz-limit", type=float, default=0.25,
+                      help="dZ map color scale, +/- this value")
+    p_qa.add_argument("--radius", type=float, default=3.0,
+                      help="control gather radius")
+    p_qa.add_argument("--units", default="ft")
+    p_qa.set_defaults(func=_cmd_qa_report)
 
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
