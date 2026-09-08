@@ -1,9 +1,9 @@
 # HANDOFF
 
-Updated 2026-09-08: Phase 3 delivered — in-core SMRF ground
-classification (`pyargus classify-ground`) and DTM export
-(`pyargus dtm`), accepted against Summerville's delivered
-classification. Phases 0 and 2 landed the same day.
+Updated 2026-09-08: Phase 4 delivered — the strip-alignment core
+(`pyargus.align`) recovers injected boresight to ~1 arcsec and
+per-strip offsets to 0.0005 ft at Summerville scale, and refuses
+indeterminate geometry. Phases 0, 2, and 3 landed the same day.
 
 ## Where this stands
 
@@ -128,19 +128,45 @@ Three designs were measured before the cause was understood. low_cut
 exists for open-terrain clouds with clustered low blunders and
 defaults off.
 
+## Phase 4: strip alignment, delivered
+
+The custom core exists and is proven: `align.StripBundle` (points +
+per-point map-frame navigation state), `align.patches` (planar-patch
+point-to-plane observations with the Jacobian derived per patch), and
+`align.solve_alignment` (robust Gauss-Newton for three shared
+boresight angles + per-strip offsets, gauge on strip 0, Huber
+reweighting). Proven two ways, both by injecting errors through the
+georef forward model exactly as reality produces them:
+
+* tests/test_align.py -- small scenes: recovery across seeds, aligned
+  strips give ~zero corrections, outliers are downweighted, and
+  degenerate geometry (parallel same-heading lines on flat ground) is
+  REFUSED via the column-scaled condition gate rather than answered.
+* reference/alignment_proof.py -- Summerville scale: boresight to
+  ~1 arcsec, offsets to 0.0005 ft, strip-dZ referee collapses 0.098 ->
+  0.007 ft. Numbers in reference/RESULTS.md.
+
+Design decisions that should survive: corrections re-run the forward
+model on the ORIGINAL body vectors (cached in the bundle), never
+re-derive them from corrected coordinates; the observability gate uses
+column-SCALED conditioning because raw conditioning hides degeneracy
+behind the radians-vs-feet unit disparity; the solver's own rms is
+recorded but the referee is qa.overlap.strip_dz plus control.
+
+There is deliberately no CLI yet: real-SBET application needs the
+trajectory in the map frame.
+
 ## Next step, with reasoning
 
-**Phase 4: strip alignment, the custom core.** The reason the suite
-exists, and everything it needs is now in place: the georef forward
-model, SBET interpolation, ground surfaces per strip, and the QA that
-referees it. Summerville is already aligned (dZ medians <= 0.03 ft),
-so build the proof harness first: inject known boresight/per-strip
-errors through `core.georef` into Summerville-derived (or synthetic)
-strips, then require the solver to recover the injected truth AND
-collapse the strip_dz maps back. Plan of record in
-`pyargus/align/__init__.py`. Alternatively Phase 5/6 (above-ground
-classes, contours) are shallower next steps if a delivery needs them
-first.
+**Phase 4.5: the map-frame trajectory plumbing.** pyproj enters as an
+optional extra to transform SBET lat/lon/ellipsoid-height into the
+delivery CRS, plus a geoid model for the orthometric offset (SBET alt
+is ellipsoidal; Summerville z is NAVD88 ftUS -- the ~100 ft gap would
+poison the boresight lever arm if ignored). Then `pyargus align` can
+take cloud + SBET and run end to end, and the ultimate test becomes
+possible: inject boresight into real Summerville strips via their real
+trajectory and recover it. Alternatives if a delivery presses: Phase 5
+(above-ground classes) or Phase 6 (TIN/contours) are independent.
 
 ## Findings so far
 

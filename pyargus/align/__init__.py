@@ -1,18 +1,27 @@
-"""Strip alignment: the custom core, Phase 4, not yet implemented.
+"""Strip alignment: the custom core, the TerraMatch replacement.
 
-This is the TerraMatch replacement and the reason the suite exists.
-The plan of record:
+The pieces:
 
-1. Extract planar patches in strip overlaps (eigenvalue test on local
-   neighborhoods; keep only patches both strips observe).
-2. Match patch correspondences across strips.
-3. Solve sparse least squares for the boresight angles and per-strip
-   (later, time-dependent) corrections, linearizing
-   ``pyargus.core.georef.ground_points`` against the SBET.
-4. Rerun the Phase-2 QA. The solver's own residuals prove nothing;
-   only the post-adjustment strip_dz maps and checkpoint residuals do.
+* ``bundles.StripBundle`` -- a strip with per-point navigation state in
+  the MAP frame, plus ``corrected_xyz`` applying boresight/offset
+  corrections through the georef model.
+* ``patches.correspondences`` -- planar-patch point-to-plane misfits in
+  strip overlaps: the observations.
+* ``solve.solve_alignment`` -- robust Gauss-Newton for shared boresight
+  angles and per-strip offsets (gauge: strip 0 fixed). Refuses
+  indeterminate geometry instead of returning a confident wrong answer.
 
-Nothing in this package returns an answer until that referee exists in
-the loop. No module here may import the GUI or any optional format
-dependency.
+Proven by the harness in tests/test_align.py: errors injected through
+the forward model must be recovered AND the qa.overlap.strip_dz maps
+must collapse -- the solver's own residuals referee nothing.
+
+Applying this to a real SBET still needs the trajectory transformed
+into the map frame (projection + geoid); that plumbing is Phase 4.5
+and lives outside these modules on purpose. See HANDOFF.md.
 """
+
+from pyargus.align.bundles import StripBundle, corrected_xyz
+from pyargus.align.solve import AlignmentResult, solve_alignment
+
+__all__ = ["StripBundle", "corrected_xyz", "AlignmentResult",
+           "solve_alignment"]

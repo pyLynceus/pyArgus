@@ -20,7 +20,11 @@ Phase 4; the QA that referees it ships first.
     pyargus/qa        density, strip-overlap dZ, checkpoint stats, and
                       the one-command strip-QA report (PNG + world-file
                       rasters, no GDAL)
-    pyargus/align     Phase 4, the custom strip-adjustment core (plan only)
+    pyargus/align     the strip-adjustment core: planar-patch
+                      correspondences + robust Gauss-Newton for boresight
+                      and per-strip offsets; refuses indeterminate
+                      geometry (CLI arrives with the map-frame trajectory
+                      plumbing, Phase 4.5)
     pyargus/classify  in-core SMRF ground classification (no PDAL: it has
                       no Windows wheel; same algorithm, ~150 lines of
                       numpy/scipy)

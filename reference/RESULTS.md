@@ -109,3 +109,29 @@ near-ground vegetation inherent to a one-surface filter.
 pushed the DEM into the canopy (FP p90 +39 ft). Measured twice with
 two designs before the cause was understood; details in
 `classify/ground.py`'s docstring.
+
+## Phase 4: strip alignment recovers injected truth
+
+Measured 2026-09-08 by `python -m reference.alignment_proof` -- a
+Summerville-scale synthetic block (survey feet, 330 ft AGL, four
+1500-ft strips in an alternating-heading chain, 220-ft swaths, 250k
+points each, 0.10 ft noise, rolling terrain), with boresight
+(+5e-4, -8e-4, +1.5e-3 rad) and per-strip vertical offsets (0.12,
+-0.08, 0.05 ft) injected through the georef forward model. Real-SBET
+application waits on Phase 4.5 (map-frame trajectory: projection +
+geoid).
+
+* Boresight recovered to within **6e-6 rad (~1.2 arcsec)** with a
+  crossing line; within 1.2e-5 rad parallel-only.
+* Per-strip offsets recovered to within **0.0005 ft**.
+* Strip dZ (the referee): median +0.098 -> -0.007 ft, rmse 0.130 ->
+  0.081 (the floor is measurement noise).
+* 17,266 patch observations, 8 Gauss-Newton iterations, 32 s for
+  1.25M points.
+
+Parallel-only yaw succeeded HERE because the rolling terrain gives it
+leverage; on flat terrain the same geometry is indeterminate and the
+solver refuses (tests/test_align.py proves both). The observability
+gate is the column-scaled normal-matrix condition (healthy blocks ~5,
+degenerate ~2.4e3, gate at 200) -- raw conditioning hides degeneracy
+behind the radians-vs-feet unit disparity.
