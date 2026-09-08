@@ -23,8 +23,9 @@ Phase 4; the QA that referees it ships first.
     pyargus/align     the strip-adjustment core: planar-patch
                       correspondences + robust Gauss-Newton for boresight
                       and per-strip offsets; refuses indeterminate
-                      geometry (CLI arrives with the map-frame trajectory
-                      plumbing, Phase 4.5)
+                      geometry; attaches real SBETs through pyproj
+                      (optional [crs] extra) with the vertical datum
+                      always explicit
     pyargus/classify  in-core SMRF ground classification (no PDAL: it has
                       no Windows wheel; same algorithm, ~150 lines of
                       numpy/scipy)
@@ -37,6 +38,8 @@ The commands:
     pyargus classify-ground cloud.las --out classified.las --cell 3 \
       --window 60 --threshold 1.5
     pyargus dtm classified.las --out dtm.asc --cell 3
+    pyargus align cloud.las --sbet trajectory.out \
+      --vertical EPSG:6360 --proj-network --write aligned.las
 
 ## Running
 

@@ -1,9 +1,10 @@
 # HANDOFF
 
-Updated 2026-09-08: Phase 4 delivered — the strip-alignment core
-(`pyargus.align`) recovers injected boresight to ~1 arcsec and
-per-strip offsets to 0.0005 ft at Summerville scale, and refuses
-indeterminate geometry. Phases 0, 2, and 3 landed the same day.
+Updated 2026-09-08: Phase 4.5 delivered — the real Summerville
+trajectory now attaches to the real strips (`pyargus align` CLI works
+end to end), and injected boresight recovered through the REAL
+geometry to ~4 arcsec / 0.001 ft. Phases 0, 2, 3 and 4 landed the
+same day.
 
 ## Where this stands
 
@@ -153,20 +154,50 @@ column-SCALED conditioning because raw conditioning hides degeneracy
 behind the radians-vs-feet unit disparity; the solver's own rms is
 recorded but the referee is qa.overlap.strip_dz plus control.
 
-There is deliberately no CLI yet: real-SBET application needs the
-trajectory in the map frame.
+## Phase 4.5: the map-frame trajectory plumbing, delivered
+
+pyproj entered as the `crs` optional extra. The pieces:
+
+* `formats/crs.py` -- `sbet_to_map`: SBET geographic -> delivery CRS.
+  The vertical story is ALWAYS explicit: a vertical CRS composed with
+  the horizontal ("EPSG:6360" for NAVD88 ftUS; PROJ fetches the geoid
+  grid with allow_network and caches it), or a constant geoid shift in
+  meters. A horizontal-only target (Summerville's LAS declares no
+  vertical CRS!) REFUSES rather than silently passing ellipsoidal
+  meters through as z -- pyproj does exactly that if you let it.
+* `align/attach.py` -- `bundles_from_cloud`: week join, attitude
+  interpolation (wrap-safe heading), the NED->ours mapping
+  (roll, -pitch, pi/2 - heading; re-derived numerically in
+  tests/test_attach.py), and three refusal checks that each caught a
+  real class of error in development: heading-vs-flight-track (settles
+  the heading/wander question empirically and screens axis mix-ups),
+  AGL-positive (catches the missing-geoid trap by name), and the
+  inside-trajectory fraction. `apply_corrections` applies a solved
+  result to a full cloud in chunks.
+* CLI: `pyargus align cloud.las --sbet traj.out [--vertical EPSG:6360
+  --proj-network | --vertical=-29.077] [--write fixed.las]` -- solves
+  on the ground class, prints diagnostics + corrections + the dZ
+  referee, optionally writes a corrected NEW cloud.
+
+Acceptance (reference/RESULTS.md): real strips + real SBET attach with
+heading agreeing with track to 0.53 deg and AGL 331.9 ft; baseline
+solve leaves the aligned delivery alone; injected boresight recovered
+through the real geometry to ~4 arcsec / 0.001 ft.
+
+The remaining honest caveat: the boresight ANGLES are self-consistent
+within this suite's convention. Corrections applied by this suite are
+valid regardless; quoting the angles to a POSPac/vendor calibration
+report as-is is not yet validated -- that needs a dataset with a known
+vendor-stated miscalibration.
 
 ## Next step, with reasoning
 
-**Phase 4.5: the map-frame trajectory plumbing.** pyproj enters as an
-optional extra to transform SBET lat/lon/ellipsoid-height into the
-delivery CRS, plus a geoid model for the orthometric offset (SBET alt
-is ellipsoidal; Summerville z is NAVD88 ftUS -- the ~100 ft gap would
-poison the boresight lever arm if ignored). Then `pyargus align` can
-take cloud + SBET and run end to end, and the ultimate test becomes
-possible: inject boresight into real Summerville strips via their real
-trajectory and recover it. Alternatives if a delivery presses: Phase 5
-(above-ground classes) or Phase 6 (TIN/contours) are independent.
+**Phase 5 (above-ground classification) or Phase 6 (TIN, breaklines,
+contours)** -- both independent, pick by what a delivery needs first.
+Phase 6 completes the deliverable chain (classified LAZ -> DTM ->
+contours all in-suite); Phase 5 needs scikit-learn and the
+delivered classes 3/4/5/6 as the answer key, same pattern as ground.
+GUI + pyLynceus launcher integration (Phase 7) after either.
 
 ## Findings so far
 

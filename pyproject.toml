@@ -18,7 +18,11 @@ pyargus = "pyargus.cli:main"
 # raises with an instruction if it is missing, and nothing else imports it.
 lidar = ["laspy[lazrs]>=2.5"]
 
-dev = ["pytest>=7", "laspy[lazrs]>=2.5"]
+# Trajectory-to-map-frame plumbing (Phase 4.5): transforming SBET
+# geographic coordinates into the delivery CRS. Same lazy pattern.
+crs = ["pyproj>=3.6"]
+
+dev = ["pytest>=7", "laspy[lazrs]>=2.5", "pyproj>=3.6"]
 
 [tool.setuptools.packages.find]
 include = ["pyargus*"]

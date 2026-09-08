@@ -5,6 +5,7 @@
     pyargus qa-report cloud.las --out qa/ --control pts.csv --control-order pnez
     pyargus classify-ground cloud.las --out classified.las --cell 3
     pyargus dtm classified.las --out dtm.asc --cell 3
+    pyargus align cloud.las --sbet traj.out --vertical=-29.077 --write fixed.las
 
 More subcommands arrive as their phases land; nothing appears here
 before it works.
@@ -169,6 +170,116 @@ def _cmd_dtm(args):
     return 0
 
 
+def _cmd_align(args):
+    from pathlib import Path
+
+    import laspy
+
+    from pyargus.align import attach, solve_alignment
+    from pyargus.formats import crs as crs_mod
+    from pyargus.formats import las as las_mod
+    from pyargus.formats import sbet as sbet_mod
+    from pyargus.qa import overlap
+
+    if args.write:
+        dst = Path(args.write)
+        if dst.resolve() == Path(args.path).resolve():
+            raise SystemExit("refusing to overwrite the input cloud; --write "
+                             "must be a new file")
+        if dst.exists() and not args.force:
+            raise SystemExit(f"{dst} exists; pass --force to replace it")
+
+    points = las_mod.read_points(
+        args.path, fields=("x", "y", "z", "gps_time", "point_source_id",
+                           "classification"))
+    trajectory = sbet_mod.read_sbet(args.sbet)
+
+    map_crs = args.map_crs
+    if map_crs is None:
+        with laspy.open(args.path) as reader:
+            map_crs = reader.header.parse_crs()
+        if map_crs is None:
+            raise SystemExit(f"{args.path} declares no CRS; pass --map-crs")
+    vertical = args.vertical
+    if vertical is not None:
+        try:
+            vertical = float(vertical)
+        except ValueError:
+            pass  # a vertical CRS string
+    map_e, map_n, map_z = crs_mod.sbet_to_map(
+        trajectory, map_crs, vertical=vertical,
+        allow_network=args.proj_network)
+
+    if args.any_class:
+        mask = np.ones(points["x"].size, dtype=bool)
+    else:
+        mask = points["classification"] == args.ground_class
+        if not mask.any():
+            raise SystemExit(f"no class-{args.ground_class} points to solve "
+                             f"on; classify first or pass --any-class")
+    sub = {k: points[k][mask] for k in ("x", "y", "z", "gps_time",
+                                        "point_source_id")}
+    attached = attach.bundles_from_cloud(sub, trajectory, map_e, map_n, map_z,
+                                         speed_floor=args.speed_floor)
+    print(f"attach:  week {attached.gps_week}, heading source "
+          f"{attached.heading_source!r} (track error "
+          f"{np.degrees(attached.track_error):.1f} deg), "
+          f"AGL {attached.agl_median:.0f}, "
+          f"nadir median {attached.nadir_median_deg:.1f} deg")
+    print(f"strips:  {attached.strip_ids} "
+          f"({[b.xyz.shape[0] for b in attached.bundles]} points)")
+
+    result = solve_alignment(
+        attached.bundles, solve_boresight=not args.no_boresight,
+        offsets=args.offsets, cell=args.cell, min_points=args.min_points)
+    deg = np.degrees(result.boresight)
+    print(f"solved:  {result.n_observations:,} observations, "
+          f"{result.iterations} iterations, patch rms "
+          f"{result.rms_before:.3f} -> {result.rms_after:.3f}")
+    print(f"boresight: roll {result.boresight[0]:+.6f}  "
+          f"pitch {result.boresight[1]:+.6f}  yaw {result.boresight[2]:+.6f} "
+          f"rad  ({deg[0]:+.4f}/{deg[1]:+.4f}/{deg[2]:+.4f} deg)")
+    for i, sid in enumerate(attached.strip_ids):
+        tag = "  (gauge)" if i == 0 else ""
+        extra = (f"  de {result.offsets[i, 0]:+.4f}  "
+                 f"dn {result.offsets[i, 1]:+.4f}"
+                 if args.offsets == "xyz" else "")
+        print(f"offset strip {sid}: dz {result.offsets[i, 2]:+.4f}{extra}{tag}")
+
+    def dz_map(xa, xb):
+        return overlap.strip_dz(
+            {"x": xa[:, 0], "y": xa[:, 1], "z": xa[:, 2]},
+            {"x": xb[:, 0], "y": xb[:, 1], "z": xb[:, 2]}, cell=args.cell)
+
+    corrected = result.corrected(attached.bundles)
+    for i in range(len(attached.bundles)):
+        for j in range(i + 1, len(attached.bundles)):
+            before = dz_map(attached.bundles[i].xyz, attached.bundles[j].xyz)
+            if before.overlap_cells == 0:
+                continue
+            after = dz_map(corrected[i], corrected[j])
+            print(f"dz {attached.strip_ids[i]}-{attached.strip_ids[j]}: "
+                  f"median {before.summary()['median']:+.3f} -> "
+                  f"{after.summary()['median']:+.3f}   rmse "
+                  f"{before.summary()['rmse']:.3f} -> "
+                  f"{after.summary()['rmse']:.3f}")
+
+    if args.write:
+        offsets_by_sid = {sid: result.offsets[i]
+                          for i, sid in enumerate(attached.strip_ids)}
+        xyz, skipped = attach.apply_corrections(
+            points, trajectory, map_e, map_n, map_z,
+            attached.heading_source, result.boresight, offsets_by_sid)
+        with laspy.open(args.path) as reader:
+            las = reader.read()
+        las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+        las.write(str(dst))
+        note = (f" ({skipped:,} outside the trajectory left unchanged)"
+                if skipped else "")
+        print(f"wrote:   {dst}{note}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="pyargus", description=pyargus.__doc__)
     parser.add_argument("--version", action="version", version=pyargus.__version__)
@@ -230,6 +341,32 @@ def main(argv=None):
     p_dtm.add_argument("--max-fill", type=int, default=10,
                        help="max gap fill distance, cells (0 disables)")
     p_dtm.set_defaults(func=_cmd_dtm)
+
+    p_al = sub.add_parser("align", help="strip alignment against the SBET")
+    p_al.add_argument("path")
+    p_al.add_argument("--sbet", required=True)
+    p_al.add_argument("--map-crs", help="delivery CRS (default: from the LAS)")
+    p_al.add_argument("--vertical",
+                      help="vertical story: a vertical CRS (e.g. EPSG:6360) "
+                           "or a geoid undulation N in meters (H = h - N; "
+                           "N is NEGATIVE across CONUS, e.g. -29.077)")
+    p_al.add_argument("--proj-network", action="store_true",
+                      help="let PROJ fetch geoid grids from its CDN")
+    p_al.add_argument("--ground-class", type=int, default=2,
+                      help="class used for solving (default 2)")
+    p_al.add_argument("--any-class", action="store_true",
+                      help="solve on all points, not one class")
+    p_al.add_argument("--offsets", choices=("z", "xyz", "none"), default="z")
+    p_al.add_argument("--no-boresight", action="store_true")
+    p_al.add_argument("--speed-floor", type=float, default=None,
+                      help="standstill cutoff for the heading-vs-track "
+                           "check, map units/s (default: 0.25 * p95 speed)")
+    p_al.add_argument("--cell", type=float, default=6.0)
+    p_al.add_argument("--min-points", type=int, default=6)
+    p_al.add_argument("--write", help="apply corrections, write a NEW cloud")
+    p_al.add_argument("--force", action="store_true",
+                      help="replace --write target if it exists")
+    p_al.set_defaults(func=_cmd_align)
 
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):

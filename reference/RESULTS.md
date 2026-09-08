@@ -135,3 +135,66 @@ solver refuses (tests/test_align.py proves both). The observability
 gate is the column-scaled normal-matrix condition (healthy blocks ~5,
 degenerate ~2.4e3, gate at 200) -- raw conditioning hides degeneracy
 behind the radians-vs-feet unit disparity.
+
+## Phase 4.5: the real cloud through the real trajectory
+
+Measured 2026-09-08 by `python -m reference.summerville_align` (real
+Summerville ground strips, real SBET transformed via EPSG:6447 +
+NAVD88/EPSG:6360 with the GEOID18 grid; PROJ network fetched and
+cached the grid; implied N at the site: -29.08 m).
+
+Attach diagnostics (the convention checks, all passed):
+
+* Heading source settled EMPIRICALLY: the SBET `heading` field agrees
+  with the flight track to 0.53 deg median; heading+wander is worse
+  (1.55 deg). The mapping roll->roll, pitch->-pitch, yaw=pi/2-heading
+  is re-derived numerically by tests/test_attach.py on every run.
+* AGL median 331.9 ft (the ~100 m mission), nadir median 31.2 deg.
+
+Baseline solve on the delivered (aligned) strips: boresight
+(-1.4e-4, -5.2e-4, -8.7e-4) rad -- all under 0.05 deg -- and offsets
+(+0.003, +0.025, -0.023) ft, consistent with the known dZ medians
+<= 0.03 ft. The solver does not invent structure on aligned data.
+Patch rms 0.180 -> 0.176 ft (surface-texture floor). 5,896
+observations from 1.01M ground points, 12 s.
+
+**Injection through the real geometry** (beta = +8e-4/-1.2e-3/+2e-3
+rad, dz = 0.10/-0.07/+0.05 ft on strips 2-4): recovered relative to
+baseline with boresight error <= 1.9e-5 rad (~4 arcsec) and offset
+error <= 0.001 ft; dz 1-2 median +0.187 -> -0.003 ft. This exercises
+the ENTIRE chain -- projection, geoid, time base, attitude mapping,
+Jacobians -- and any break would destroy the recovery.
+
+### Phase-4.5 adversarial review round (same day)
+
+A 37-agent review panel (four lenses, three refuters per finding,
+majority kill) confirmed 10 findings; all fixed and re-verified:
+
+* **PROJ's silent "ballpark vertical transformation"**: with the geoid
+  grid missing, the compound transform returned FINITE heights still
+  ellipsoidal (~95 ft wrong) and the finiteness guard never fired --
+  the exact trap crs.py's docstring promised to refuse. Fixed with
+  allow_ballpark=False (+ only_best); measured that only_best ALONE
+  does not stop it. Pinned by a test that accepts either the true
+  geoid height or a refusal, never the ballpark value.
+* Compound-CRS float-vertical used the horizontal unit for heights;
+  now uses the vertical component's unit (metric-horizontal + ftUS
+  heights is a real DOT convention). Pinned both directions.
+* speed_floor was 5.0 "map units/s" -- different physics per CRS unit,
+  and a hard refusal for metric slow-UAS flights. Now defaults to
+  0.25 x p95 speed (unit-free), with --speed-floor to override.
+* Four mutation-testing findings: every attitude-sign and einsum in
+  attach could flip and the suite stayed green, because all scenes had
+  R_nav = identity. Now pinned by a banked southbound scene (nonzero
+  roll/pitch/yaw) asserting body vectors land where constructed, an
+  apply_corrections-vs-corrected_xyz equivalence test with nonzero
+  boresight, and an "AGL 300" assertion in the CLI test that catches a
+  mishandled --vertical.
+* Recorded, not fully fixable: a constant vertical bias below the
+  flying height (wrong-sign user-supplied N) passes the AGL gate; a
+  new nadir-fan gate (>60 deg refuses) catches the gross cases, and
+  the docstrings say the sign is the caller's to get right.
+
+After the fixes: 98 tests green, and the real-Summerville acceptance
+reproduces identically (boresight recovery <= 1.9e-5 rad, offsets
+<= 0.001 ft, dz 0.187 -> -0.003).
