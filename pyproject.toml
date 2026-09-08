@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyargus"
+version = "0.1.0"
+description = "An open-source lidar production suite: strip QA, alignment, and what follows"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10"]
+
+[project.scripts]
+pyargus = "pyargus.cli:main"
+
+[project.optional-dependencies]
+# Reading LAS/LAZ. Not required for the math core or for SBET work,
+# which is why it is here rather than in dependencies: pyargus.formats.las
+# raises with an instruction if it is missing, and nothing else imports it.
+lidar = ["laspy[lazrs]>=2.5"]
+
+dev = ["pytest>=7", "laspy[lazrs]>=2.5"]
+
+[tool.setuptools.packages.find]
+include = ["pyargus*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
