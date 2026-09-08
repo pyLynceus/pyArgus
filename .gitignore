@@ -6,3 +6,4 @@ build/
 .pytest_cache/
 *.pyc
 reference/reports/
+dist-installer/

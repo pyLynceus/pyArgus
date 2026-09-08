@@ -216,16 +216,47 @@ levels / 181,335 ft of Summerville linework with vertex-vs-DTM error
 referee's unaligned grid crop, TIN contours invented across voids,
 and three mutation-unpinned branches), all fixed and test-pinned.
 
+## Phase 7: the desktop application, delivered
+
+`pyargus gui` (and the branded exe) is pyLynceus's GUI idiom
+transplanted: guarded tkinter import, stage classes with the
+prepare()/work(runner) seam (prepare reads every widget on the UI
+thread; work touches none), StageRunner with a queue as the only
+bridge back, completion via an explicit flag (the Tcl_Obj lesson,
+kept), and launcher trios BOTH ways -- the pyArgus window has a
+pyLynceus button and pyLynceus grew a pyArgus button (its 327 tests
+stay green; the bridge mirrors the Plumbline one exactly, marker
+pyargus/gui.py, module `-m pyargus gui`, handoff env PYARGUS_DATA_DIR
+seeds the file pickers). Five stages call the same library functions
+as the CLI: Strip QA (density preview on the canvas), Classify (its
+product auto-fills empty downstream fields), DTM/DSM, Contours,
+Align. Packaging mirrors pyLynceus: packaging/pyArgus.spec (onedir;
+only the dist copy runs -- delete build/ after), windows/pyArgus.iss
+(fresh GUID, per-user), make_logo.py DRAWS the mark (peacock-eye on
+pine, regenerates from code). PyInstaller and Pillow live in the venv
+ad hoc, not in pyproject.
+
+A 39-agent adversarial panel confirmed 5 findings, all fixed and
+test-pinned: the preview gate never drew on real-size clouds (draw is
+now keyed on report identity, never on log traffic); four stages
+ignored Stop and wrote files anyway (one shared cancelled_before gate
+now guards every write and the products handoff); Align solved with
+min_points=5 vs the CLI's 6 (constants now pinned against
+cli.build_parser); the CLI's exists-refusal was dropped (restored for
+classify and align outputs); the installer lacked
+ignoreversion/createallsubdirs (mixed-version upgrades).
+
 ## Next step, with reasoning
 
-**Phase 5 (above-ground classification) or Phase 7 (GUI + pyLynceus
-launcher + packaged exe).** Phase 5 needs scikit-learn and uses the
-delivered classes 3/4/5/6 as the answer key, same pattern as ground.
-Phase 7 makes the suite usable beside pyLynceus/Plumbline the way the
-roadmap promised (launcher tab, embedded viewer for spot checks,
-PyInstaller exe). With the full data pipeline now proven end to end,
-Phase 7 is the higher-leverage next move unless a delivery needs
-vegetation/building classes first.
+**Phase 5 (above-ground classification)** is the one roadmap phase
+left: random forest on geometric features (height above ground,
+eigenvalue descriptors, return ratios), scikit-learn enters, and the
+delivered classes 3/4/5/6 are the answer key -- same pattern that
+worked for ground. Also open from the original roadmap: RGB
+colorization from pyLynceus EO (the TerraPhoto bridge), and the
+standing Phase-4 wishes (time-dependent trajectory corrections; a
+real vendor-stated miscalibration dataset as the final alignment
+acceptance -- archive one if it ever comes through the shop).
 
 ## Findings so far
 

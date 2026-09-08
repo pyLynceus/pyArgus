@@ -54,3 +54,31 @@ To rebuild the environment: `uv venv --python 3.11 .venv` then
 OneDrive refuses hardlinks).
 
 Read `HANDOFF.md` before doing anything substantive.
+
+## The desktop application
+
+    pyargus gui
+
+Five stages over the same library the CLI uses (Strip QA, Classify,
+DTM/DSM, Contours, Align), a pyLynceus launcher button, and a preview
+pane. pyLynceus has the reciprocal button; each tool launches the
+other in its own venv.
+
+## Building the exe
+
+PyInstaller lives in the project venv (installed ad hoc, not a
+pyproject dependency: `UV_LINK_MODE=copy uv pip install --python
+.venv/Scripts/python.exe pyinstaller pillow`). Then:
+
+    .venv/Scripts/python.exe -m PyInstaller --noconfirm packaging/pyArgus.spec --distpath dist --workpath build
+
+**Only the dist copy runs**: the build leaves a second pyArgus.exe in
+build/ scratch whose _internal is never assembled. Delete build/
+after building; it is cache and regenerates. Copy the whole
+dist/pyArgus folder, not just the exe. The installer:
+
+    ISCC.exe packaging\windows\pyArgus.iss
+
+The brand regenerates from code: `.venv/Scripts/python.exe
+packaging/make_logo.py` (needs Pillow) draws the mark and derives the
+.ico.

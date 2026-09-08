@@ -7,6 +7,7 @@
     pyargus dtm classified.las --out dtm.asc --cell 3
     pyargus align cloud.las --sbet traj.out --vertical=-29.077 --write fixed.las
     pyargus contours classified.las --out contours.dxf --interval 1
+    pyargus gui
 
 More subcommands arrive as their phases land; nothing appears here
 before it works.
@@ -360,7 +361,7 @@ def _cmd_align(args):
     return 0
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(prog="pyargus", description=pyargus.__doc__)
     parser.add_argument("--version", action="version", version=pyargus.__version__)
     sub = parser.add_subparsers(dest="command")
@@ -469,6 +470,16 @@ def main(argv=None):
                       help="replace --write target if it exists")
     p_al.set_defaults(func=_cmd_align)
 
+    p_gui = sub.add_parser(
+        "gui", help="open the desktop application (tkinter; no extra "
+                    "dependency)")
+    p_gui.set_defaults(func=lambda args: __import__(
+        "pyargus.gui", fromlist=["main"]).main())
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
         parser.print_help()

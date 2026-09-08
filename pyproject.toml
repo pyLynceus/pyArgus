@@ -27,5 +27,11 @@ dev = ["pytest>=7", "laspy[lazrs]>=2.5", "pyproj>=3.6"]
 [tool.setuptools.packages.find]
 include = ["pyargus*"]
 
+# An editable install reads assets from the source tree and hides
+# their absence; a wheel install would lose the window icon without
+# this (the pyLynceus lesson, kept).
+[tool.setuptools.package-data]
+pyargus = ["assets/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
