@@ -22,7 +22,11 @@ lidar = ["laspy[lazrs]>=2.5"]
 # geographic coordinates into the delivery CRS. Same lazy pattern.
 crs = ["pyproj>=3.6"]
 
-dev = ["pytest>=7", "laspy[lazrs]>=2.5", "pyproj>=3.6"]
+# Above-ground classification (Phase 5): the random forest. Same lazy
+# pattern; the math core never imports it.
+ml = ["scikit-learn>=1.3"]
+
+dev = ["pytest>=7", "laspy[lazrs]>=2.5", "pyproj>=3.6", "scikit-learn>=1.3"]
 
 [tool.setuptools.packages.find]
 include = ["pyargus*"]

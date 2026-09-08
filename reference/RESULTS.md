@@ -244,3 +244,46 @@ A 33-agent panel (three lenses, three refuters per finding) confirmed
 * Killed by the panel (1/3 confirms): a strict-AutoCAD LTYPE-table
   concern -- ezdxf strict + recover-audit accept the DXF with zero
   errors.
+
+## Phase 5: above-ground classification vs the delivered classes
+
+Measured 2026-09-08 by `python -m reference.summerville_above` --
+random forest on 8 handcrafted features, SPATIAL holdout (train west,
+evaluate east; 7.9M eval points), 31 s end to end on 14.3M points.
+
+* **Agreement 0.9972, kappa 0.9881** against delivered classes
+  3/4/5/6. Vegetation tiers: recalls 0.983-0.998, precisions
+  0.955-1.000 -- HAG dominates (importance 0.62), confirming the
+  roadmap's explainable-features bet.
+* **Building recall 0.918, precision 0.558** -- quote WITH its
+  context: buildings are 0.06% of the eval half (4,814 points), so a
+  whisper of canopy confusion swamps precision on this rural site.
+  The number travels with the site, not the method.
+* **Deployment conditions** (the panel's honesty demand): the same
+  forest scored behind SMRF ground instead of delivered ground drops
+  only -0.0026 to 0.9946; 394k delivered class-3 points are absorbed
+  into SMRF's thicker ground and leave the universe (recorded, not
+  hidden). The train/deploy ground shift is real, measured, small.
+* Delivered class-1 (unlabeled) points split 46/53 into low/high
+  vegetation -- the delivery just never labeled them.
+
+### Phase-5 adversarial review round (same day)
+
+A 39-agent panel confirmed 8 findings; all fixed, suite at 146 tests:
+
+* **One-pass covariance cancelled catastrophically at state-plane
+  magnitudes** -- the shape features were translation-VARIANT
+  (sphericity halved moving the same cell to Summerville
+  coordinates). Two-pass deviations now; pinned by an invariance
+  test at 2.26e6 ft offsets.
+* **Class-7 noise poisoned its neighbours' cell features** (three
+  injected low-noise points flipped 249 building points). Noise is
+  now EXCLUDED from the feature computation via ignore_mask, never
+  merely relabeled after; pinned by an injected-noise CLI test.
+* The acceptance was scored only behind delivered ground
+  (train/deploy shift unmeasured) -- the SMRF-ground section above is
+  the fix. The module docstring promised acceptance metrics travel in
+  the model file; softened to match reality (notes travel, numbers
+  live here). --classes crashed raw on a trailing comma (now a named
+  SystemExit, trailing commas tolerated); load() crashed raw on
+  non-model joblib files (now a schema guard + a pickle warning).

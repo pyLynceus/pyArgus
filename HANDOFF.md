@@ -1,6 +1,7 @@
 # HANDOFF
 
-Updated 2026-09-08: Phase 6 delivered — TIN with soft breaklines,
+Updated 2026-09-08: Phase 5 delivered -- the roadmap's eight phases
+are complete (0 through 7). Earlier the same day: Phase 6 delivered — TIN with soft breaklines,
 marching-squares contours out to DXF/GeoJSON, and DSM/ESRI-ASCII
 export; 1-ft Summerville contours (2,152 lines) generated in 3 s with
 every vertex on its level. Phases 0, 2, 3, 4 and 4.5 landed the same
@@ -246,17 +247,38 @@ cli.build_parser); the CLI's exists-refusal was dropped (restored for
 classify and align outputs); the installer lacked
 ignoreversion/createallsubdirs (mixed-version upgrades).
 
+## Phase 5: above-ground classification, delivered
+
+The roadmap's last phase. `classify/features.py` (8 handcrafted
+features: HAG against the ground DTM, two-pass cell-covariance
+eigenshape -- one-pass cancelled catastrophically at state-plane
+magnitudes, panel-caught -- HAG span, return structure; noise excluded
+via ignore_mask because it poisons neighbours' cells) and
+`classify/above.py` (RandomForest behind the [ml] extra, joblib
+persistence with schema/version/feature guards and a pickle warning).
+CLI: `train-above` (a delivered classification is the answer key) and
+`classify-above` (ground-classified cloud in, full classes out, noise
+untouched). Acceptance in reference/RESULTS.md: spatial holdout
+agreement 0.9972 / kappa 0.988, deployment-conditions delta behind
+SMRF ground only -0.0026, building precision 0.558 quoted with its
+0.06%-of-points context. A model is one site's forest: the provenance
+note travels in the file, the numbers live in RESULTS.md.
+
 ## Next step, with reasoning
 
-**Phase 5 (above-ground classification)** is the one roadmap phase
-left: random forest on geometric features (height above ground,
-eigenvalue descriptors, return ratios), scikit-learn enters, and the
-delivered classes 3/4/5/6 are the answer key -- same pattern that
-worked for ground. Also open from the original roadmap: RGB
-colorization from pyLynceus EO (the TerraPhoto bridge), and the
-standing Phase-4 wishes (time-dependent trajectory corrections; a
-real vendor-stated miscalibration dataset as the final alignment
-acceptance -- archive one if it ever comes through the shop).
+**The roadmap is complete.** What remains open, by value: (1) THE
+REAL PROJECT: a delivery where the imagery AT is tight but control
+misses the lidar INCONSISTENTLY -- above and below across the
+project. That signature points at strip misalignment or
+time-dependent trajectory error, and the diagnosis plan writes
+itself: qa-report with the control CSVs (checkpoint residuals mark by
+mark), strip-dZ maps (does the sign flip follow strip boundaries?),
+control residuals grouped per strip (which strip is high, which
+low?), then `pyargus align` and re-measure. (2) RGB colorization from
+pyLynceus EO (the TerraPhoto bridge). (3) Time-dependent trajectory
+corrections in the alignment core -- the real project may demand
+exactly this. (4) Archive any vendor-stated miscalibrated flight as
+the final alignment acceptance.
 
 ## Findings so far
 

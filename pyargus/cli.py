@@ -4,6 +4,8 @@
     pyargus density cloud.las --cell 2.0
     pyargus qa-report cloud.las --out qa/ --control pts.csv --control-order pnez
     pyargus classify-ground cloud.las --out classified.las --cell 3
+    pyargus train-above labeled.las --out forest.joblib
+    pyargus classify-above classified.las --model forest.joblib --out full.las
     pyargus dtm classified.las --out dtm.asc --cell 3
     pyargus align cloud.las --sbet traj.out --vertical=-29.077 --write fixed.las
     pyargus contours classified.las --out contours.dxf --interval 1
@@ -178,6 +180,89 @@ def _cmd_dtm(args):
     print(f"wrote:   {args.out}")
     return 0
 
+
+
+
+def _cmd_train_above(args):
+    from pathlib import Path
+
+    from pyargus.classify import above, features
+    from pyargus.formats import las
+
+    if Path(args.out).exists() and not args.force:
+        raise SystemExit(f"{args.out} exists; pass --force to replace it")
+    points = las.read_points(
+        args.path, fields=("x", "y", "z", "classification",
+                           "return_number", "number_of_returns"))
+    ground = points["classification"] == 2
+    noise = points["classification"] == 7
+    matrix, above_index, valid = features.point_features(
+        points, ground, ignore_mask=noise, cell=args.cell)
+    labels = points["classification"][above_index]
+    try:
+        classes = tuple(int(c) for c in args.classes.split(",") if c.strip())
+    except ValueError:
+        raise SystemExit(f"--classes must be integers separated by commas, "
+                         f"got {args.classes!r}")
+    if not classes:
+        raise SystemExit("--classes named no classes")
+    usable = valid & np.isin(labels, classes)
+    if not usable.any():
+        raise SystemExit(f"no labeled points in classes {classes}")
+    model = above.train(matrix[usable], labels[usable],
+                        notes=f"trained on {Path(args.path).name}")
+    above.save(model, args.out)
+    counts = dict(zip(*np.unique(labels[usable], return_counts=True)))
+    print(f"trained: {int(usable.sum()):,} labeled points "
+          f"{ {int(k): int(v) for k, v in counts.items()} }")
+    ranked = sorted(zip(features.FEATURE_NAMES,
+                        model.forest.feature_importances_),
+                    key=lambda pair: -pair[1])
+    print("features: " + "  ".join(f"{n}={v:.3f}" for n, v in ranked))
+    print(f"wrote:   {args.out}")
+    return 0
+
+
+def _cmd_classify_above(args):
+    from pathlib import Path
+
+    import laspy
+
+    from pyargus.classify import above
+
+    src, dst = Path(args.path), Path(args.out)
+    if src.resolve() == dst.resolve():
+        raise SystemExit("refusing to overwrite the input cloud; --out must "
+                         "be a new file")
+    if dst.exists() and not args.force:
+        raise SystemExit(f"{dst} exists; pass --force to replace it")
+
+    model = above.load(args.model)
+    with laspy.open(str(src)) as reader:
+        las_data = reader.read()
+    points = {name: np.asarray(las_data[name]) for name in
+              ("x", "y", "z", "classification", "return_number",
+               "number_of_returns")}
+    ground = points["classification"] == 2
+    if not ground.any():
+        raise SystemExit("no class-2 ground in the cloud; run "
+                         "classify-ground first")
+    # noise is EXCLUDED from the features (it poisons its neighbors'
+    # cell statistics), not merely relabeled after prediction
+    noise = points["classification"] == 7
+    classification, unclassifiable = above.classify_above(
+        points, ground, model, ignore_mask=noise, cell=args.cell)
+    classification[noise] = 7
+    las_data.classification = classification
+    las_data.write(str(dst))
+    u, c = np.unique(classification, return_counts=True)
+    print(f"classes: { {int(k): int(v) for k, v in zip(u, c)} }")
+    if unclassifiable:
+        print(f"no HAG:  {unclassifiable:,} points left class 1 (beyond "
+              f"ground coverage)")
+    print(f"model:   {model.notes or args.model}")
+    print(f"wrote:   {dst}")
+    return 0
 
 
 def _cmd_contours(args):
@@ -425,6 +510,28 @@ def build_parser():
                        help="highest surface from ALL returns instead of "
                             "mean ground")
     p_dtm.set_defaults(func=_cmd_dtm)
+
+    p_ta = sub.add_parser("train-above",
+                          help="train the above-ground forest on a "
+                               "labeled cloud")
+    p_ta.add_argument("path")
+    p_ta.add_argument("--out", required=True, help="model file (.joblib)")
+    p_ta.add_argument("--classes", default="3,4,5,6",
+                      help="labels to learn (default 3,4,5,6)")
+    p_ta.add_argument("--cell", type=float, default=3.0)
+    p_ta.add_argument("--force", action="store_true")
+    p_ta.set_defaults(func=_cmd_train_above)
+
+    p_ca = sub.add_parser("classify-above",
+                          help="apply a trained forest to a "
+                               "ground-classified cloud")
+    p_ca.add_argument("path")
+    p_ca.add_argument("--model", required=True)
+    p_ca.add_argument("--out", required=True,
+                      help="output LAS/LAZ (never the input)")
+    p_ca.add_argument("--cell", type=float, default=3.0)
+    p_ca.add_argument("--force", action="store_true")
+    p_ca.set_defaults(func=_cmd_classify_above)
 
     p_ct = sub.add_parser("contours", help="contour lines to DXF/GeoJSON")
     p_ct.add_argument("path")

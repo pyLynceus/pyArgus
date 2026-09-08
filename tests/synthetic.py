@@ -129,3 +129,60 @@ def misaligned_strip(yaw, origin, length, *, terrain=rolling_terrain,
     body = body @ r_true                                   # R_true^T applied
     xyz = nav + np.einsum("nij,nj->ni", r_nav, body) + np.asarray(true_offset)
     return StripBundle(xyz=xyz, nav_xyz=nav, rpy=rpy), ground
+
+
+def labeled_scene(seed=0, n_ground=20000):
+    """A scene with the answer key attached: ground (2), low
+    vegetation (3), high vegetation (5), buildings (6), each built to
+    have the geometry its class implies -- roofs planar and
+    single-return, canopy scattered and multi-return.
+
+    Returns (points dict incl. return fields, labels array).
+    """
+    rng = np.random.default_rng(seed)
+
+    def ground_z(x, y):
+        return 50.0 + 0.02 * x
+
+    parts = []
+
+    gx = rng.uniform(0, 100, n_ground)
+    gy = rng.uniform(0, 100, n_ground)
+    parts.append((gx, gy, ground_z(gx, gy) + rng.normal(0, 0.03, gx.size),
+                  np.ones(gx.size), np.ones(gx.size), 2))
+
+    for x0, y0, size, height in ((10, 10, 15, 12.0), (70, 15, 12, 10.0),
+                                 (15, 70, 14, 15.0)):
+        bx = rng.uniform(x0, x0 + size, 3000)
+        by = rng.uniform(y0, y0 + size, 3000)
+        bz = ground_z(bx, by) + height + rng.normal(0, 0.04, bx.size)
+        parts.append((bx, by, bz, np.ones(bx.size), np.ones(bx.size), 6))
+
+    for cx0, cy0 in ((45, 45), (80, 70), (40, 85)):
+        cx = cx0 + rng.normal(0, 6.0, 4000)
+        cy = cy0 + rng.normal(0, 6.0, 4000)
+        cz = ground_z(cx, cy) + rng.uniform(9.0, 28.0, cx.size)
+        rn = rng.integers(1, 3, cx.size).astype(float)
+        parts.append((cx, cy, cz, rn, np.full(cx.size, 2.0), 5))
+
+    # low vegetation on BOTH halves: a spatial holdout must see every
+    # class on each side (the first cut of this scene put all of class
+    # 3 east of the split and the forest scored 0 on it -- unseen is
+    # unlearnable, not misclassified)
+    for x0, x1, y0, y1 in ((30, 48, 8, 30), (55, 95, 35, 60)):
+        lx = rng.uniform(x0, x1, 1800)
+        ly = rng.uniform(y0, y1, 1800)
+        lz = ground_z(lx, ly) + rng.uniform(0.4, 2.5, lx.size)
+        rn = rng.integers(1, 3, lx.size).astype(float)
+        parts.append((lx, ly, lz, rn, np.full(lx.size, 2.0), 3))
+
+    x = np.concatenate([p[0] for p in parts])
+    y = np.concatenate([p[1] for p in parts])
+    z = np.concatenate([p[2] for p in parts])
+    return_number = np.concatenate([p[3] for p in parts]).astype(np.uint8)
+    number_of_returns = np.concatenate([p[4] for p in parts]).astype(np.uint8)
+    labels = np.concatenate([np.full(p[0].size, p[5], dtype=np.uint8)
+                             for p in parts])
+    points = {"x": x, "y": y, "z": z, "return_number": return_number,
+              "number_of_returns": number_of_returns}
+    return points, labels
