@@ -29,7 +29,9 @@ Phase 4; the QA that referees it ships first.
     pyargus/classify  in-core SMRF ground classification (no PDAL: it has
                       no Windows wheel; same algorithm, ~150 lines of
                       numpy/scipy)
-    pyargus/surfaces  DTM gridding + ESRI ASCII export; TIN/contours later
+    pyargus/surfaces  DTM/DSM gridding + ESRI ASCII export, TIN with
+                      soft breaklines, marching-squares contours out to
+                      DXF (R12) and GeoJSON
 
 The commands:
 
@@ -40,6 +42,8 @@ The commands:
     pyargus dtm classified.las --out dtm.asc --cell 3
     pyargus align cloud.las --sbet trajectory.out \
       --vertical EPSG:6360 --proj-network --write aligned.las
+    pyargus contours classified.las --out contours.dxf --interval 1 \
+      --breaklines creek.geojson
 
 ## Running
 

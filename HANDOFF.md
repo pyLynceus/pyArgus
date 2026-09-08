@@ -1,10 +1,10 @@
 # HANDOFF
 
-Updated 2026-09-08: Phase 4.5 delivered — the real Summerville
-trajectory now attaches to the real strips (`pyargus align` CLI works
-end to end), and injected boresight recovered through the REAL
-geometry to ~4 arcsec / 0.001 ft. Phases 0, 2, 3 and 4 landed the
-same day.
+Updated 2026-09-08: Phase 6 delivered — TIN with soft breaklines,
+marching-squares contours out to DXF/GeoJSON, and DSM/ESRI-ASCII
+export; 1-ft Summerville contours (2,152 lines) generated in 3 s with
+every vertex on its level. Phases 0, 2, 3, 4 and 4.5 landed the same
+day.
 
 ## Where this stands
 
@@ -190,14 +190,42 @@ valid regardless; quoting the angles to a POSPac/vendor calibration
 report as-is is not yet validated -- that needs a dataset with a known
 vendor-stated miscalibration.
 
+## Phase 6: surfaces and deliverables, delivered
+
+The chain now runs classified LAZ -> DTM/DSM -> contours entirely
+in-suite, still with no heavy dependency:
+
+* `surfaces/tin.py` -- Delaunay TIN with SOFT breaklines (densified
+  3D vertices join the point set; documented as not a constrained
+  Delaunay). Breaklines arrive as 3D LineString GeoJSON; 2D lines are
+  refused -- a breakline's z is surveyed truth, never draped.
+* `surfaces/contours.py` -- marching squares over cell-centered
+  grids, saddle resolution by the cell-average rule, chains joined,
+  Chaikin smoothing opt-in (it moves vertices off the measured
+  surface and the CLI says so).
+* `formats/dxf.py` (R12 3D POLYLINE, CONTOUR_INDEX/_INTERMEDIATE
+  layers, ezdxf-strict clean) and `formats/geojson.py`;
+  `surfaces/dtm.py` grew `dsm_grid`.
+* CLI: `pyargus contours` (DXF/GeoJSON by extension, --breaklines
+  switches to the TIN, --max-fill governs voids on BOTH paths) and
+  `pyargus dtm --dsm`.
+
+Acceptance and the review round are in reference/RESULTS.md: 40
+levels / 181,335 ft of Summerville linework with vertex-vs-DTM error
+0.000 ft; a 33-agent adversarial panel confirmed 5 findings (the DSM
+referee's unaligned grid crop, TIN contours invented across voids,
+and three mutation-unpinned branches), all fixed and test-pinned.
+
 ## Next step, with reasoning
 
-**Phase 5 (above-ground classification) or Phase 6 (TIN, breaklines,
-contours)** -- both independent, pick by what a delivery needs first.
-Phase 6 completes the deliverable chain (classified LAZ -> DTM ->
-contours all in-suite); Phase 5 needs scikit-learn and the
+**Phase 5 (above-ground classification) or Phase 7 (GUI + pyLynceus
+launcher + packaged exe).** Phase 5 needs scikit-learn and uses the
 delivered classes 3/4/5/6 as the answer key, same pattern as ground.
-GUI + pyLynceus launcher integration (Phase 7) after either.
+Phase 7 makes the suite usable beside pyLynceus/Plumbline the way the
+roadmap promised (launcher tab, embedded viewer for spot checks,
+PyInstaller exe). With the full data pipeline now proven end to end,
+Phase 7 is the higher-leverage next move unless a delivery needs
+vegetation/building classes first.
 
 ## Findings so far
 
