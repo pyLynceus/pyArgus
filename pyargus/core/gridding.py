@@ -38,6 +38,15 @@ def min_grid(x, y, z, x_edges, y_edges):
     return grid
 
 
+def max_grid(x, y, z, x_edges, y_edges):
+    """Per-cell maximum z; empty cells are NaN. The DSM primitive."""
+    ix, iy = cell_indices(x, y, x_edges, y_edges)
+    grid = np.full((len(x_edges) - 1, len(y_edges) - 1), -np.inf)
+    np.maximum.at(grid, (ix, iy), z)
+    grid[~np.isfinite(grid)] = np.nan
+    return grid
+
+
 def mean_grid(x, y, z, x_edges, y_edges):
     """Per-cell mean z; empty cells are NaN."""
     ix, iy = cell_indices(x, y, x_edges, y_edges)
@@ -70,6 +79,21 @@ def inpaint_nearest(grid, max_distance=None):
     if max_distance is not None:
         filled = np.where(distance <= max_distance, filled, np.nan)
     return np.where(missing, filled, grid)
+
+
+def coverage_mask(x, y, x_edges, y_edges, max_distance=0):
+    """True where a cell holds data or lies within ``max_distance``
+    cells of one. The guard that keeps interpolating surfaces (a TIN
+    spans every interior void) from inventing terrain across lakes."""
+    from scipy.ndimage import distance_transform_edt
+
+    ix, iy = cell_indices(np.asarray(x, dtype=float),
+                          np.asarray(y, dtype=float), x_edges, y_edges)
+    occupied = np.zeros((len(x_edges) - 1, len(y_edges) - 1), dtype=bool)
+    occupied[ix, iy] = True
+    if max_distance <= 0:
+        return occupied
+    return distance_transform_edt(~occupied) <= max_distance
 
 
 def bilinear_sample(grid, x, y, x_edges, y_edges):

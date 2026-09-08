@@ -57,3 +57,25 @@ def test_esri_ascii_refuses_rectangular_cells(tmp_path):
 def test_no_points_refuses():
     with pytest.raises(ValueError):
         dtm.dtm_grid(np.array([]), np.array([]), np.array([]), cell=1.0)
+
+
+def test_dsm_rides_the_roofs():
+    from tests.synthetic import classification_scene
+
+    points, truth = classification_scene(seed=4)
+    dsm_g, xe, ye = dtm.dsm_grid(points["x"], points["y"], points["z"],
+                                 cell=2.0)
+    dtm_g, xe_d, ye_d = dtm.dtm_grid(points["x"][truth], points["y"][truth],
+                                     points["z"][truth], cell=2.0)
+    # comparing by index is only honest when the origins agree -- the
+    # review panel caught a referee that skipped this check
+    assert xe[0] == xe_d[0] and ye[0] == ye_d[0]
+    n = min(dsm_g.shape[0], dtm_g.shape[0]), min(dsm_g.shape[1], dtm_g.shape[1])
+    both = np.isfinite(dsm_g[:n[0], :n[1]]) & np.isfinite(dtm_g[:n[0], :n[1]])
+    # the highest surface never dips below the ground surface
+    assert (dsm_g[:n[0], :n[1]][both] >= dtm_g[:n[0], :n[1]][both] - 0.2).all()
+    # over the first building footprint (15..29, 15..29) the DSM sits
+    # ~8 above the ground surface
+    ix = slice(int(17 // 2), int(27 // 2))
+    diff = dsm_g[ix, ix] - dtm_g[ix, ix]
+    assert np.nanmedian(diff) > 7.0

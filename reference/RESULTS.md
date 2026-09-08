@@ -198,3 +198,49 @@ majority kill) confirmed 10 findings; all fixed and re-verified:
 After the fixes: 98 tests green, and the real-Summerville acceptance
 reproduces identically (boresight recovery <= 1.9e-5 rad, offsets
 <= 0.001 ft, dz 0.187 -> -0.003).
+
+## Phase 6: contours and DSM from the real cloud
+
+Measured 2026-09-08 by `python -m reference.summerville_contours`
+(1-ft contours from the delivered class-2 DTM at 3-ft cells; DSM from
+all returns).
+
+* 2,152 contour lines over 40 levels (627..666 ft), 181,335 ft of
+  linework, 4 s. Written as DXF (R12 3D polylines, CONTOUR_INDEX /
+  CONTOUR_INTERMEDIATE layers) and GeoJSON.
+* Referee 1 -- vertex consistency: all 81,190 contour vertices sit on
+  their level against the DTM to 0.000 ft (median, p95 AND max). This
+  is exact by construction on a shared linear surface, so it referees
+  the plumbing (indexing, coordinates, joining), not the terrain; the
+  analytic plane/cone tests carry the geometric correctness.
+* Referee 2 -- DSM >= DTM: median canopy height 42.6 ft (a vegetated
+  site), p95 87.3 ft. 33 of 209,014 cells dip below the DTM by more
+  than 0.5 ft: inpaint-boundary artifacts where the DTM filled across
+  a gap from higher ground while the DSM has real low returns there.
+  Known, small, and at fill edges only.
+
+### Phase-6 adversarial review round (same day)
+
+A 33-agent panel (three lenses, three refuters per finding) confirmed
+5 findings; all fixed, suite at 120 tests:
+
+* **The DSM referee itself was flawed**: it cropped both grids from
+  index zero without aligning origins (grid_edges floors each
+  dataset's OWN min), which the panel proved can both fabricate and
+  mask below-DTM violations on sloped data. Fixed with a world-aligned
+  window; on the real Summerville cloud the origins happened to
+  coincide, so the recorded numbers stand unchanged -- but the flaw
+  was real and is why the referee now asserts alignment.
+* **The --breaklines path invented terrain across voids**: a TIN
+  interpolates every interior hole, so adding one breakline silently
+  turned lakes into contoured terrain and --max-fill did nothing.
+  Fixed with gridding.coverage_mask (TIN grid masked back to data
+  coverage, --max-fill meaning restored); pinned by a holed-scene CLI
+  test.
+* Saddle cases 5/10 and the closed-ring Chaikin branch were
+  mutation-unpinned (zero saddle squares in the plane/cone fixtures).
+  Now pinned by explicit single-square saddle tests in both
+  center-above/-below orientations and a closed-ring smoothing test.
+* Killed by the panel (1/3 confirms): a strict-AutoCAD LTYPE-table
+  concern -- ezdxf strict + recover-audit accept the DXF with zero
+  errors.

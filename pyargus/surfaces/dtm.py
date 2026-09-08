@@ -28,6 +28,21 @@ def dtm_grid(x, y, z, cell, max_fill=10):
     return grid, x_edges, y_edges
 
 
+def dsm_grid(x, y, z, cell, max_fill=10):
+    """Highest-surface DSM: per-cell max of ALL returns, filled like
+    dtm_grid. Feed it the whole cloud, not one class."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z, dtype=float)
+    if x.size == 0:
+        raise ValueError("no points")
+    x_edges, y_edges = gridding.grid_edges(x, y, cell)
+    grid = gridding.max_grid(x, y, z, x_edges, y_edges)
+    if max_fill:
+        grid = gridding.inpaint_nearest(grid, max_distance=max_fill)
+    return grid, x_edges, y_edges
+
+
 def write_esri_ascii(path, grid, x_edges, y_edges, nodata=-9999.0):
     """Write an [ix, iy] grid as an ESRI ASCII raster (rows north-first)."""
     grid = np.asarray(grid, dtype=float)

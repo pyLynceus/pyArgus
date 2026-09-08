@@ -6,6 +6,7 @@
     pyargus classify-ground cloud.las --out classified.las --cell 3
     pyargus dtm classified.las --out dtm.asc --cell 3
     pyargus align cloud.las --sbet traj.out --vertical=-29.077 --write fixed.las
+    pyargus contours classified.las --out contours.dxf --interval 1
 
 More subcommands arrive as their phases land; nothing appears here
 before it works.
@@ -154,19 +155,98 @@ def _cmd_dtm(args):
     from pyargus.surfaces import dtm
 
     points = las.read_points(args.path, fields=("x", "y", "z", "classification"))
+    if args.dsm:
+        m = np.ones(points["x"].size, dtype=bool)
+        grid, x_edges, y_edges = dtm.dsm_grid(
+            points["x"], points["y"], points["z"], args.cell,
+            max_fill=args.max_fill)
+    else:
+        m = points["classification"] == args.ground_class
+        if not m.any():
+            raise SystemExit(f"no class-{args.ground_class} points in {args.path}; "
+                             f"classify first or pass --ground-class")
+        grid, x_edges, y_edges = dtm.dtm_grid(
+            points["x"][m], points["y"][m], points["z"][m], args.cell,
+            max_fill=args.max_fill)
+    dtm.write_esri_ascii(args.out, grid, x_edges, y_edges)
+    finite = grid[np.isfinite(grid)]
+    label = "points" if args.dsm else "ground"
+    print(f"{label}:  {int(m.sum()):,} points -> {grid.shape[0]}x{grid.shape[1]} "
+          f"cells at {args.cell:g} ({finite.size:,} with data)")
+    print(f"z:       {finite.min():.2f} .. {finite.max():.2f}")
+    print(f"wrote:   {args.out}")
+    return 0
+
+
+
+def _cmd_contours(args):
+    from pathlib import Path
+
+    from pyargus.formats import dxf, geojson, las
+    from pyargus.surfaces import contours as contours_mod
+    from pyargus.surfaces import dtm, tin
+
+    out = Path(args.out)
+    if out.suffix.lower() not in (".dxf", ".geojson", ".json"):
+        raise SystemExit(f"--out must end in .dxf or .geojson, got {out.name}")
+
+    points = las.read_points(args.path, fields=("x", "y", "z", "classification"))
     m = points["classification"] == args.ground_class
     if not m.any():
         raise SystemExit(f"no class-{args.ground_class} points in {args.path}; "
                          f"classify first or pass --ground-class")
-    grid, x_edges, y_edges = dtm.dtm_grid(
-        points["x"][m], points["y"][m], points["z"][m], args.cell,
-        max_fill=args.max_fill)
-    dtm.write_esri_ascii(args.out, grid, x_edges, y_edges)
-    finite = grid[np.isfinite(grid)]
-    print(f"ground:  {int(m.sum()):,} points -> {grid.shape[0]}x{grid.shape[1]} "
-          f"cells at {args.cell:g} ({finite.size:,} with data)")
-    print(f"z:       {finite.min():.2f} .. {finite.max():.2f}")
-    print(f"wrote:   {args.out}")
+
+    if args.breaklines:
+        breaks = []
+        for path in args.breaklines:
+            breaks.extend(geojson.read_breaklines_geojson(path))
+        surface = tin.build_tin(
+            np.column_stack([points["x"][m], points["y"][m], points["z"][m]]),
+            breaklines=breaks, cell_hint=args.cell)
+        grid, x_edges, y_edges = surface.grid(args.cell)
+        # A TIN interpolates across every interior void; mask it back to
+        # data coverage so a lake does not grow contours (--max-fill
+        # means the same thing here as on the DTM path).
+        from pyargus.core import gridding
+        covered = gridding.coverage_mask(
+            surface.points[:, 0], surface.points[:, 1], x_edges, y_edges,
+            max_distance=args.max_fill)
+        grid = np.where(covered, grid, np.nan)
+        source = (f"TIN of {int(m.sum()):,} ground points + "
+                  f"{surface.n_breakline_points:,} breakline vertices "
+                  f"({len(breaks)} lines, soft enforcement)")
+    else:
+        grid, x_edges, y_edges = dtm.dtm_grid(
+            points["x"][m], points["y"][m], points["z"][m], args.cell,
+            max_fill=args.max_fill)
+        source = f"mean-ground DTM of {int(m.sum()):,} points"
+
+    lines = contours_mod.contour_grid(grid, x_edges, y_edges, args.interval,
+                                      index_every=args.index_every)
+    if not lines:
+        raise SystemExit("surface relief is smaller than one interval; "
+                         "no contours to write")
+    if args.smooth:
+        for line in lines:
+            line.xy = contours_mod.smooth_chaikin(line.xy, args.smooth,
+                                                  closed=line.closed)
+
+    if out.suffix.lower() == ".dxf":
+        dxf.write_contours_dxf(out, lines)
+    else:
+        geojson.write_contours_geojson(out, lines)
+
+    levels = sorted({line.level for line in lines})
+    total = sum(np.linalg.norm(np.diff(line.xy, axis=0), axis=1).sum()
+                for line in lines)
+    print(f"surface: {source}, {args.cell:g}-unit cells")
+    print(f"levels:  {len(levels)} ({levels[0]:g} .. {levels[-1]:g} at "
+          f"{args.interval:g}; index every {args.index_every})")
+    print(f"lines:   {len(lines)} ({sum(1 for l in lines if l.is_index)} "
+          f"index), total length {total:,.0f}"
+          + (f", smoothed x{args.smooth} (vertices move OFF the measured "
+             f"surface)" if args.smooth else ""))
+    print(f"wrote:   {out}")
     return 0
 
 
@@ -340,7 +420,28 @@ def main(argv=None):
     p_dtm.add_argument("--ground-class", type=int, default=2)
     p_dtm.add_argument("--max-fill", type=int, default=10,
                        help="max gap fill distance, cells (0 disables)")
+    p_dtm.add_argument("--dsm", action="store_true",
+                       help="highest surface from ALL returns instead of "
+                            "mean ground")
     p_dtm.set_defaults(func=_cmd_dtm)
+
+    p_ct = sub.add_parser("contours", help="contour lines to DXF/GeoJSON")
+    p_ct.add_argument("path")
+    p_ct.add_argument("--out", required=True,
+                      help="output .dxf or .geojson")
+    p_ct.add_argument("--interval", type=float, default=1.0)
+    p_ct.add_argument("--index-every", type=int, default=5,
+                      help="every Nth level is an index contour")
+    p_ct.add_argument("--cell", type=float, default=3.0)
+    p_ct.add_argument("--ground-class", type=int, default=2)
+    p_ct.add_argument("--max-fill", type=int, default=10)
+    p_ct.add_argument("--breaklines", action="append",
+                      help="3D LineString GeoJSON (repeatable); switches "
+                           "the surface to a TIN with soft breaklines")
+    p_ct.add_argument("--smooth", type=int, default=0,
+                      help="Chaikin iterations; drawing polish that moves "
+                           "vertices off the measured surface")
+    p_ct.set_defaults(func=_cmd_contours)
 
     p_al = sub.add_parser("align", help="strip alignment against the SBET")
     p_al.add_argument("path")
