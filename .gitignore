@@ -12,3 +12,7 @@ dist-phase5/
 build-phase5/
 phase5-build.log
 dist-phase5-final/
+
+dist-status/
+build-status/
+status-build.log

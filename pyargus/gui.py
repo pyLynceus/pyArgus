@@ -18,6 +18,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -192,6 +193,27 @@ class StageRunner:
         # the thread has finished.
         self.products = []
         self._cancel = threading.Event()
+        self.started_at = None
+        self.finished_at = None
+        self.stage_name = "Job"
+
+    @property
+    def elapsed(self):
+        if self.started_at is None:
+            return 0.0
+        end = self.finished_at if self.finished_at is not None else time.monotonic()
+        return max(0.0, end - self.started_at)
+
+    @property
+    def status(self):
+        if self.started_at is None:
+            return "Ready"
+        if self.finished_at is None or self.running:
+            return "Stopping (waiting for current operation)" if self.cancelled() else "Running"
+        if self.error is not None:
+            return "Failed"
+        return "Stopped (stop requested)" if self.cancelled() else "Finished"
+
 
     @property
     def running(self):
@@ -207,6 +229,10 @@ class StageRunner:
         self.lines.put(str(text))
 
     def start(self, work):
+        if self.running:
+            raise RuntimeError("A job is already running")
+        self.started_at = time.monotonic()
+        self.finished_at = None
         self._cancel.clear()
         self.error = None
         self.report = None
@@ -220,6 +246,11 @@ class StageRunner:
                 self.error = exc
                 self.log(f"FAILED: {exc}")
                 self.log(traceback.format_exc(limit=3))
+            finally:
+                self.finished_at = time.monotonic()
+                outcome = "FAILED" if self.error else (
+                    "STOPPED (stop requested; check outputs)" if self.cancelled() else "FINISHED")
+                self.log(f"{outcome}: {self.stage_name} in {self.elapsed:.1f} seconds")
 
         self.thread = threading.Thread(target=body, daemon=True)
         self.thread.start()
@@ -815,6 +846,11 @@ class Application:
         ttk.Button(box, text="pyLynceus",
                    command=self.open_pylynceus).pack(side="right")
 
+        self.job_status = tk.StringVar(value="Ready | Elapsed 00:00:00")
+        ttk.Label(parent, textvariable=self.job_status, wraplength=420,
+                  font=("Segoe UI", 10, "bold")).pack(fill="x", pady=(6, 0))
+        self._busy_animation = False
+
         self.log = tk.Text(parent, height=11, width=46, state="disabled",
                            font=("Consolas", 8),
                            background=PALETTE["ink"],
@@ -834,7 +870,9 @@ class Application:
             return
         self.run_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
+        self.runner.stage_name = stage.title
         self.runner.start(work)
+        self._update_job_status()
         self._stage_open = True
 
     def open_pylynceus(self):
@@ -912,6 +950,26 @@ class Application:
                     self.runner.log(
                         f"{stage.title}: using {path.name}")
 
+    def _update_job_status(self):
+        runner = self.runner
+        seconds = int(runner.elapsed)
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        name = f" — {runner.stage_name}" if runner.started_at is not None else ""
+        self.job_status.set(
+            f"{runner.status}{name} | Elapsed {hours:02d}:{minutes:02d}:{seconds:02d}")
+        done, total = runner.progress
+        busy = runner.running and not (0 < done <= total)
+        if busy != self._busy_animation:
+            self.progress.stop()
+            self.progress.configure(mode="indeterminate" if busy else "determinate")
+            if busy:
+                self.progress.start(75)
+            self._busy_animation = busy
+        if not busy:
+            self.progress.configure(maximum=max(total, 1),
+                                    value=total if runner.status == "Finished" else done)
+
     def _tick(self):
         runner = self.runner
         while True:
@@ -923,8 +981,7 @@ class Application:
             self.log.insert("end", line + "\n")
             self.log.see("end")
             self.log.configure(state="disabled")
-        done, total = runner.progress
-        self.progress.configure(maximum=max(total, 1), value=done)
+        self._update_job_status()
         # Draw whenever a report exists that is not already on the
         # canvas -- NEVER gate this on having drained log lines: the
         # worker sets the report after its last log line, so on a real
@@ -944,7 +1001,8 @@ class Application:
             self._stage_open = False
             self.run_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
-            self._adopt_products(runner)
+            if runner.error is None and not runner.cancelled():
+                self._adopt_products(runner)
         self.root.after(PREVIEW_MS, self._tick)
 
     def _draw_preview(self, rgba):  # pragma: no cover - pixels on screen

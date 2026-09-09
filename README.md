@@ -97,10 +97,15 @@ joblib files. Older models without processing metadata must be retrained
 for GUI use; the existing CLI remains available. Model transfer accuracy
 must be checked on the receiving project.
 
-The current desktop build is `dist-phase5-final/pyArgus/pyArgus.exe`; keep
+The current desktop build is `dist-status/pyArgus/pyArgus.exe`; keep
 the entire folder together. `pyArgus.exe --self-test` exercises the
 bundled forest training/persistence/inference and creates a hidden
 window to verify the Above ground tab, exiting zero on success.
 
 Verified 2026-09-09: 169 tests passed; the reference battery passed all 45 checks; the packaged self-test exited 0. This build includes the checkout's concurrent alignment work. Desktop integration changes are confined to the GUI, model metadata, packaging entry, and tests.
+
+
+### Job timer and completion status
+
+The run panel shows the active stage, elapsed HH:MM:SS, and Ready, Running, Stopping, Finished, Failed, or Stopped status. The elapsed timer freezes when the worker exits; the log records the outcome and duration. An animated bar means the worker is active without a measured percentage, not an estimate of time remaining. Stop is cooperative: the display remains Stopping until the current operation returns. Inspect outputs after stopping; files already written are not rolled back. Failed or stopped jobs do not automatically hand products to downstream stages.
 
