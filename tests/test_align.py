@@ -116,3 +116,50 @@ def test_refuses_no_overlap_and_single_strip():
         solve_alignment([b0])
     with pytest.raises(ValueError, match="nothing to solve"):
         solve_alignment([b0, b1], solve_boresight=False, offsets="none")
+
+
+def test_control_anchors_the_absolute_datum():
+    """With surveyed marks in the solve, the strip-0 gauge lifts and
+    ALL offsets become absolute -- including strip 0's own error,
+    which strip-to-strip adjustment can never see."""
+    true_dz = (0.30, 0.35, 0.27)
+    bundles, truths = three_line_block(
+        12, true_boresight=TRUE_BETA,
+        offsets=tuple((0, 0, dz) for dz in true_dz))
+    rng = np.random.default_rng(13)
+    ce = rng.uniform(30.0, 170.0, 20)
+    cn = rng.uniform(-20.0, 20.0, 20)
+    control = np.column_stack([ce, cn, rolling_terrain(ce, cn)])
+
+    # control_radius stays TIGHT on curved terrain: a plane over a
+    # 12-unit window of this sinusoid carries ~0.09 of curvature
+    # sagitta per mark, which a dozen marks cannot average away
+    # (measured: 0.021 datum bias at radius 6, within noise at 4).
+    result = solve_alignment(bundles, min_points=6, control=control,
+                             control_radius=4.0)
+    assert result.absolute
+    assert result.n_control > 0
+    for i, dz in enumerate(true_dz):
+        assert abs(result.offsets[i, 2] + dz) < 0.015, (i, result.offsets[i])
+    assert abs(result.boresight[0] - TRUE_BETA[0]) < 2e-4
+    assert abs(result.boresight[1] - TRUE_BETA[1]) < 2e-4
+    assert result.control_rms_after < 0.03
+    assert result.control_rms_after < result.control_rms_before
+    corrected = result.corrected(bundles)
+    dz0 = corrected[0][:, 2] - truths[0][:, 2]
+    assert np.sqrt(np.mean(dz0 ** 2)) < 0.06
+
+
+def test_without_control_strip0_stays_the_gauge():
+    bundles, _ = three_line_block(14, true_boresight=TRUE_BETA)
+    result = solve_alignment(bundles, min_points=6)
+    assert not result.absolute
+    assert result.n_control == 0
+    assert np.all(result.offsets[0] == 0.0)
+
+
+def test_unreachable_control_refuses():
+    bundles, _ = three_line_block(15)
+    control = np.array([[5000.0, 5000.0, 100.0]])
+    with pytest.raises(ValueError, match="never touch"):
+        solve_alignment(bundles, min_points=6, control=control)

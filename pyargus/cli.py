@@ -376,6 +376,16 @@ def _cmd_align(args):
         trajectory, map_crs, vertical=vertical,
         allow_network=args.proj_network)
 
+    if args.control and not args.control_order:
+        raise SystemExit("--control-order is required with --control; the "
+                         "column order is never guessed (pnez or penz)")
+    control = None
+    if args.control:
+        from pyargus.formats import control as control_mod
+        _, ce, cn, cz = control_mod.read_control_csvs(args.control,
+                                                      args.control_order)
+        control = np.column_stack([ce, cn, cz])
+
     if args.any_class:
         mask = np.ones(points["x"].size, dtype=bool)
     else:
@@ -397,7 +407,14 @@ def _cmd_align(args):
 
     result = solve_alignment(
         attached.bundles, solve_boresight=not args.no_boresight,
-        offsets=args.offsets, cell=args.cell, min_points=args.min_points)
+        offsets=args.offsets, cell=args.cell, min_points=args.min_points,
+        control=control, control_weight=args.control_weight,
+        control_radius=args.control_radius)
+    if result.absolute:
+        print(f"datum:   ABSOLUTE, anchored by {result.n_control} control "
+              f"observations; control rms "
+              f"{result.control_rms_before:.3f} -> "
+              f"{result.control_rms_after:.3f}")
     deg = np.degrees(result.boresight)
     print(f"solved:  {result.n_observations:,} observations, "
           f"{result.iterations} iterations, patch rms "
@@ -406,7 +423,7 @@ def _cmd_align(args):
           f"pitch {result.boresight[1]:+.6f}  yaw {result.boresight[2]:+.6f} "
           f"rad  ({deg[0]:+.4f}/{deg[1]:+.4f}/{deg[2]:+.4f} deg)")
     for i, sid in enumerate(attached.strip_ids):
-        tag = "  (gauge)" if i == 0 else ""
+        tag = "  (gauge)" if i == 0 and not result.absolute else ""
         extra = (f"  de {result.offsets[i, 0]:+.4f}  "
                  f"dn {result.offsets[i, 1]:+.4f}"
                  if args.offsets == "xyz" else "")
@@ -565,6 +582,13 @@ def build_parser():
                       help="class used for solving (default 2)")
     p_al.add_argument("--any-class", action="store_true",
                       help="solve on all points, not one class")
+    p_al.add_argument("--control", action="append",
+                      help="surveyed marks CSV (repeatable); lifts the "
+                           "strip-0 gauge and anchors the ABSOLUTE datum")
+    p_al.add_argument("--control-order", choices=("pnez", "penz"),
+                      help="control column order; required with --control")
+    p_al.add_argument("--control-weight", type=float, default=10.0)
+    p_al.add_argument("--control-radius", type=float, default=6.0)
     p_al.add_argument("--offsets", choices=("z", "xyz", "none"), default="z")
     p_al.add_argument("--no-boresight", action="store_true")
     p_al.add_argument("--speed-floor", type=float, default=None,
