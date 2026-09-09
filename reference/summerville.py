@@ -63,6 +63,7 @@ def read_control():
 
 
 def main():
+    results = {}
     print(f"cloud: {CLOUD}")
     points = las.read_points(
         CLOUD, fields=("x", "y", "z", "gps_time", "classification",
@@ -74,6 +75,7 @@ def main():
     traj = sbet.read_sbet(SBET)
     sow = points["gps_time"] + ADJUSTED_OFFSET - GPS_WEEK * 604800
     inside = (sow >= traj["time"][0]) & (sow <= traj["time"][-1])
+    results["time_base_fraction"] = float(inside.mean())
     print(f"\n[time base] LAS sow {sow.min():.1f}..{sow.max():.1f}, "
           f"sbet {traj['time'][0]:.1f}..{traj['time'][-1]:.1f}, "
           f"{100.0 * inside.mean():.2f}% of returns inside trajectory")
@@ -81,6 +83,8 @@ def main():
     # --- density (whole cloud) ----------------------------------------
     dens, _, _ = density.density_grid(points["x"], points["y"], cell=3.0)
     covered = dens[dens > 0]
+    results["density_median"] = float(np.median(covered))
+    results["density_p95"] = float(np.percentile(covered, 95))
     print(f"\n[density] cell 3 ft: median {np.median(covered):.2f} pts/ft^2 "
           f"({np.median(covered) * 10.7639:.1f} pts/m^2), "
           f"p5 {np.percentile(covered, 5):.2f}, "
@@ -105,6 +109,8 @@ def main():
             except ValueError:
                 print(f"  {a}-{b}: no overlap")
                 continue
+            results[f"dz_{a}{b}_median"] = s["median"]
+            results[f"dz_{a}{b}_rmse"] = s["rmse"]
             print(f"  {a}-{b}: median {s['median']:+.3f}  rmse {s['rmse']:.3f}  "
                   f"p95|dz| {s['p95_abs']:.3f}  ({s['cells']} cells)")
 
@@ -125,6 +131,8 @@ def main():
     acc = checkpoints.asprs_vertical(finite)
     med = np.median(finite)
     nmad = 1.4826 * np.median(np.abs(finite - med))
+    results["tin_mean"] = acc.mean
+    results["tin_rmse"] = acc.rmse_z
     print(f"  n {acc.n}  mean {acc.mean:+.3f}  median {med:+.3f}  "
           f"rmse {acc.rmse_z:.3f}  nva {acc.nva:.3f}  nmad {nmad:.3f} (ft)")
 
@@ -148,10 +156,15 @@ def main():
         print(f"  {pid:>4}: {local[-1]:+.3f} ft  ({len(idx)} neighbours)")
     local = np.array(local)
     lmed = np.median(local)
+    results["local_n"] = int(local.size)
+    results["local_median"] = float(lmed)
+    results["local_nmad"] = float(
+        1.4826 * np.median(np.abs(local - lmed)))
     print(f"  n {local.size}  median {lmed:+.3f}  "
           f"nmad {1.4826 * np.median(np.abs(local - lmed)):.3f} (ft)")
     print("  pyLynceus recorded +0.146 ft (robust sd 0.150, six points); "
           "2026-09-08 this script reproduced +0.146 / nmad 0.148 exactly.")
+    return results
 
 
 if __name__ == "__main__":

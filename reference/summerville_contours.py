@@ -25,6 +25,7 @@ CELL = 3.0
 
 
 def main():
+    results = {}
     print(f"cloud: {CLOUD}")
     points = las.read_points(CLOUD, fields=("x", "y", "z", "classification"))
     ground = points["classification"] == 2
@@ -40,6 +41,9 @@ def main():
     levels = sorted({line.level for line in lines})
     total = sum(np.linalg.norm(np.diff(line.xy, axis=0), axis=1).sum()
                 for line in lines)
+    results["n_lines"] = len(lines)
+    results["n_levels"] = len(levels)
+    results["total_length"] = float(total)
     print(f"contours: {len(lines)} lines over {len(levels)} levels "
           f"({levels[0]:g}..{levels[-1]:g}), total {total:,.0f} ft, "
           f"{time.perf_counter() - t0:.0f} s")
@@ -52,6 +56,7 @@ def main():
             line.xy[:, 0], line.xy[:, 1], xe, ye)
         errors.append(np.abs(z[np.isfinite(z)] - line.level))
     errors = np.concatenate(errors)
+    results["vertex_err_max"] = float(errors.max())
     print(f"vertex-vs-DTM |dz|: median {np.median(errors):.4f}  "
           f"p95 {np.percentile(errors, 95):.4f}  "
           f"max {errors.max():.3f} ft  ({errors.size:,} vertices)")
@@ -70,6 +75,8 @@ def main():
     dsm_win = dsm_grid[ox:ox + nx, oy:oy + ny]
     both = np.isfinite(dtm_grid[:nx, :ny]) & np.isfinite(dsm_win)
     diff = (dsm_win - dtm_grid[:nx, :ny])[both]
+    results["dsm_dtm_median"] = float(np.median(diff))
+    results["below_dtm_cells"] = int((diff < -0.5).sum())
     print(f"dsm-dtm over {diff.size:,} world-aligned cells: "
           f"min {diff.min():+.2f}, median {np.median(diff):+.2f}, "
           f"p95 {np.percentile(diff, 95):.1f} ft, "
@@ -81,6 +88,7 @@ def main():
     geojson.write_contours_geojson(f"{OUT}/contours_1ft.geojson", lines)
     dtm.write_esri_ascii(f"{OUT}/dsm.asc", dsm_grid, xe2, ye2)
     print(f"wrote: {OUT}/contours_1ft.dxf, .geojson, dsm.asc")
+    return results
 
 
 if __name__ == "__main__":

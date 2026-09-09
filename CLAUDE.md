@@ -15,6 +15,18 @@ The project has its own environment and needs it:
 .venv/Scripts/python.exe -m pytest tests/ -q
 ```
 
+After any substantive change to qa/, align/, classify/, surfaces/ or
+formats/, also run the acceptance battery against its recorded
+numbers (needs Z: and the cached geoid grid; ~3 minutes):
+
+```bash
+.venv/Scripts/python.exe -m reference.run_all
+```
+
+A failure means behavior changed: fix it, or update the expectation
+in reference/run_all.py AND the RESULTS.md entry together, never one
+without the other.
+
 To rebuild: `uv venv --python 3.11 .venv` then
 `UV_LINK_MODE=copy uv pip install -e ".[dev]"` (OneDrive refuses uv's
 hardlinks; without copy mode the install fails with os error 396).

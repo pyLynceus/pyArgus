@@ -128,3 +128,65 @@ def correspondences(bundle_a, bundle_b, xyz_a, xyz_b, a, b, *, cell=5.0,
         np.array(n_list) if k else np.empty((0, 3)),
         np.array(j_list) if k else np.empty((0, 3)),
         int(common.size))
+
+
+@dataclass
+class ControlObservations:
+    """Point-to-plane observations tying ONE strip to surveyed marks.
+
+    A mark is the immovable side of the pair equation: the plane comes
+    from the strip's points within ``radius`` of the mark, and
+    d = n . (mark - centroid), so a positive d says the mark sits
+    above the strip surface and the strip must move up to meet it.
+    """
+    strip: int
+    d: np.ndarray        # (K,)
+    normal: np.ndarray   # (K, 3)
+    j_beta: np.ndarray   # (K, 3)
+    marks: np.ndarray    # (K,) indices into the control array
+
+
+def control_observations(bundle, xyz, strip, control_enz, *, radius=6.0,
+                         min_points=10, max_rms=None, min_normal_z=0.7):
+    """Build control observations for one strip against (M, 3) marks.
+
+    ``xyz`` is the strip's CURRENT (possibly corrected) coordinates;
+    navigation state and body vectors come from the bundle, exactly as
+    in ``correspondences``. Marks without enough nearby strip points,
+    or whose local patch fails the planarity gates, contribute nothing
+    -- a mark in the trees must not steer the adjustment.
+    """
+    if max_rms is None:
+        max_rms = radius / 25.0
+    control_enz = np.asarray(control_enz, dtype=float)
+    d_list, n_list, j_list, m_list = [], [], [], []
+    for k in range(control_enz.shape[0]):
+        mark = control_enz[k]
+        near = ((np.abs(xyz[:, 0] - mark[0]) <= radius)
+                & (np.abs(xyz[:, 1] - mark[1]) <= radius))
+        idx = np.flatnonzero(near)
+        if idx.size < min_points:
+            continue
+        cloud = xyz[idx]
+        centroid = cloud.mean(axis=0)
+        _, svals, vt = np.linalg.svd(cloud - centroid, full_matrices=False)
+        normal = vt[2]
+        if normal[2] < 0:
+            normal = -normal
+        rms = svals[2] / np.sqrt(idx.size)
+        if rms > max_rms or normal[2] < min_normal_z:
+            continue
+        anchor = _nearest_to_centroid(xyz, idx)
+        m_vec = bundle.r_nav[anchor].T @ normal
+        j_beta = -np.cross(m_vec, bundle.body_vecs[anchor])
+        d_list.append(float(normal @ (mark - centroid)))
+        n_list.append(normal)
+        j_list.append(j_beta)
+        m_list.append(k)
+    n_obs = len(d_list)
+    return ControlObservations(
+        strip,
+        np.array(d_list) if n_obs else np.empty(0),
+        np.array(n_list) if n_obs else np.empty((0, 3)),
+        np.array(j_list) if n_obs else np.empty((0, 3)),
+        np.array(m_list, dtype=int) if n_obs else np.empty(0, dtype=int))

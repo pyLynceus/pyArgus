@@ -35,6 +35,7 @@ PARAMS = dict(cell=3.0, slope=0.15, window=60.0, threshold=1.5,
 
 
 def main():
+    results = {}
     print(f"cloud: {CLOUD}")
     points = las.read_points(
         CLOUD, fields=("x", "y", "z", "classification",
@@ -65,9 +66,11 @@ def main():
     # surface), the DTM difference, and the control comparison.
     print("\n[confusion vs delivered class 2 -- context, not acceptance]")
     s = ground.confusion(predicted, delivered)
+    results["recall"] = s["recall"]
     print(f"  agreement {s['agreement']:.4f}  precision {s['precision']:.4f}  "
           f"recall {s['recall']:.4f}  kappa {s['kappa']:.4f}")
     caught = int(np.count_nonzero(predicted & noise))
+    results["noise_as_ground"] = caught
     print(f"  delivered-noise points classified ground: {caught:,} "
           f"of {int(noise.sum()):,}")
 
@@ -81,6 +84,7 @@ def main():
     fz = fz[np.isfinite(fz)]
     print(f"  {fz.size:,} measurable: median {np.median(fz):+.2f}  "
           f"p90 {np.percentile(fz, 90):+.2f}  p99 {np.percentile(fz, 99):+.2f} ft")
+    results["fp_within_1ft"] = float(np.mean(np.abs(fz) <= 1.0))
     print(f"  within +/-0.5 ft: {100 * np.mean(np.abs(fz) <= 0.5):.1f}%   "
           f"within +/-1.0 ft: {100 * np.mean(np.abs(fz) <= 1.0):.1f}%")
 
@@ -94,6 +98,8 @@ def main():
     both = np.isfinite(ours[:nx, :ny]) & np.isfinite(theirs[:nx, :ny])
     diff = (ours[:nx, :ny] - theirs[:nx, :ny])[both]
     med = np.median(diff)
+    results["dtm_median"] = float(med)
+    results["dtm_nmad"] = float(1.4826 * np.median(np.abs(diff - med)))
     print(f"  common cells {diff.size:,}: median {med:+.3f} ft, "
           f"nmad {1.4826 * np.median(np.abs(diff - med)):.3f}, "
           f"p95|d| {np.percentile(np.abs(diff), 95):.3f}")
@@ -105,9 +111,12 @@ def main():
     cmp_ = checkpoints.local_median_residuals(
         gxyz, ids, np.column_stack([ce, cn, cz]))
     stats = checkpoints.robust_summary(cmp_.values())
+    results["control_n"] = stats["n"]
+    results["control_median"] = stats["median"]
     print(f"  n {stats['n']}  median {stats['median']:+.3f}  "
           f"nmad {stats['nmad']:.3f} ft  "
           f"(delivered ground gave +0.146 / 0.148 on 6 marks)")
+    return results
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ CLASSES = (3, 4, 5, 6)
 
 
 def main():
+    results = {}
     print(f"cloud: {CLOUD}")
     points = las.read_points(
         CLOUD, fields=("x", "y", "z", "classification",
@@ -57,6 +58,8 @@ def main():
     expected = sum(float((truth == c).mean()) * float((predicted == c).mean())
                    for c in CLASSES)
     kappa = (agreement - expected) / (1.0 - expected)
+    results["agreement"] = agreement
+    results["kappa"] = float(kappa)
     print(f"\n[eval vs delivered] agreement {agreement:.4f}  "
           f"kappa {kappa:.4f}")
     for c in CLASSES:
@@ -70,6 +73,10 @@ def main():
     # the metric that matters most: building vs any vegetation
     b_truth = truth == 6
     b_pred = predicted == 6
+    results["building_recall"] = float(
+        (b_pred & b_truth).sum() / max(b_truth.sum(), 1))
+    results["building_precision"] = float(
+        (b_pred & b_truth).sum() / max(b_pred.sum(), 1))
     print(f"  building-vs-veg: recall "
           f"{float((b_pred & b_truth).sum() / max(b_truth.sum(), 1)):.3f}  "
           f"precision "
@@ -110,6 +117,7 @@ def main():
     print(f"  eval universe {int(eval2.sum()):,} "
           f"(delivered-ground eval had {int(eval_rows.sum()):,}; the "
           f"difference was absorbed into SMRF's thicker ground)")
+    results["deploy_agreement"] = agreement2
     print(f"  agreement {agreement2:.4f}  (delta "
           f"{agreement2 - agreement:+.4f} vs delivered-ground scoring)")
     for c in CLASSES:
@@ -128,6 +136,7 @@ def main():
                  for k, v in zip(u, c)}
         print(f"delivered class 1 (east, {int(rest.sum()):,} pts) "
               f"predicted as: {share}")
+    return results
 
 
 if __name__ == "__main__":

@@ -57,6 +57,7 @@ def dz01(xyzs):
 
 
 def report(label, with_cross):
+    results = {}
     print(f"\n== {label}")
     bundles = build(with_cross)
     before = dz01([b.xyz for b in bundles])
@@ -67,14 +68,18 @@ def report(label, with_cross):
         result = solve_alignment(bundles, cell=6.0, min_points=6)
     except ValueError as exc:
         print(f"solver refused: {exc}")
-        return
+        return {"refused": True}
     err = result.boresight - np.array(TRUE_BETA)
+    results["beta_err_max"] = float(np.abs(err).max())
+    results["dz_before_median"] = before["median"]
     print(f"solved in {time.perf_counter() - t0:.1f} s, "
           f"{result.n_observations:,} observations, "
           f"{result.iterations} iterations")
     print(f"boresight error: roll {err[0]:+.2e}  pitch {err[1]:+.2e}  "
           f"yaw {err[2]:+.2e} rad  "
           f"(true {TRUE_BETA[0]:+.1e}/{TRUE_BETA[1]:+.1e}/{TRUE_BETA[2]:+.1e})")
+    results["offset_err_max"] = float(max(
+        abs(result.offsets[s, 2] + TRUE_OFFSETS[s][2]) for s in range(1, 4)))
     for s in range(1, 4):
         got = result.offsets[s, 2]
         want = -TRUE_OFFSETS[s][2]
@@ -84,11 +89,14 @@ def report(label, with_cross):
     after = dz01(corrected)
     print(f"dz 0-1 after:  median {after['median']:+.3f}  "
           f"rmse {after['rmse']:.3f} ft")
+    return results
 
 
 def main():
-    report("with crossing line", True)
-    report("parallel lines only (Summerville-like)", False)
+    return {
+        "with_cross": report("with crossing line", True),
+        "parallel": report("parallel lines only (Summerville-like)", False),
+    }
 
 
 if __name__ == "__main__":

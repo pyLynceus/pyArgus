@@ -42,6 +42,7 @@ def dz_summary(xyz_a, xyz_b):
 
 
 def main():
+    results = {}
     print(f"cloud: {CLOUD}")
     points = las.read_points(CLOUD, fields=("x", "y", "z", "gps_time",
                                             "point_source_id",
@@ -59,6 +60,8 @@ def main():
     both = {k: round(float(np.degrees(v)), 2)
             for k, v in attached.track_errors.items()}
     print(f"  track error (deg): {both}")
+    results["track_error_deg"] = float(np.degrees(attached.track_error))
+    results["agl_median"] = attached.agl_median
     print(f"  AGL median {attached.agl_median:.1f} ft, nadir median "
           f"{attached.nadir_median_deg:.1f} deg")
     print(f"  strips {attached.strip_ids}: "
@@ -79,6 +82,9 @@ def main():
         full_ok = False
     print(f"  {time.perf_counter() - t0:.0f} s, {base.n_observations:,} obs, "
           f"patch rms {base.rms_before:.3f} -> {base.rms_after:.3f} ft")
+    results["baseline_beta_absmax"] = float(np.abs(base.boresight).max())
+    results["baseline_offset_absmax"] = float(
+        np.abs(base.offsets[:, 2]).max())
     print(f"  boresight {base.boresight}")
     for i, sid in enumerate(attached.strip_ids):
         print(f"  offset strip {sid}: {base.offsets[i, 2]:+.4f} ft")
@@ -94,6 +100,7 @@ def main():
         perturbed.append(StripBundle(xyz=xyz, nav_xyz=bundle.nav_xyz,
                                      rpy=bundle.rpy))
     before = dz_summary(perturbed[0].xyz, perturbed[1].xyz)
+    results["dz_before_median"] = before["median"]
     print(f"  dz 1-2 after injection: median {before['median']:+.3f} ft, "
           f"rmse {before['rmse']:.3f}")
 
@@ -104,6 +111,10 @@ def main():
           f"{solved.n_observations:,} obs, {solved.iterations} iterations")
 
     beta_err = solved.boresight - (base.boresight - beta_inj)
+    results["beta_err_max"] = float(np.abs(beta_err).max())
+    results["offset_err_max"] = float(max(
+        abs(solved.offsets[i, 2] - (base.offsets[i, 2] - INJECT_DZ[i]))
+        for i in range(4)))
     print(f"  boresight recovery error: {beta_err} rad")
     for i, sid in enumerate(attached.strip_ids):
         want = base.offsets[i, 2] - INJECT_DZ[i]
@@ -115,6 +126,8 @@ def main():
     after = dz_summary(corrected[0], corrected[1])
     print(f"  dz 1-2 after recovery: median {after['median']:+.3f} ft, "
           f"rmse {after['rmse']:.3f}")
+    results["dz_after_median"] = after["median"]
+    return results
 
 
 if __name__ == "__main__":
