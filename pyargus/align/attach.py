@@ -25,6 +25,7 @@ import numpy as np
 
 from pyargus.align.bundles import StripBundle
 from pyargus.formats import sbet as sbet_mod
+from pyargus.formats.trajectory import match_times
 
 
 def _interp_wrapped(t, angles, t_query):
@@ -37,7 +38,7 @@ def _interp_wrapped(t, angles, t_query):
 class AttachResult:
     strip_ids: list          # point_source_id per bundle, same order
     bundles: list            # StripBundle per strip
-    gps_week: int
+    gps_week: int | None
     heading_source: str      # "heading" or "heading+wander"
     track_error: float       # median |chosen heading - track| (radians)
     track_errors: dict       # both candidates' median errors
@@ -46,7 +47,7 @@ class AttachResult:
 
 
 def bundles_from_cloud(points, sbet, map_e, map_n, map_z, *,
-                       max_track_error=0.5, speed_floor=None):
+                       max_track_error=0.5, speed_floor=None, time_mode="week"):
     """Build one StripBundle per point_source_id.
 
     ``map_e/n/z`` are the trajectory positions from formats.crs, one
@@ -67,8 +68,7 @@ def bundles_from_cloud(points, sbet, map_e, map_n, map_z, *,
             raise ValueError(f"points need field {name!r} to attach a trajectory")
 
     t = sbet["time"]
-    week, inside_fraction = sbet_mod.week_alignment(points["gps_time"], t)
-    sow = points["gps_time"] + 1_000_000_000.0 - week * 604800.0
+    sow, week, inside_fraction = match_times(points["gps_time"], t, time_mode)
     inside = (sow >= t[0]) & (sow <= t[-1])
     if inside.mean() < 0.99:
         raise ValueError(
@@ -103,8 +103,7 @@ def bundles_from_cloud(points, sbet, map_e, map_n, map_z, *,
         raise ValueError(
             f"heading disagrees with the flight track by "
             f"{np.degrees(errors[heading_source]):.1f} deg median (best "
-            f"candidate {heading_source!r}); that is a convention error, "
-            f"not crab. Refusing to attach.")
+            f"candidate {heading_source!r}); check attitude conventions and crab angle. Refusing to attach.")
 
     sow = sow[inside]
     att = sbet_mod.interpolate(sbet, sow, fields=("roll", "pitch"))
@@ -151,7 +150,7 @@ def bundles_from_cloud(points, sbet, map_e, map_n, map_z, *,
 
 def apply_corrections(points, sbet, map_e, map_n, map_z, heading_source,
                       boresight, offsets_by_sid, chunk_size=2_000_000,
-                      drift_by_sid=None):
+                      drift_by_sid=None, time_mode="week"):
     """Corrected coordinates for a whole cloud, in chunks.
 
     Applies the solved boresight and per-strip offsets through the same
@@ -172,8 +171,7 @@ def apply_corrections(points, sbet, map_e, map_n, map_z, heading_source,
     from pyargus.core import rotation
 
     t = sbet["time"]
-    week, _ = sbet_mod.week_alignment(points["gps_time"], t)
-    sow = points["gps_time"] + 1_000_000_000.0 - week * 604800.0
+    sow, week, _ = match_times(points["gps_time"], t, time_mode)
     inside = (sow >= t[0]) & (sow <= t[-1])
 
     active = drift_by_sid if drift_by_sid is not None else offsets_by_sid

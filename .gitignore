@@ -24,3 +24,9 @@ dialogs-build.log
 dist-view/
 build-view/
 view-build.log
+
+dist-trj/
+build-trj/
+trj-build.log
+trj-reference.log
+dist-trj-final/
