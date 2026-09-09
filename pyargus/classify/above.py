@@ -38,6 +38,8 @@ class AboveModel:
     feature_names: tuple
     classes: tuple
     notes: str = ""
+    feature_cell: float | None = None
+    xyz_units: str | None = None
 
 
 def train(matrix, labels, *, subsample_per_class=150_000,
@@ -85,6 +87,8 @@ def save(model, path):
                  "feature_names": model.feature_names,
                  "classes": model.classes,
                  "notes": model.notes,
+                 "feature_cell": model.feature_cell,
+                 "xyz_units": model.xyz_units,
                  "sklearn_version": sklearn.__version__}, path)
 
 
@@ -116,7 +120,9 @@ def load(path):
     return AboveModel(forest=data["forest"],
                       feature_names=tuple(data["feature_names"]),
                       classes=tuple(data["classes"]),
-                      notes=data.get("notes", ""))
+                      notes=data.get("notes", ""),
+                      feature_cell=data.get("feature_cell"),
+                      xyz_units=data.get("xyz_units"))
 
 
 def classify_above(points, ground_mask, model, *, ignore_mask=None,

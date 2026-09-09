@@ -7,3 +7,8 @@ build/
 *.pyc
 reference/reports/
 dist-installer/
+
+dist-phase5/
+build-phase5/
+phase5-build.log
+dist-phase5-final/

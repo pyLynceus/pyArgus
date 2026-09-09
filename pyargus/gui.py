@@ -1,4 +1,4 @@
-"""The desktop application: five stages over the library, one window.
+"""The desktop application: six stages over the library, one window.
 
 The structure is pyLynceus's gui.py transplanted, deliberately: a
 guarded tkinter import so the module stays importable headless; stage
@@ -409,6 +409,111 @@ class ClassifyStage:
         return work
 
 
+class AboveStage:
+    title = "Above ground"
+
+    def __init__(self, parent, app):
+        self.app = app
+        self.cloud_override = tk.StringVar()
+        self.mode = tk.StringVar(value="Apply model")
+        self.model_path = tk.StringVar()
+        self.out_path = tk.StringVar()
+        self.cell = tk.StringVar(value="3.0")
+        self.units = tk.StringVar(value="US survey feet")
+        box = ttk.Frame(parent)
+        box.pack(fill="x")
+        box.columnconfigure(1, weight=1)
+        ttk.Combobox(box, textvariable=self.mode, state="readonly",
+                     values=("Apply model", "Train model")).grid(
+                         row=0, column=1, sticky="ew")
+        path_row(box, "Cloud (optional override)", self.cloud_override, 1)
+        path_row(box, "Trusted model (.joblib)", self.model_path, 2)
+        path_row(box, "Output model or cloud", self.out_path, 3, save=True)
+        ttk.Label(box, text="Training cell size").grid(row=4, column=0)
+        ttk.Entry(box, textvariable=self.cell, width=10).grid(row=4, column=1)
+        ttk.Label(box, text="Cloud XYZ units").grid(row=5, column=0)
+        ttk.Combobox(box, textvariable=self.units, state="readonly",
+                     values=("US survey feet", "metres", "international feet")) .grid(
+                         row=5, column=1, sticky="ew")
+        ttk.Label(box, wraplength=360, text=(
+            "Train on class-2 ground and labeled classes 3–6. Apply keeps "
+            "ground and noise. Models use their saved cell size; use the "
+            "same XYZ units as training. Only load model files you trust.")) .grid(
+                row=6, column=0, columnspan=2, pady=8)
+
+    def prepare(self):
+        cloud = self.cloud_override.get().strip() or _require_cloud(self.app)
+        if not Path(cloud).is_file():
+            raise ValueError(f"no such cloud: {cloud}")
+        training = self.mode.get() == "Train model"
+        out = _require_new_file(self.out_path.get(), "the output")
+        _refuse_existing(out, "output")
+        suffixes = (".joblib",) if training else (".las", ".laz")
+        if Path(out).suffix.lower() not in suffixes:
+            raise ValueError(f"output must end in {' or '.join(suffixes)}")
+        model_path = self.model_path.get().strip()
+        if not training and not Path(model_path).is_file():
+            raise ValueError("pick a trusted model file")
+        cell = _float(self.cell.get(), "Training cell size") if training else None
+        if training and (not np.isfinite(cell) or cell <= 0):
+            raise ValueError("training cell size must be positive and finite")
+        units = self.units.get()
+
+        def work(runner):
+            import laspy
+            from pyargus.classify import above, features
+
+            if cancelled_before(runner, "reading"):
+                return
+            model = None if training else above.load(model_path)
+            if model is not None:
+                saved_cell = model.feature_cell
+                if saved_cell is None or not np.isfinite(saved_cell) or saved_cell <= 0:
+                    raise ValueError("This model has no valid saved cell size. "
+                                     "Retrain it with Train model before GUI use.")
+                if model.xyz_units != units:
+                    raise ValueError("Cloud XYZ units do not match the model's "
+                                     "recorded units. Select the training units.")
+                runner.log(f"Model: {model.notes}; cell {saved_cell:g}")
+            data = laspy.read(cloud)
+            points = {name: np.asarray(data[name]) for name in (
+                "x", "y", "z", "classification", "return_number", "number_of_returns")}
+            labels = points["classification"]
+            ground = labels == 2
+            noise = np.isin(labels, (7, 18))
+            if not ground.any():
+                raise ValueError("No class-2 ground. Classify ground first.")
+            if training:
+                matrix, indices, valid = features.point_features(
+                    points, ground, ignore_mask=noise, cell=cell)
+                usable = valid & np.isin(labels[indices], (3, 4, 5, 6))
+                if cancelled_before(runner, "training"):
+                    return
+                model = above.train(matrix[usable], labels[indices][usable],
+                                    notes=f"XYZ units: {units}; trained on {Path(cloud).name}")
+                model.feature_cell = cell
+                model.xyz_units = units
+                runner.log(f"Trained on {usable.sum():,} points; classes {model.classes}")
+                if cancelled_before(runner, "saving model"):
+                    return
+                _refuse_existing(out, "output")
+                above.save(model, out)
+                runner.products.append(("above_model", Path(out)))
+            else:
+                classification, missing = above.classify_above(
+                    points, ground, model, ignore_mask=noise, cell=saved_cell)
+                classification[noise] = labels[noise]
+                if cancelled_before(runner, "writing cloud"):
+                    return
+                _refuse_existing(out, "output")
+                data.classification = classification
+                data.write(out)
+                runner.log(f"Without ground coverage: {missing:,} points left class 1")
+                runner.products.append(("classified", Path(out)))
+            runner.log(f"Wrote {out}")
+        return work
+
+
 class DtmStage:
     title = "DTM / DSM"
 
@@ -685,7 +790,7 @@ class Application:
         self.notebook.pack(fill="x", pady=(8, 0))
         self.stages = []
         for stage_class in (QaStage, ClassifyStage, DtmStage, ContourStage,
-                            AlignStage):
+                            AlignStage, AboveStage):
             tab = ttk.Frame(self.notebook, padding=6)
             self.notebook.add(tab, text=stage_class.title)
             self.stages.append(stage_class(tab, self))
@@ -791,6 +896,13 @@ class Application:
         """Offer a finished stage's outputs downstream: fill EMPTY
         override fields only, and say so in the log."""
         for kind, path in runner.products:
+            if kind == "above_model":
+                for stage in self.stages:
+                    if isinstance(stage, AboveStage):
+                        stage.model_path.set(str(path))
+                        stage.mode.set("Apply model")
+                        stage.out_path.set("")
+                continue
             if kind != "classified":
                 continue
             for stage in self.stages:

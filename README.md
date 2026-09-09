@@ -82,3 +82,25 @@ dist/pyArgus folder, not just the exe. The installer:
 The brand regenerates from code: `.venv/Scripts/python.exe
 packaging/make_logo.py` (needs Pillow) draws the mark and derives the
 .ico.
+
+### Above-ground classification in the desktop application
+
+Use the **Above ground** tab. Select **Train model**, choose a cloud
+with class-2 ground and at least two labeled classes among 3–6, set
+the training cell size and XYZ units, and choose a new `.joblib` output.
+After training the tab selects the new model automatically. For
+**Apply model**, choose a ground-classified cloud and a new LAS/LAZ
+output. The stored cell size is used automatically and the selected
+XYZ units must match training; no coordinate conversion is performed.
+Class-2 ground and noise classes 7/18 are preserved. Only load trusted
+joblib files. Older models without processing metadata must be retrained
+for GUI use; the existing CLI remains available. Model transfer accuracy
+must be checked on the receiving project.
+
+The current desktop build is `dist-phase5-final/pyArgus/pyArgus.exe`; keep
+the entire folder together. `pyArgus.exe --self-test` exercises the
+bundled forest training/persistence/inference and creates a hidden
+window to verify the Above ground tab, exiting zero on success.
+
+Verified 2026-09-09: 169 tests passed; the reference battery passed all 45 checks; the packaged self-test exited 0. This build includes the checkout's concurrent alignment work. Desktop integration changes are confined to the GUI, model metadata, packaging entry, and tests.
+
