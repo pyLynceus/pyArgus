@@ -97,7 +97,7 @@ joblib files. Older models without processing metadata must be retrained
 for GUI use; the existing CLI remains available. Model transfer accuracy
 must be checked on the receiving project.
 
-The current desktop build is `dist-view/pyArgus/pyArgus.exe`; keep
+The current desktop build is `dist-trj-final/pyArgus/pyArgus.exe`; keep
 the entire folder together. `pyArgus.exe --self-test` exercises the
 bundled forest training/persistence/inference and creates a hidden
 window to verify the Above ground tab, exiting zero on success.
@@ -117,3 +117,36 @@ File dialogs now list supported formats and supply default extensions. Above gro
 
 Use the mouse wheel or Zoom buttons to magnify the preview, drag with the left mouse button to pan, and Rotate buttons for 15-degree turns. Reset / Fit restores the original orientation and fits the image. New previews reset the view. These are 2D raster preview controls, not a 3D point-cloud viewer; they never change source coordinates or exports.
 
+
+
+### Native TerraScan trajectories
+
+Choose a `.trj` in Data > Trajectory, then **Inspect trajectory** for record
+count, time span, line number and coordinate/attitude ranges in the job log.
+Inspection runs in the background with the elapsed timer. Native
+TSCANTRJ version 20010715 is supported; malformed or unknown layouts refuse.
+`pyargus trajectory-info flight.trj` provides the same inspection in the CLI.
+
+For QA, select TRJ time explicitly: **same** compares stored timestamps
+directly with LAS; **week** joins trajectory GPS week seconds to LAS adjusted
+standard GPS time. The sample Connector trajectory contains 436024721 through
+436024936, consistent with adjusted standard GPS time, but the file does not
+declare that interpretation. Verify it against the LAS. No date is inferred.
+CLI: `pyargus qa-report cloud.las --out qa --trajectory flight.trj --trj-time same`.
+
+Alignment additionally requires the TRJ confirmation checkbox (CLI:
+`--trj-confirmed`). Confirm XYZ are in the LAS coordinate frame, horizontal
+and vertical units and datum, with clockwise heading from grid north,
+right-wing-down roll and nose-up pitch. TRJ angles are read in degrees and
+converted to radians; source positions are used unchanged. SBET geoid/CRS
+settings are bypassed for TRJ. Do not check this merely because import succeeds:
+vendor convention validation is still needed for a new sensor/export.
+Coverage, heading/track, flying-height and scan-angle checks remain active.
+A single trajectory must cover at least 99% of the solve points; importing
+and merging a whole folder of flight trajectories is not implemented.
+
+Native file reading is validated against Connector line 12 (43,001 positions,
+200 Hz, 215 seconds). Geometry and correction paths are tested with constructed
+truth. No alignment of that real project has been performed or validated.
+
+TRJ verification (2026-09-09): 193 tests passed, followed by 34 affected GUI/trajectory tests after the background-inspection change. All 46 reference acceptance checks passed. The final packaged self-test exited 0.

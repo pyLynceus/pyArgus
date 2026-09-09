@@ -107,7 +107,7 @@ MODEL_TYPES = (("pyArgus classification model", "*.joblib"),)
 SURFACE_TYPES = (("ESRI ASCII surface", "*.asc"),)
 CONTOUR_TYPES = (("DXF contours", "*.dxf"), ("GeoJSON contours", "*.geojson"))
 CSV_TYPES = (("Control CSV", "*.csv"),)
-SBET_TYPES = (("SBET trajectory", "*.out"),)
+SBET_TYPES = (("TerraScan trajectory", "*.trj"), ("SBET trajectory", "*.out"))
 BREAKLINE_TYPES = (("3D GeoJSON breaklines", "*.geojson"), ("JSON", "*.json"))
 
 
@@ -377,6 +377,7 @@ class QaStage:
         control_csv = self.control.get().strip()
         order = self.order.get()
         sbet_path = app.sbet_path.get().strip() or None
+        trj_time = app.trj_time.get()
 
         def work(runner):
             from pyargus.formats import las
@@ -391,15 +392,15 @@ class QaStage:
             if control_csv:
                 from pyargus.formats import control as control_mod
                 control = control_mod.read_control_csvs([control_csv], order)
-            traj_time = None
+            traj_time, time_mode = None, "week"
             if sbet_path:
-                from pyargus.formats import sbet
-                traj_time = sbet.read_sbet(sbet_path)["time"]
+                from pyargus.formats.trajectory import read_times
+                traj_time, time_mode = read_times(sbet_path, trj_time=trj_time)
             if cancelled_before(runner, "the report"):
                 return
             summary = report.generate(points, out_dir,
                                       title=Path(cloud).name,
-                                      control=control, traj_time=traj_time)
+                                      control=control, traj_time=traj_time, time_mode=time_mode)
             for pair in summary["strip_dz"]:
                 runner.log(f"dz {pair['a']}-{pair['b']}: "
                            f"median {pair['median']:+.3f}  "
@@ -740,6 +741,7 @@ class AlignStage:
     def __init__(self, parent, app):
         self.app = app
         self.vertical = tk.StringVar(value="EPSG:6360")
+        self.trj_confirmed = tk.BooleanVar(value=False)
         self.network = tk.BooleanVar(value=True)
         self.write_path = tk.StringVar()
         box = ttk.Frame(parent)
@@ -754,17 +756,23 @@ class AlignStage:
                                                     columnspan=2, sticky="w")
         path_row(box, "Corrected cloud out (optional)", self.write_path, 2,
                  save=True)
+        ttk.Checkbutton(box, text="TRJ: verified LAS XYZ frame/units/datum and attitude",
+                        variable=self.trj_confirmed).grid(row=3, column=0, columnspan=3, sticky="w")
+        ttk.Label(box, text="TRJ requires grid-north clockwise heading, right-wing-down roll,\nnose-up pitch. Vertical/geoid settings apply only to SBET.").grid(row=4, column=0, columnspan=3, sticky="w")
 
     def prepare(self):
         app = self.app
         cloud = _require_cloud(app)
         sbet_path = app.sbet_path.get().strip()
         if not sbet_path:
-            raise ValueError("alignment needs the SBET (the Data panel)")
+            raise ValueError("alignment needs a trajectory (TRJ or SBET, in the Data panel)")
         if not Path(sbet_path).is_file():
-            raise ValueError(f"no such SBET: {sbet_path}")
+            raise ValueError(f"no such trajectory: {sbet_path}")
+        trj_time = app.trj_time.get()
+        trj_confirmed = self.trj_confirmed.get()
         vertical = self.vertical.get().strip()
-        if not vertical:
+        from pyargus.formats.trajectory import is_trj
+        if not vertical and not is_trj(sbet_path):
             raise ValueError("state the vertical story: a vertical CRS "
                              "(EPSG:6360) or a geoid N in meters "
                              "(negative across CONUS)")
@@ -783,22 +791,20 @@ class AlignStage:
             import laspy
 
             from pyargus.align import attach, solve_alignment
-            from pyargus.formats import crs as crs_mod
             from pyargus.formats import las as las_mod
-            from pyargus.formats import sbet as sbet_mod
 
             runner.log(f"reading {cloud}")
             points = las_mod.read_points(
                 cloud, fields=("x", "y", "z", "gps_time",
                                "point_source_id", "classification"))
-            trajectory = sbet_mod.read_sbet(sbet_path)
+            from pyargus.formats.trajectory import load_alignment, is_trj
             with laspy.open(cloud) as reader:
                 map_crs = reader.header.parse_crs()
-            if map_crs is None:
+            if map_crs is None and not is_trj(sbet_path):
                 raise ValueError(f"{cloud} declares no CRS")
-            map_e, map_n, map_z = crs_mod.sbet_to_map(
-                trajectory, map_crs, vertical=vertical,
-                allow_network=network)
+            trajectory, (map_e, map_n, map_z), time_mode = load_alignment(
+                sbet_path, map_crs, vertical=vertical, allow_network=network,
+                trj_time=trj_time, trj_confirmed=trj_confirmed)
             mask = points["classification"] == 2
             if not mask.any():
                 raise ValueError("no class-2 points to solve on; "
@@ -806,8 +812,9 @@ class AlignStage:
             sub = {k: points[k][mask] for k in
                    ("x", "y", "z", "gps_time", "point_source_id")}
             attached = attach.bundles_from_cloud(sub, trajectory,
-                                                 map_e, map_n, map_z)
-            runner.log(f"week {attached.gps_week}, heading "
+                                                 map_e, map_n, map_z, time_mode=time_mode)
+            clock_label = f"week {attached.gps_week}" if attached.gps_week is not None else "same stored timestamps"
+            runner.log(f"{clock_label}, heading "
                        f"{attached.heading_source!r}, "
                        f"AGL {attached.agl_median:.0f}")
             if cancelled_before(runner, "the solve"):
@@ -827,7 +834,7 @@ class AlignStage:
                            for i, sid in enumerate(attached.strip_ids)}
                 xyz, skipped = attach.apply_corrections(
                     points, trajectory, map_e, map_n, map_z,
-                    attached.heading_source, result.boresight, offsets)
+                    attached.heading_source, result.boresight, offsets, time_mode=time_mode)
                 las = laspy.read(cloud)
                 las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
                 las.write(write)
@@ -868,7 +875,13 @@ class Application:
         self.cloud_path = tk.StringVar()
         self.sbet_path = tk.StringVar()
         path_row(data, "Point cloud (.las/.laz)", self.cloud_path, 0)
-        path_row(data, "SBET (optional)", self.sbet_path, 1, filetypes=SBET_TYPES)
+        path_row(data, "Trajectory (optional)", self.sbet_path, 1, filetypes=SBET_TYPES)
+        self.trj_time = tk.StringVar(value="Select TRJ time")
+        ttk.Combobox(data, textvariable=self.trj_time, state="readonly",
+                     values=("Select TRJ time", "same", "week"), width=18).grid(row=2, column=1, sticky="w")
+        ttk.Label(data, text="TRJ time base").grid(row=2, column=0, sticky="w")
+        ttk.Label(data, text="same = LAS timestamps; week = GPS seconds of week").grid(row=3, column=0, columnspan=3, sticky="w")
+        ttk.Button(data, text="Inspect trajectory", command=self.inspect_trajectory).grid(row=4, column=1, sticky="w")
 
         self.notebook = ttk.Notebook(left)
         self.notebook.pack(fill="x", pady=(8, 0))
@@ -929,6 +942,31 @@ class Application:
                            insertbackground=PALETTE["ground"],
                            highlightthickness=0)
         self.log.pack(fill="both", expand=True, pady=(6, 0))
+
+    def inspect_trajectory(self):
+        if self.runner.running:
+            return
+        path = self.sbet_path.get().strip()
+        if not path:
+            messagebox.showerror("Trajectory", "Choose a trajectory first")
+            return
+
+        def work(runner):
+            from pyargus.formats import trajectory, trj, sbet
+            runner.log(f"Reading trajectory: {path}")
+            if trajectory.is_trj(path):
+                text = trj.read_trj(path).summary()
+            else:
+                d = sbet.read_sbet(path)
+                text = f"SBET: {len(d):,} positions\nTime: {d['time'][0]:.3f} .. {d['time'][-1]:.3f}"
+            runner.log(text)
+
+        self.run_button.configure(state="disabled")
+        self.stop_button.configure(state="normal")
+        self.runner.stage_name = "Inspect trajectory"
+        self.runner.start(work)
+        self._update_job_status()
+        self._stage_open = True
 
     def run(self):
         if self.runner.running:

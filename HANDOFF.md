@@ -1,5 +1,29 @@
 # HANDOFF
 
+## 2026-09-09: native TerraScan trajectory import
+
+Native TSCANTRJ 20010715 reader added in `formats/trj.py`; format dispatch
+and explicit clock/geometry settings live in `formats/trajectory.py`.
+GUI Data panel accepts `.trj` and `.out`; Inspect trajectory runs through
+the existing background job/timer and writes metadata/ranges to the log.
+QA supports same stored timestamps or the existing LAS-adjusted-to-GPS-week
+join. Alignment and correction both receive the selected clock. Native
+positions bypass SBET geographic/geoid transforms. Alignment requires an
+explicit confirmation of matching LAS XYZ frame, units and vertical datum,
+grid-north clockwise heading, right-wing-down roll and nose-up pitch.
+Those conventions are NOT established by the TRJ format or by reading it.
+No automatic sign guessing or date/CRS inference was added.
+
+Read-only sample verification: Connector_SR17_SR30/traj/20250708_154503.trj
+is line 12, 43,001 records, 200 Hz, 215 seconds, stored times
+436024721..436024936. Native parsing verified; no real Connector lidar
+adjustment or convention validation performed. One trajectory per job;
+folder merge/multi-flight import remains outside this change.
+Existing pyLynceus code and Z source files were not modified.
+Tests: 193 passed; after moving inspection to the background, the 34
+affected GUI/trajectory tests passed. Latest build: dist-trj-final/pyArgus.
+
+
 Updated 2026-09-08: Phase 5 delivered -- the roadmap's eight phases
 are complete (0 through 7). Earlier the same day: Phase 6 delivered — TIN with soft breaklines,
 marching-squares contours out to DXF/GeoJSON, and DSM/ESRI-ASCII
@@ -359,3 +383,5 @@ acceptance.
   in Phase 2.
 * laspy's `header.parse_crs()` needs pyproj, which is not a
   dependency yet. Read extents and judge CRS by magnitude until it is.
+
+TRJ release verification: all 46 reference checks passed (0 failures); dist-trj-final packaged self-test exited 0. Unrelated concurrent imagery/EO files were left alone.

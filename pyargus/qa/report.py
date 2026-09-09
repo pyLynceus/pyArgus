@@ -22,14 +22,13 @@ from pathlib import Path
 import numpy as np
 
 import pyargus
-from pyargus.formats import sbet as sbet_mod
 from pyargus.qa import checkpoints, density, overlap, raster
 
 
 def generate(points, out_dir, *, title, control=None, traj_time=None,
              ground_class=2, density_cell=3.0, dz_cell=6.0, dz_min_points=3,
              dz_limit=0.25, control_radius=3.0, control_min_neighbours=5,
-             units="ft"):
+             units="ft", time_mode="week"):
     """Write the QA report for one cloud; returns the summary dict."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -52,7 +51,8 @@ def generate(points, out_dir, *, title, control=None, traj_time=None,
 
     # --- time base -----------------------------------------------------
     if traj_time is not None and "gps_time" in points:
-        week, inside = sbet_mod.week_alignment(points["gps_time"], traj_time)
+        from pyargus.formats.trajectory import match_times
+        _, week, inside = match_times(points["gps_time"], traj_time, time_mode)
         summary["time_base"] = {"gps_week": week, "fraction_inside": inside}
 
     # --- density -------------------------------------------------------
@@ -189,10 +189,11 @@ def _write_html(path, summary, sections, *, dz_limit, density_cell, dz_cell,
     if "time_base" in summary:
         tb = summary["time_base"]
         h2("Time base")
-        rows.append(f'<p class="note">GPS week {tb["gps_week"]}: '
+        time_label = f"GPS week {tb['gps_week']}" if tb["gps_week"] is not None else "Same stored timestamps"
+        rows.append(f'<p class="note">{time_label}: '
                     f'{100 * tb["fraction_inside"]:.2f}% of returns inside the '
-                    f"trajectory window. Anything under 100% means the wrong "
-                    f"SBET or the wrong week.</p>")
+                    f"trajectory window. Incomplete coverage may mean a partial "
+                    f"trajectory, the wrong file, or a time-base mismatch.</p>")
 
     d = summary["density"]
     h2("Density")

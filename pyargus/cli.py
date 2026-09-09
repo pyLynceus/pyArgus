@@ -10,6 +10,7 @@
     pyargus align cloud.las --sbet traj.out --vertical=-29.077 --write fixed.las
     pyargus control-by-strip strips/*.las --control pts.csv --control-order pnez
     pyargus contours classified.las --out contours.dxf --interval 1
+    pyargus colorize cloud.las --eo eo_Photos.csv --images Flight_dir --out rgb.las
     pyargus gui
 
 More subcommands arrive as their phases land; nothing appears here
@@ -21,6 +22,14 @@ import argparse
 import numpy as np
 
 import pyargus
+
+
+def _cmd_trajectory_info(args):
+    from pyargus.formats import trajectory, trj
+    if trajectory.is_trj(args.path):
+        print(trj.read_trj(args.path).summary())
+        return 0
+    return _cmd_sbet_info(args)
 
 
 def _cmd_sbet_info(args):
@@ -69,14 +78,14 @@ def _cmd_qa_report(args):
         from pyargus.formats import control as control_mod
         control = control_mod.read_control_csvs(args.control, args.control_order)
 
-    traj_time = None
+    traj_time, time_mode = None, "week"
     if args.sbet:
-        from pyargus.formats import sbet
-        traj_time = sbet.read_sbet(args.sbet)["time"]
+        from pyargus.formats.trajectory import read_times
+        traj_time, time_mode = read_times(args.sbet, trj_time=args.trj_time)
 
     summary = report.generate(
         points, args.out, title=args.title or Path(args.path).name,
-        control=control, traj_time=traj_time, ground_class=args.ground_class,
+        control=control, traj_time=traj_time, time_mode=time_mode, ground_class=args.ground_class,
         density_cell=args.density_cell, dz_cell=args.dz_cell,
         dz_limit=args.dz_limit, control_radius=args.radius, units=args.units)
 
@@ -85,7 +94,8 @@ def _cmd_qa_report(args):
           f"{len(summary['strips'])} strips)")
     if "time_base" in summary:
         tb = summary["time_base"]
-        print(f"time:    week {tb['gps_week']}, "
+        clock_label = f"week {tb['gps_week']}" if tb['gps_week'] is not None else "same stored timestamps"
+        print(f"time:    {clock_label}, "
               f"{100 * tb['fraction_inside']:.2f}% inside trajectory")
     print(f"density: median {d['median']:.2f} pts/{args.units}^2 "
           f"(p5 {d['p5']:.2f}, p95 {d['p95']:.2f})")
@@ -395,9 +405,7 @@ def _cmd_align(args):
     import laspy
 
     from pyargus.align import attach, solve_alignment
-    from pyargus.formats import crs as crs_mod
     from pyargus.formats import las as las_mod
-    from pyargus.formats import sbet as sbet_mod
     from pyargus.qa import overlap
 
     if args.write:
@@ -411,13 +419,13 @@ def _cmd_align(args):
     points = las_mod.read_points(
         args.path, fields=("x", "y", "z", "gps_time", "point_source_id",
                            "classification"))
-    trajectory = sbet_mod.read_sbet(args.sbet)
+    from pyargus.formats.trajectory import load_alignment, is_trj
 
     map_crs = args.map_crs
     if map_crs is None:
         with laspy.open(args.path) as reader:
             map_crs = reader.header.parse_crs()
-        if map_crs is None:
+        if map_crs is None and not is_trj(args.sbet):
             raise SystemExit(f"{args.path} declares no CRS; pass --map-crs")
     vertical = args.vertical
     if vertical is not None:
@@ -425,9 +433,9 @@ def _cmd_align(args):
             vertical = float(vertical)
         except ValueError:
             pass  # a vertical CRS string
-    map_e, map_n, map_z = crs_mod.sbet_to_map(
-        trajectory, map_crs, vertical=vertical,
-        allow_network=args.proj_network)
+    trajectory, (map_e, map_n, map_z), time_mode = load_alignment(
+        args.sbet, map_crs, vertical=vertical, allow_network=args.proj_network,
+        trj_time=args.trj_time, trj_confirmed=args.trj_confirmed)
 
     if args.control and not args.control_order:
         raise SystemExit("--control-order is required with --control; the "
@@ -449,8 +457,9 @@ def _cmd_align(args):
     sub = {k: points[k][mask] for k in ("x", "y", "z", "gps_time",
                                         "point_source_id")}
     attached = attach.bundles_from_cloud(sub, trajectory, map_e, map_n, map_z,
-                                         speed_floor=args.speed_floor)
-    print(f"attach:  week {attached.gps_week}, heading source "
+                                         speed_floor=args.speed_floor, time_mode=time_mode)
+    clock_label = f"week {attached.gps_week}" if attached.gps_week is not None else "same stored timestamps"
+    print(f"attach:  {clock_label}, heading source "
           f"{attached.heading_source!r} (track error "
           f"{np.degrees(attached.track_error):.1f} deg), "
           f"AGL {attached.agl_median:.0f}, "
@@ -528,7 +537,7 @@ def _cmd_align(args):
         xyz, skipped = attach.apply_corrections(
             points, trajectory, map_e, map_n, map_z,
             attached.heading_source, result.boresight, offsets_by_sid,
-            drift_by_sid=drift_by_sid)
+            drift_by_sid=drift_by_sid, time_mode=time_mode)
         with laspy.open(args.path) as reader:
             las = reader.read()
         las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
@@ -539,10 +548,110 @@ def _cmd_align(args):
     return 0
 
 
+def _cmd_colorize(args):
+    from pathlib import Path
+
+    import laspy
+
+    from pyargus.formats import eo as eo_mod
+    from pyargus.formats import las as las_mod
+    from pyargus.imagery import camera as camera_mod
+    from pyargus.imagery import colorize as colorize_mod
+
+    dst = Path(args.out)
+    if dst.resolve() == Path(args.path).resolve():
+        raise SystemExit("refusing to overwrite the input cloud; --out "
+                         "must be a new file")
+    if dst.exists() and not args.force:
+        raise SystemExit(f"{dst} exists; pass --force to replace it")
+
+    eo = eo_mod.read_eo_csv(args.eo)
+    image_paths = colorize_mod.find_images(args.images)
+    if not image_paths:
+        raise SystemExit(f"no images found under {args.images}")
+
+    # one camera per role tag, calibration auto-found beside that
+    # camera's own images (LP360 writes a sidecar per frame)
+    tag_sample = {}
+    for name in eo["filename"]:
+        found = image_paths.get(name.lower())
+        if found is not None:
+            tag_sample.setdefault(eo_mod.camera_tag(name), found)
+    if not tag_sample:
+        raise SystemExit("none of the EO rows' images exist under "
+                         f"{args.images}; wrong --images path?")
+    cameras = {}
+    for tag, sample in tag_sample.items():
+        cal = Path(args.cal) if args.cal else camera_mod.find_cal(sample.parent)
+        if cal is None:
+            raise SystemExit(
+                f"no .cal calibration sidecar found beside {sample.parent} "
+                f"and no --cal given; refusing to project through an "
+                f"uncalibrated lens (the distortion is ~30 px at the "
+                f"frame corner)")
+        cameras[tag] = camera_mod.read_cal(
+            cal, quarter_turns=args.quarter_turns, name=str(tag))
+        print(f"camera {tag or '-'}: {cal.name}  f "
+              f"{cameras[tag].focal_mm:.3f} mm, "
+              f"{cameras[tag].width_px}x{cameras[tag].height_px}, "
+              f"quarter turns {args.quarter_turns}")
+
+    points = las_mod.read_points(args.path, fields=("x", "y", "z"))
+    xyz = np.column_stack([points["x"], points["y"], points["z"]])
+
+    # the units/CRS trap arrives as geometry: EO that does not overlap
+    # the cloud, or sits below the ground, is a frame mismatch
+    lo = xyz[:, :2].min(axis=0)
+    hi = xyz[:, :2].max(axis=0)
+    olo = eo["origin"][:, :2].min(axis=0)
+    ohi = eo["origin"][:, :2].max(axis=0)
+    if (ohi < lo).any() or (olo > hi).any():
+        raise SystemExit(
+            "the EO positions do not overlap the cloud horizontally -- "
+            "that is what a wrong unit (the LP360 header says [m] even "
+            "when the values are survey feet) or a different CRS looks "
+            "like. Refusing to colorize.")
+    agl = float(np.median(eo["origin"][:, 2]) - np.median(xyz[:, 2]))
+    if agl <= 0:
+        raise SystemExit(
+            f"the EO heights sit {-agl:.0f} map units BELOW the cloud's "
+            f"ground -- a vertical datum or unit mismatch. Refusing to "
+            f"colorize.")
+    print(f"eo:      {len(eo['filename'])} rows, flying height "
+          f"~{agl:.0f} above the cloud median")
+
+    rgb, stats = colorize_mod.colorize(
+        xyz, eo, cameras, image_paths, neighbors=args.neighbors,
+        occlusion_tol=args.occlusion_tol)
+    pct = 100.0 * stats["n_colored"] / stats["n_points"]
+    print(f"colored: {stats['n_colored']:,} of {stats['n_points']:,} "
+          f"points ({pct:.1f}%) from {stats['n_images_used']} images")
+    print(f"skipped: {stats['n_occluded']:,} occluded, "
+          f"{stats['n_uncovered']:,} outside every frame"
+          + (f"; {stats['n_eo_dropped']} EO rows had no image file"
+             if stats["n_eo_dropped"] else ""))
+
+    with laspy.open(args.path) as reader:
+        las = reader.read()
+    if "red" not in las.point_format.dimension_names:
+        target = las.header.point_format.id
+        las = laspy.convert(las, point_format_id=7)
+        print(f"format:  point format {target} carries no RGB; "
+              f"converted to 7")
+    las.red, las.green, las.blue = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    las.write(str(dst))
+    print(f"wrote:   {dst}")
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="pyargus", description=pyargus.__doc__)
     parser.add_argument("--version", action="version", version=pyargus.__version__)
     sub = parser.add_subparsers(dest="command")
+
+    p_traj = sub.add_parser("trajectory-info", help="inspect native TRJ or SBET")
+    p_traj.add_argument("path")
+    p_traj.set_defaults(func=_cmd_trajectory_info)
 
     p_sbet = sub.add_parser("sbet-info", help="summarize an SBET trajectory")
     p_sbet.add_argument("path")
@@ -561,7 +670,8 @@ def build_parser():
                       help="control CSV (repeatable)")
     p_qa.add_argument("--control-order", choices=("pnez", "penz"),
                       help="control column order; required with --control")
-    p_qa.add_argument("--sbet", help="SBET trajectory for the time-base check")
+    p_qa.add_argument("--trajectory", "--sbet", dest="sbet", help="TRJ or SBET trajectory")
+    p_qa.add_argument("--trj-time", choices=("same", "week"), help="TRJ timestamps: same as LAS, or GPS week seconds")
     p_qa.add_argument("--ground-class", type=int, default=2)
     p_qa.add_argument("--density-cell", type=float, default=3.0)
     p_qa.add_argument("--dz-cell", type=float, default=6.0)
@@ -659,9 +769,11 @@ def build_parser():
                            "right for unclassified strips)")
     p_cb.set_defaults(func=_cmd_control_by_strip)
 
-    p_al = sub.add_parser("align", help="strip alignment against the SBET")
+    p_al = sub.add_parser("align", help="strip alignment against a trajectory")
     p_al.add_argument("path")
-    p_al.add_argument("--sbet", required=True)
+    p_al.add_argument("--trajectory", "--sbet", dest="sbet", required=True)
+    p_al.add_argument("--trj-time", choices=("same", "week"))
+    p_al.add_argument("--trj-confirmed", action="store_true", help="confirm matching LAS XYZ frame/units/datum and grid-north clockwise heading, right-wing-down roll, nose-up pitch")
     p_al.add_argument("--map-crs", help="delivery CRS (default: from the LAS)")
     p_al.add_argument("--vertical",
                       help="vertical story: a vertical CRS (e.g. EPSG:6360) "
@@ -700,6 +812,34 @@ def build_parser():
     p_al.add_argument("--force", action="store_true",
                       help="replace --write target if it exists")
     p_al.set_defaults(func=_cmd_align)
+
+    p_col = sub.add_parser(
+        "colorize", help="paint the cloud from oriented imagery "
+                         "(LP360/pyLynceus EO)")
+    p_col.add_argument("path")
+    p_col.add_argument("--eo", required=True,
+                       help="LP360-style EO CSV (eo_Photos_*.csv, or "
+                            "pyLynceus adjusted_eo.csv)")
+    p_col.add_argument("--images", required=True,
+                       help="imagery directory, searched recursively; "
+                            "filenames matched case-insensitively")
+    p_col.add_argument("--cal",
+                       help="calibration .cal sidecar for ALL cameras "
+                            "(default: auto-find one beside each "
+                            "camera's images)")
+    p_col.add_argument("--quarter-turns", type=int, default=3,
+                       help="stored-image grid rotation vs the photo "
+                            "frame (TrueView 660: 3)")
+    p_col.add_argument("--neighbors", type=int, default=8,
+                       help="camera footprints considered per point")
+    p_col.add_argument("--occlusion-tol", type=float, default=3.0,
+                       help="map units; a point deeper than its pixel "
+                            "cell's nearest by more than this stays "
+                            "uncolored rather than painted through")
+    p_col.add_argument("--out", required=True)
+    p_col.add_argument("--force", action="store_true",
+                       help="replace --out if it exists")
+    p_col.set_defaults(func=_cmd_colorize)
 
     p_gui = sub.add_parser(
         "gui", help="open the desktop application (tkinter; no extra "

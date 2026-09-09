@@ -22,6 +22,17 @@ def self_test():
         assert restored.feature_cell == 2.0
         assert restored.xyz_units == "metres"
         assert np.array_equal(above.predict(model, matrix), above.predict(restored, matrix))
+    # Ensure native trajectory modules are also present in the frozen bundle.
+    import struct
+    from pyargus.formats import trj, trajectory
+    with tempfile.TemporaryDirectory(prefix="pyargus-trj-") as temp:
+        path = Path(temp) / "trajectory.trj"
+        header = bytearray(1376)
+        struct.pack_into("<8s4i", header, 0, b"TSCANTRJ", 20010715, 1376, 1, 64)
+        struct.pack_into("<2d2i", header, 104, 436024721., 436024721., 0, 12)
+        path.write_bytes(header + struct.pack("<7d4B2h", 436024721., 1., 2., 3., 90., 0., 0., 0, 0, 0, 0, 0, 0))
+        assert trj.read_trj(path).line_number == 12
+        assert trajectory.read_times(path, trj_time="same")[1] == "same"
     window = tk.Tk()
     window.withdraw()
     app = Application(window)
