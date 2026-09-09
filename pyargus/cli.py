@@ -372,13 +372,14 @@ def _cmd_control_by_strip(args):
     print("\n[per-mark: agreement across strips]")
     print("  mark      strips  mean_dz  spread  plane_dz  reading")
     for mark_id, stats in deco.per_mark().items():
-        if stats["n_strips"] < 2 and abs(stats["mean_dz"]) < 0.1:
+        if (stats["n_strips"] < 2 and abs(stats["mean_dz"]) < 0.1
+                and stats["spread"] < 0.1):
             continue
         reading = ("POSITION-LOCKED" if stats["n_strips"] >= 2
                    and stats["spread"] < 0.06
                    and abs(stats["mean_dz"]) > 0.1
-                   else "strip-dependent" if stats["spread"] >= 0.06
-                   and abs(stats["mean_dz"]) > 0.1 else "")
+                   else "strip-dependent" if stats["spread"] >= 0.1
+                   else "")
         print(f"  {mark_id:8s}  {stats['n_strips']:4d}   "
               f"{stats['mean_dz']:+.3f}   {stats['spread']:.3f}   "
               f"{stats['dz_plane']:+.3f}   {reading}")

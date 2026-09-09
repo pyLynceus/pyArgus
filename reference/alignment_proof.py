@@ -78,8 +78,12 @@ def report(label, with_cross):
     print(f"boresight error: roll {err[0]:+.2e}  pitch {err[1]:+.2e}  "
           f"yaw {err[2]:+.2e} rad  "
           f"(true {TRUE_BETA[0]:+.1e}/{TRUE_BETA[1]:+.1e}/{TRUE_BETA[2]:+.1e})")
+    wants = [TRUE_OFFSETS[s][2] for s in range(1, 4)]
+    if with_cross:
+        wants.append(0.03)          # the crossing line's injected offset
     results["offset_err_max"] = float(max(
-        abs(result.offsets[s, 2] + TRUE_OFFSETS[s][2]) for s in range(1, 4)))
+        abs(result.offsets[s + 1, 2] + want)
+        for s, want in enumerate(wants)))
     for s in range(1, 4):
         got = result.offsets[s, 2]
         want = -TRUE_OFFSETS[s][2]

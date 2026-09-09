@@ -137,3 +137,82 @@ def test_cli_control_by_strip(tmp_path):
     assert rc == 0
     with pytest.raises(SystemExit, match="control-order"):
         cli.main(["control-by-strip", *paths, "--control", str(ctrl)])
+
+
+def test_cli_output_carries_the_constructed_bias(tmp_path, capsys):
+    laspy = pytest.importorskip("laspy")
+    from pyargus import cli
+
+    rng = np.random.default_rng(5)
+    paths = []
+    for stem, offset in (("s1", 0.0), ("s2", 0.15)):
+        n = 5000
+        header = laspy.LasHeader(point_format=6, version="1.4")
+        header.scales = (0.001, 0.001, 0.001)
+        data = laspy.LasData(header)
+        data.x = rng.uniform(0, 60, n)
+        data.y = rng.uniform(0, 20, n)
+        data.z = 100.0 + offset + rng.normal(0, 0.02, n)
+        data.point_source_id = np.full(n, 1, dtype=np.uint16)
+        data.classification = np.ones(n, dtype=np.uint8)
+        path = tmp_path / f"{stem}.las"
+        data.write(str(path))
+        paths.append(str(path))
+    ctrl = tmp_path / "marks.csv"
+    ctrl.write_text("1,10.0,30.0,100.0,MK\n2,10.0,50.0,100.0,MK\n")
+    cli.main(["control-by-strip", *paths, "--control", str(ctrl),
+              "--control-order", "pnez"])
+    text = capsys.readouterr().out
+    # the constructed 0.15 bias appears in s2's per-strip line, and the
+    # per-mark verdict flags the disagreement
+    s2_line = next(line for line in text.splitlines()
+                   if line.strip().startswith("s2:"))
+    assert "+0.15" in s2_line
+    assert "strip-dependent" in text
+
+
+def test_multi_file_multi_psid_files_split_by_psid(tmp_path):
+    """The panel proved the old file-count rule merged multi-psid
+    tiles into one bucket and read pure misalignment as
+    position-locked; a file holding several strips must split."""
+    laspy = pytest.importorskip("laspy")
+    rng = np.random.default_rng(6)
+
+    def write_tile(path):
+        n = 6000
+        header = laspy.LasHeader(point_format=6, version="1.4")
+        header.scales = (0.001, 0.001, 0.001)
+        data = laspy.LasData(header)
+        data.x = rng.uniform(0, 50, n)
+        data.y = rng.uniform(0, 50, n)
+        psid = np.where(np.arange(n) % 2 == 0, 7, 9).astype(np.uint16)
+        data.z = np.where(psid == 9, 100.20, 100.0) \
+            + rng.normal(0, 0.01, n)
+        data.point_source_id = psid
+        data.classification = np.full(n, 2, dtype=np.uint8)
+        data.write(str(path))
+        return path
+
+    a = write_tile(tmp_path / "tile_a.las")
+    b = write_tile(tmp_path / "tile_b.las")
+    gathered = cbs.gather_near_marks([a, b], [25.0], [25.0], radius=3.0)
+    assert set(gathered) == {"tile_a:7", "tile_a:9", "tile_b:7",
+                             "tile_b:9"}
+    deco = cbs.decompose(gathered, ["m0"], np.array([25.0]),
+                         np.array([25.0]), np.array([100.0]))
+    per_strip = {s: c.dz_median for s, c in
+                 ((c.strip, c) for c in deco.cells)}
+    assert abs(per_strip["tile_a:7"]) < 0.02
+    assert abs(per_strip["tile_a:9"] - 0.20) < 0.02
+
+
+def test_plane_refit_survives_outlier_domination():
+    """11 ground points + 2 canopy blips: the survivors must carry the
+    fit (the old >= 12 refit gate reverted to the contaminated one)."""
+    rng = np.random.default_rng(7)
+    x = np.append(rng.uniform(-3, 3, 11), [0.5, -0.5])
+    y = np.append(rng.uniform(-3, 3, 11), [0.5, -0.5])
+    z = np.append(np.full(11, 100.0) + rng.normal(0, 0.01, 11),
+                  [130.0, 130.0])
+    plane_z, slope = cbs._plane_at_mark(x, y, z, 0.0, 0.0)
+    assert abs(plane_z - 100.0) < 0.05

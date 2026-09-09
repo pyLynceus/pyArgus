@@ -37,6 +37,7 @@ def gather_near_marks(las_paths, mark_e, mark_n, *, radius=3.0,
     mark_e = np.asarray(mark_e, dtype=float)
     mark_n = np.asarray(mark_n, dtype=float)
     out = defaultdict(lambda: defaultdict(lambda: [[], [], []]))
+    multi_psid_stems = set()
     for path in las_paths:
         stem = Path(path).stem
         with laspy.open(str(path)) as reader:
@@ -58,15 +59,32 @@ def gather_near_marks(las_paths, mark_e, mark_n, *, radius=3.0,
                 keep_base = np.ones(x.size, dtype=bool)
                 if ground_class is not None:
                     keep_base = cls == ground_class
-                for k in range(candidates.size):
+                # cull to marks this CHUNK can reach before the
+                # per-mark masks (panel: O(marks x chunk) otherwise)
+                in_chunk = ((ce >= x.min() - radius) & (ce <= x.max() + radius)
+                            & (cn >= y.min() - radius)
+                            & (cn <= y.max() + radius))
+                for k in np.flatnonzero(in_chunk):
                     m = (keep_base
                          & (np.abs(x - ce[k]) <= radius)
                          & (np.abs(y - cn[k]) <= radius))
                     if not m.any():
                         continue
-                    for sid in np.unique(psid[m]):
+                    unique_sids = np.unique(psid[m])
+                    for sid in unique_sids:
                         sm = m & (psid == sid)
-                        label = stem if len(las_paths) > 1 else f"{sid}"
+                        # Labeling rule (panel-caught: keying on FILE
+                        # count merged multi-psid tiles into one bucket
+                        # and read pure misalignment as
+                        # position-locked): a file holding several
+                        # strips ALWAYS splits by psid.
+                        if unique_sids.size > 1 or (
+                                stem in multi_psid_stems):
+                            multi_psid_stems.add(stem)
+                            label = (f"{stem}:{sid}" if len(las_paths) > 1
+                                     else f"{sid}")
+                        else:
+                            label = stem if len(las_paths) > 1 else f"{sid}"
                         bucket = out[label][int(candidates[k])]
                         bucket[0].extend(x[sm])
                         bucket[1].extend(y[sm])
@@ -134,7 +152,10 @@ def _plane_at_mark(x, y, z, e, n):
     r = z - a @ coef
     med = np.median(r)
     keep = np.abs(r - med) < 3 * (1.4826 * np.median(np.abs(r - med)) + 1e-6)
-    if keep.sum() >= 12:
+    # refit on the survivors whenever a plane is still determined --
+    # the old >= 12 gate silently reverted to the contaminated fit
+    # exactly when outliers dominated small samples (panel-caught)
+    if 3 <= keep.sum() < z.size:
         coef, *_ = np.linalg.lstsq(a[keep], z[keep], rcond=None)
     return float(coef[2]), float(np.hypot(coef[0], coef[1]))
 

@@ -97,6 +97,14 @@ def main():
         try:
             with contextlib.redirect_stdout(buffer):
                 measured[name] = module.main()
+            if measured[name] is None:
+                # A main() that runs but returns nothing is the exact
+                # refactor mistake this gate exists to catch (panel
+                # finding: the old 'skip on None' made the harness
+                # unable to fail here).
+                failures.append((name, "-",
+                                 "main() returned None -- its checks "
+                                 "cannot be evaluated"))
         except Exception as exc:
             measured[name] = None
             failures.append((name, "-", f"CRASHED: {exc}"))
@@ -131,6 +139,10 @@ def main():
 
     print(f"\n{n_pass} passed, {len(failures)} failed "
           f"of {len(CHECKS)} checks")
+    if not failures and n_pass != len(CHECKS):
+        failures.append(("run_all", "-",
+                         f"only {n_pass} of {len(CHECKS)} checks were "
+                         f"evaluated -- refusing to pass a partial gate"))
     if failures:
         print("\nfull output of failing scripts:")
         for name in {f[0] for f in failures if f[0] in logs}:

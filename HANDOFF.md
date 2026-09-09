@@ -264,6 +264,33 @@ SMRF ground only -0.0026, building precision 0.558 quoted with its
 0.06%-of-points context. A model is one site's forest: the provenance
 note travels in the file, the numbers live in RESULTS.md.
 
+## Post-roadmap round one: harness, control-solve, control-by-strip
+
+Three improvements, each adversarially reviewed (sixth panel, 10
+confirmed findings, all fixed):
+
+* **The regression gate**: `python -m reference.run_all` reruns the
+  whole Summerville acceptance battery and diffs 41 recorded metrics.
+  Each reference script's main() RETURNS its results dict. Panel
+  lesson baked in: a script returning None is a FAILURE, and a partial
+  gate refuses to pass -- a harness must be able to fail.
+* **Control observations in the solver**: `solve_alignment(control=
+  (M,3) marks)` lifts the strip-0 gauge, gives every strip an offset
+  unknown, and anchors the ABSOLUTE datum (strips without marks
+  inherit it through patches; control rows carry control_weight).
+  Recovers strip 0's own error -- the thing strip-to-strip adjustment
+  can never see. On curved terrain keep control_radius TIGHT (plane
+  sagitta biases the datum; measured in the test).
+* **control-by-strip**: the SH 151 decomposition as a command
+  (`pyargus control-by-strip strips/*.las --control csv`) and a
+  qa-report section. Streaming gather (chunk-bbox culled), per-strip
+  bias vs POSITION-LOCKED per-mark readings, grade-corrected plane
+  dz. Panel lessons: a file holding several psids ALWAYS splits
+  (file-count labeling read pure misalignment as position-locked);
+  big spread alone is the strip-dependent signature (symmetric
+  disagreement has zero mean); the robust plane refits on survivors
+  whenever a plane is still determined.
+
 ## Next step, with reasoning
 
 **The roadmap is complete.** What remains open, by value: (1) THE
