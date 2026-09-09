@@ -16,3 +16,7 @@ dist-phase5-final/
 dist-status/
 build-status/
 status-build.log
+
+dist-dialogs/
+build-dialogs/
+dialogs-build.log

@@ -102,7 +102,17 @@ def apply_branding(root):
         pass
 
 
-def path_row(parent, label, variable, row, directory=False, save=False):
+CLOUD_TYPES = (("LAS point cloud", "*.las"), ("Compressed LAZ point cloud", "*.laz"))
+MODEL_TYPES = (("pyArgus classification model", "*.joblib"),)
+SURFACE_TYPES = (("ESRI ASCII surface", "*.asc"),)
+CONTOUR_TYPES = (("DXF contours", "*.dxf"), ("GeoJSON contours", "*.geojson"))
+CSV_TYPES = (("Control CSV", "*.csv"),)
+SBET_TYPES = (("SBET trajectory", "*.out"),)
+BREAKLINE_TYPES = (("3D GeoJSON breaklines", "*.geojson"), ("JSON", "*.json"))
+
+
+def path_row(parent, label, variable, row, directory=False, save=False,
+             filetypes=CLOUD_TYPES):
     ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w")
     ttk.Entry(parent, textvariable=variable, width=32).grid(
         row=row, column=1, sticky="we", padx=2)
@@ -111,10 +121,16 @@ def path_row(parent, label, variable, row, directory=False, save=False):
         initial = os.environ.get("PYARGUS_DATA_DIR") or None
         if directory:
             chosen = filedialog.askdirectory(initialdir=initial)
-        elif save:
-            chosen = filedialog.asksaveasfilename(initialdir=initial)
         else:
-            chosen = filedialog.askopenfilename(initialdir=initial)
+            types = filetypes() if callable(filetypes) else filetypes
+            if save:
+                chosen = filedialog.asksaveasfilename(
+                    parent=parent, initialdir=initial, filetypes=types,
+                    defaultextension=types[0][1].removeprefix("*"))
+            else:
+                chosen = filedialog.askopenfilename(
+                    parent=parent, initialdir=initial,
+                    filetypes=(*types, ("All files", "*.*")))
         if chosen:
             variable.set(chosen)
 
@@ -322,7 +338,7 @@ class QaStage:
         box.pack(fill="x")
         box.columnconfigure(1, weight=1)
         path_row(box, "Report folder", self.out_dir, 0, directory=True)
-        path_row(box, "Control CSV (optional)", self.control, 1)
+        path_row(box, "Control CSV (optional)", self.control, 1, filetypes=CSV_TYPES)
         ttk.Label(box, text="Control order").grid(row=2, column=0, sticky="w")
         ttk.Combobox(box, textvariable=self.order, values=("pnez", "penz"),
                      state="readonly", width=8).grid(row=2, column=1,
@@ -458,8 +474,9 @@ class AboveStage:
                      values=("Apply model", "Train model")).grid(
                          row=0, column=1, sticky="ew")
         path_row(box, "Cloud (optional override)", self.cloud_override, 1)
-        path_row(box, "Trusted model (.joblib)", self.model_path, 2)
-        path_row(box, "Output model or cloud", self.out_path, 3, save=True)
+        path_row(box, "pyArgus model (.joblib)", self.model_path, 2, filetypes=MODEL_TYPES)
+        path_row(box, "Output model or cloud", self.out_path, 3, save=True,
+                 filetypes=lambda: MODEL_TYPES if self.mode.get() == "Train model" else CLOUD_TYPES)
         ttk.Label(box, text="Training cell size").grid(row=4, column=0)
         ttk.Entry(box, textvariable=self.cell, width=10).grid(row=4, column=1)
         ttk.Label(box, text="Cloud XYZ units").grid(row=5, column=0)
@@ -467,9 +484,13 @@ class AboveStage:
                      values=("US survey feet", "metres", "international feet")) .grid(
                          row=5, column=1, sticky="ew")
         ttk.Label(box, wraplength=360, text=(
-            "Train on class-2 ground and labeled classes 3–6. Apply keeps "
-            "ground and noise. Models use their saved cell size; use the "
-            "same XYZ units as training. Only load model files you trust.")) .grid(
+            "No model yet? Choose Train model and supply a labeled LAS/LAZ "
+            "with class-2 ground and at least two classes among 3–6 "
+            "(vegetation/buildings). Save the learned classifier as .joblib, "
+            "then choose Apply model for another ground-classified cloud. "
+            "This is a pyArgus model, not a surface or CAD file. Use matching "
+            "XYZ units and check accuracy on the new site. Only load models "
+            "you created or trust: joblib files can execute code.")) .grid(
                 row=6, column=0, columnspan=2, pady=8)
 
     def prepare(self):
@@ -559,7 +580,7 @@ class DtmStage:
         box.columnconfigure(1, weight=1)
         path_row(box, "Classified cloud (blank = main)", self.cloud_override,
                  0)
-        path_row(box, "Surface out (.asc)", self.out_path, 1, save=True)
+        path_row(box, "Surface out (.asc)", self.out_path, 1, save=True, filetypes=SURFACE_TYPES)
         ttk.Label(box, text="Cell").grid(row=2, column=0, sticky="w")
         ttk.Entry(box, textvariable=self.cell, width=8).grid(
             row=2, column=1, sticky="w", padx=2)
@@ -621,9 +642,9 @@ class ContourStage:
         path_row(box, "Classified cloud (blank = main)", self.cloud_override,
                  0)
         path_row(box, "Contours out (.dxf/.geojson)", self.out_path, 1,
-                 save=True)
+                 save=True, filetypes=CONTOUR_TYPES)
         path_row(box, "Breaklines (3D GeoJSON, optional)", self.breaklines,
-                 2)
+                 2, filetypes=BREAKLINE_TYPES)
         for i, (label, var) in enumerate((("Interval", self.interval),
                                           ("Cell", self.cell))):
             ttk.Label(box, text=label).grid(row=3 + i, column=0, sticky="w")
@@ -815,7 +836,7 @@ class Application:
         self.cloud_path = tk.StringVar()
         self.sbet_path = tk.StringVar()
         path_row(data, "Point cloud (.las/.laz)", self.cloud_path, 0)
-        path_row(data, "SBET (optional)", self.sbet_path, 1)
+        path_row(data, "SBET (optional)", self.sbet_path, 1, filetypes=SBET_TYPES)
 
         self.notebook = ttk.Notebook(left)
         self.notebook.pack(fill="x", pady=(8, 0))
