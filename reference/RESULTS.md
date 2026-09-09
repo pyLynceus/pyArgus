@@ -381,3 +381,108 @@ after the fixes:
 * The "1.24e-3 together-mode" figure the docstrings quoted is now
   actually produced by this harness and pinned (it previously lived
   nowhere in committed code -- an unhonored claim).
+
+## Colorization: the cloud through the imagery
+
+Measured 2026-09-09 by `python -m reference.summerville_colorize`
+(`pyargus colorize` is the command form): Summerville_SS.las painted
+from the delivered TrueView 660 imagery -- 1083 JPEGs across
+Nadir/Port/Starboard, the LP360 EO CSV, per-camera `.cal` sidecars,
+quarter_turns 3. 15.28M points in 235 s.
+
+* **70.9% colored** from 1,019 of 1,083 photos; 496 points are seen by
+  no nearby photo. **29.1% marked occluded is the site, not a
+  defect**: 42 ft median canopy, and ground under trees genuinely
+  cannot be colored from aerial imagery. The honest answer is no
+  color -- paint-through would color that ground with its own canopy.
+* **Cross-camera referee, with its scale measured**: 300k
+  nadir-colored points recolored through the OBLIQUE cameras only
+  agree to **median |dRGB| (23, 23, 22) of 255**. The anchors that
+  make that number mean something are measured by
+  `reference/colorize_referee_scale.py` on a common 100k sample:
+  recoloring through OTHER NADIR frames -- same lens, same look
+  angle, so whatever it measures is frame-to-frame radiometry, not
+  geometry -- gives **17**, and mis-stating the oblique
+  `quarter_turns` gives **37**. Healthy sits a little above the
+  radiometric floor and nowhere near the geometric fault. Pinned
+  below 26.
+* **Vegetation greener than ground**: mean G-R is +20.2 over the
+  delivered vegetation classes vs +8.5 over class-2 ground
+  (margin +11.7 of 255) -- colors land on the right objects.
+* Intensity-vs-luminance was tried as a referee and measured
+  UNINFORMATIVE (r = -0.08 on ground): lidar NIR amplitude and
+  visible brightness legitimately decorrelate across grass vs
+  asphalt. Recorded so nobody retries it.
+
+### The convention layer, and what the review panel changed
+
+Colorization is won or lost in the conventions, and every choice is
+pinned by tests that re-derive the answer independently (similar
+triangles, np.rot90 index algebra, Agisoft's own normalised
+polynomial).
+
+* Rotation comes from the EO CSV's **Direction/Up vectors**, never
+  from any angle column (LP360's OPK columns disagree with its
+  platform angles by up to 79 deg; pyLynceus's adjusted_eo.csv has no
+  angle columns at all). One reader covers both producers.
+* **The lens model is evaluated in the STORED IMAGE's own grid** --
+  Agisoft's equations in Agisoft's units, transplanted nowhere. The
+  first version worked in a millimetre y-up "photo frame" and rotated
+  the result into the stored grid afterwards. Radial terms survive
+  that; CX/CY and P1/P2 do not, and the shipped TrueView default is
+  `quarter_turns=3`. The eighth review panel measured a **~27 px
+  systematic on exactly the production path**, invisible to a suite
+  that only ever combined distortion with `quarter_turns=0`. Fixing
+  it moved the cross-camera referee from 26 to 23 against an
+  unchanged 37 for the deliberate fault and a 17-18 radiometric
+  floor: three different lenses agreeing better with each other is
+  independent evidence the fix was real.
+* **A field-of-view guard**, because Brown-Conrady says nothing
+  outside the field it was fitted in. Extrapolated far off-axis a
+  barrel lens folds back: the panel reproduced a point 62 deg
+  off-axis landing on an ordinary pixel -- sometimes the exact image
+  center -- and then WINNING the most-centered contest. Each camera
+  now computes where its own model folds, refuses a calibration that
+  folds before reaching its own frame corner, and masks points beyond
+  the fold.
+* **The selection score is an off-axis ANGLE**, not a pixel count:
+  pixel distance is f*tan(angle), so across cameras of different
+  focal length the shorter lens would win every contest at equal
+  geometry.
+* **Refusals the panel earned**: a present-but-unreadable calibration
+  key (silently zeroing K1 alone is ~70 px at the corner); a sidecar
+  holding several cameras; an image whose size contradicts its
+  calibration (checked from JPEG headers UP FRONT, not as a traceback
+  at image 900); two different files sharing one basename (every EO
+  row for that name would sample one exposure through the other's
+  pose); an up vector inside the noise band where roll is decided by
+  the export's 9th decimal; a non-integer `quarter_turns`.
+* **Coverage is the datum gate.** The overlap and AGL checks catch a
+  frame mismatch that SEPARATES the two datasets, but one that merely
+  scales them -- metres written over survey feet, the exact lie the
+  LP360 header tells -- keeps the boxes overlapping and the AGL
+  positive. What it does change is how much of the cloud gets a
+  color, so `--min-coverage` refuses below 5% and anything under half
+  prints a caution naming the cause.
+* LAS RGB is 16-bit: 8-bit samples ship shifted left 8 bits, and a
+  point-format-6 input is converted to 7 with an announcement.
+
+### Honest gaps (v1, pinned by tests so they cannot drift)
+
+* **Paint-through is still possible.** Each photo's depth grid holds
+  only the points ASSIGNED to that photo, so an occluder whose own
+  best photo is a different one never shadows anything. The guarantee
+  is "occlusion by what this photo colored", not "by the whole
+  cloud".
+* **A one-cell halo of visible ground is marked occluded** at every
+  depth edge, because an 8-px cell straddling a discontinuity mixes
+  occluder and background (~0.7 ft on the ground at Summerville).
+* An occluded point does not fall back to its second-best photo.
+* The candidate set is the k nearest footprint centers, computed
+  against a single plane at the cloud's median z, so `n_unseen` means
+  "no nearby photo saw it", not "outside every frame" -- on strong
+  relief a distant frame that does contain the point is never asked.
+* The cross-camera referee's oblique recolor spreads 300k points over
+  ~700 frames, roughly one point per depth cell, so occlusion barely
+  fires inside the referee itself: a few of its 23 counts are
+  genuinely oblique-hidden ground, not radiometry.
