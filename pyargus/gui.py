@@ -149,6 +149,32 @@ def preview_image(rgba, size=760):
     return rgba[::step, ::step]
 
 
+def preview_view(rgba, width, height, zoom=1.0, angle=0.0, pan=(0.0, 0.0)):
+    """Render an RGBA image into a fixed-size viewport without changing data.
+
+    Angle is clockwise on screen. Zoom 1 fits the rotated image; pan is
+    measured in screen pixels. Output memory is bounded by the viewport.
+    """
+    from scipy.ndimage import affine_transform
+    rgba = np.asarray(rgba, dtype=np.uint8)
+    h, w = rgba.shape[:2]
+    theta = np.deg2rad(angle)
+    c, sn = np.cos(theta), np.sin(theta)
+    scale = min(width / (abs(c)*w + abs(sn)*h),
+                height / (abs(sn)*w + abs(c)*h)) * zoom
+    # Inverse rotation, expressed in array row/column order.
+    matrix = np.array([[c, -sn], [sn, c]]) / scale
+    center = np.array([(h-1)/2, (w-1)/2])
+    target = np.array([(height-1)/2 + pan[1], (width-1)/2 + pan[0]])
+    offset = center - matrix @ target
+    result = np.empty((height, width, 4), dtype=np.uint8)
+    for channel in range(4):
+        affine_transform(rgba[:, :, channel], matrix, offset=offset,
+                         output_shape=(height, width), output=result[:, :, channel],
+                         order=0, mode="constant", cval=0, prefilter=False)
+    return result
+
+
 def preview_photo(rgba):  # pragma: no cover - the Tk half of the seam
     import base64
 
@@ -823,6 +849,12 @@ class Application:
         self.runner = StageRunner()
         self._stage_open = False
         self._photo = None
+        self._view_source = None
+        self._view_zoom = 1.0
+        self._view_angle = 0.0
+        self._view_pan = [0.0, 0.0]
+        self._drag_start = None
+        self._view_after = None
         self._drawn = None      # the report array last put on the canvas
 
         left = ttk.Frame(root, padding=8)
@@ -848,9 +880,27 @@ class Application:
             self.stages.append(stage_class(tab, self))
 
         self._build_run_panel(left)
+        controls = ttk.Frame(right)
+        controls.pack(fill="x", pady=(0, 4))
+        for label, action in (
+                ("Zoom +", lambda: self._zoom_view(1.25)),
+                ("Zoom −", lambda: self._zoom_view(0.8)),
+                ("Rotate ↶", lambda: self._rotate_view(-15)),
+                ("Rotate ↷", lambda: self._rotate_view(15)),
+                ("Reset / Fit", self._reset_view)):
+            ttk.Button(controls, text=label, command=action).pack(side="left", padx=2)
+        self.view_label = tk.StringVar(value="Fit | 0°")
+        ttk.Label(controls, textvariable=self.view_label).pack(side="left", padx=8)
+        ttk.Label(right, text="Wheel: zoom   •   Drag: pan   •   Rotation affects preview only").pack(fill="x")
         self.canvas = tk.Canvas(right, background=PALETTE["ink"],
                                 highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<MouseWheel>", lambda e: self._zoom_view(1.25 if e.delta > 0 else .8))
+        self.canvas.bind("<Button-4>", lambda e: self._zoom_view(1.25))
+        self.canvas.bind("<Button-5>", lambda e: self._zoom_view(.8))
+        self.canvas.bind("<ButtonPress-1>", self._begin_pan)
+        self.canvas.bind("<B1-Motion>", self._pan_view)
+        self.canvas.bind("<Configure>", lambda e: self._schedule_view())
 
         self.root.after(PREVIEW_MS, self._tick)
 
@@ -1026,15 +1076,51 @@ class Application:
                 self._adopt_products(runner)
         self.root.after(PREVIEW_MS, self._tick)
 
-    def _draw_preview(self, rgba):  # pragma: no cover - pixels on screen
-        try:
-            self._photo = preview_photo(preview_image(rgba))
-            self.canvas.delete("all")
-            self.canvas.create_image(
-                self.canvas.winfo_width() // 2,
-                self.canvas.winfo_height() // 2, image=self._photo)
-        except Exception:
-            pass
+    def _draw_preview(self, rgba):
+        self._view_source = rgba
+        self._reset_view()
+
+    def _reset_view(self):
+        self._view_zoom, self._view_angle = 1.0, 0.0
+        self._view_pan = [0.0, 0.0]
+        self._schedule_view()
+
+    def _zoom_view(self, factor):
+        self._view_zoom = min(32.0, max(.25, self._view_zoom * factor))
+        self._schedule_view()
+
+    def _rotate_view(self, degrees):
+        self._view_angle = (self._view_angle + degrees) % 360
+        self._schedule_view()
+
+    def _begin_pan(self, event):
+        self._drag_start = (event.x, event.y)
+
+    def _pan_view(self, event):
+        if self._drag_start is not None:
+            self._view_pan[0] += event.x - self._drag_start[0]
+            self._view_pan[1] += event.y - self._drag_start[1]
+        self._drag_start = (event.x, event.y)
+        self._schedule_view()
+
+    def _schedule_view(self):
+        if self._view_after is not None:
+            self.root.after_cancel(self._view_after)
+        self._view_after = self.root.after(35, self._render_view)
+
+    def _render_view(self):
+        self._view_after = None
+        self.view_label.set(f"{self._view_zoom:.2f}× fit | {self._view_angle:g}°")
+        if self._view_source is None:
+            return
+        width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
+        if width < 2 or height < 2:
+            return
+        rgba = preview_view(self._view_source, width, height,
+                            self._view_zoom, self._view_angle, self._view_pan)
+        self._photo = preview_photo(rgba)
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
 
 
 def main():

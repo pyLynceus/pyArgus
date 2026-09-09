@@ -97,7 +97,7 @@ joblib files. Older models without processing metadata must be retrained
 for GUI use; the existing CLI remains available. Model transfer accuracy
 must be checked on the receiving project.
 
-The current desktop build is `dist-dialogs/pyArgus/pyArgus.exe`; keep
+The current desktop build is `dist-view/pyArgus/pyArgus.exe`; keep
 the entire folder together. `pyArgus.exe --self-test` exercises the
 bundled forest training/persistence/inference and creates a hidden
 window to verify the Above ground tab, exiting zero on success.
@@ -111,4 +111,9 @@ The run panel shows the active stage, elapsed HH:MM:SS, and Ready, Running, Stop
 
 
 File dialogs now list supported formats and supply default extensions. Above ground switches its output filter between .joblib (Train model) and LAS/LAZ (Apply model). Verified with 21 GUI tests and the packaged self-test.
+
+
+### Preview navigation
+
+Use the mouse wheel or Zoom buttons to magnify the preview, drag with the left mouse button to pan, and Rotate buttons for 15-degree turns. Reset / Fit restores the original orientation and fits the image. New previews reset the view. These are 2D raster preview controls, not a 3D point-cloud viewer; they never change source coordinates or exports.
 

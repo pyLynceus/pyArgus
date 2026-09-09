@@ -20,3 +20,7 @@ status-build.log
 dist-dialogs/
 build-dialogs/
 dialogs-build.log
+
+dist-view/
+build-view/
+view-build.log
