@@ -92,6 +92,7 @@ def misaligned_strip(yaw, origin, length, *, terrain=rolling_terrain,
                      agl=100.0, swath=60.0, n=6000,
                      true_boresight=(0.0, 0.0, 0.0),
                      true_offset=(0.0, 0.0, 0.0),
+                     true_drift=None, t0=0.0, speed=25.0,
                      attitude_noise=0.01, noise=0.02, seed=0):
     """One flight line, georeferenced with the WRONG (identity) boresight.
 
@@ -128,7 +129,14 @@ def misaligned_strip(yaw, origin, length, *, terrain=rolling_terrain,
     body = np.einsum("nji,nj->ni", r_nav, ground - nav)   # R_nav^T (G - P)
     body = body @ r_true                                   # R_true^T applied
     xyz = nav + np.einsum("nij,nj->ni", r_nav, body) + np.asarray(true_offset)
-    return StripBundle(xyz=xyz, nav_xyz=nav, rpy=rpy), ground
+    # per-point time rides the along-track coordinate (a scanner sweeps
+    # forward); true_drift(t) injects the GNSS-wander error the drift
+    # solver must recover
+    times = t0 + along / speed
+    if true_drift is not None:
+        xyz = xyz.copy()
+        xyz[:, 2] += true_drift(times)
+    return StripBundle(xyz=xyz, nav_xyz=nav, rpy=rpy, times=times), ground
 
 
 def labeled_scene(seed=0, n_ground=20000):

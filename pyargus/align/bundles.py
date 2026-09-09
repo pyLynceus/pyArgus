@@ -18,10 +18,15 @@ from pyargus.core import rotation
 
 @dataclass
 class StripBundle:
-    """One strip: points plus per-point navigation state, map frame."""
+    """One strip: points plus per-point navigation state, map frame.
+
+    ``times`` (per-point GPS seconds) is optional and only required by
+    time-dependent (drift) solving; constant-offset solving ignores it.
+    """
     xyz: np.ndarray       # (N, 3) point coordinates as georeferenced
     nav_xyz: np.ndarray   # (N, 3) trajectory position at each return
     rpy: np.ndarray       # (N, 3) roll, pitch, yaw (radians)
+    times: np.ndarray = None   # (N,) GPS seconds, optional
     _r_nav: np.ndarray = field(default=None, repr=False)
     _body: np.ndarray = field(default=None, repr=False)
 
@@ -33,6 +38,10 @@ class StripBundle:
             raise ValueError("xyz, nav_xyz and rpy must share one (N, 3) shape")
         if self.xyz.ndim != 2 or self.xyz.shape[1] != 3:
             raise ValueError(f"expected (N, 3) arrays, got {self.xyz.shape}")
+        if self.times is not None:
+            self.times = np.asarray(self.times, dtype=float)
+            if self.times.shape != (self.xyz.shape[0],):
+                raise ValueError("times must be (N,) matching the points")
 
     @property
     def r_nav(self):

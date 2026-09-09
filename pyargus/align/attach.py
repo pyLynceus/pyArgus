@@ -129,7 +129,8 @@ def bundles_from_cloud(points, sbet, map_e, map_n, map_z, *,
     psid = points["point_source_id"][inside]
     for sid in np.unique(psid):
         m = psid == sid
-        bundles.append(StripBundle(xyz=xyz[m], nav_xyz=nav[m], rpy=rpy[m]))
+        bundles.append(StripBundle(xyz=xyz[m], nav_xyz=nav[m], rpy=rpy[m],
+                                   times=sow[m]))
     strip_ids = [int(s) for s in np.unique(psid)]
 
     sample = bundles[0].body_vecs[:10000]
@@ -149,7 +150,8 @@ def bundles_from_cloud(points, sbet, map_e, map_n, map_z, *,
 
 
 def apply_corrections(points, sbet, map_e, map_n, map_z, heading_source,
-                      boresight, offsets_by_sid, chunk_size=2_000_000):
+                      boresight, offsets_by_sid, chunk_size=2_000_000,
+                      drift_by_sid=None):
     """Corrected coordinates for a whole cloud, in chunks.
 
     Applies the solved boresight and per-strip offsets through the same
@@ -158,6 +160,14 @@ def apply_corrections(points, sbet, map_e, map_n, map_z, heading_source,
     cannot be corrected honestly. A point_source_id with no entry in
     ``offsets_by_sid`` refuses: it means the solve never saw that
     strip. Returns (xyz, n_uncorrected).
+
+    ``drift_by_sid`` (sid -> (node_times, values)) applies a solved
+    drift model instead: each point gets the piecewise-linear vertical
+    correction at ITS OWN time, the same np.interp the solver's
+    DriftModel.offset_at uses (clamped at the node ends, matching the
+    solve's clamped brackets). ``offsets_by_sid`` is ignored then --
+    in drift mode it holds per-strip means, and applying a mean on top
+    of the drift would double-correct.
     """
     from pyargus.core import rotation
 
@@ -166,8 +176,9 @@ def apply_corrections(points, sbet, map_e, map_n, map_z, heading_source,
     sow = points["gps_time"] + 1_000_000_000.0 - week * 604800.0
     inside = (sow >= t[0]) & (sow <= t[-1])
 
+    active = drift_by_sid if drift_by_sid is not None else offsets_by_sid
     unknown = set(np.unique(points["point_source_id"][inside]).tolist()) \
-        - set(int(k) for k in offsets_by_sid)
+        - set(int(k) for k in active)
     if unknown:
         raise ValueError(f"no solved offset for strip(s) {sorted(unknown)}; "
                          f"the adjustment never saw them")
@@ -190,7 +201,15 @@ def apply_corrections(points, sbet, map_e, map_n, map_z, heading_source,
                                np.interp(sq, t, map_z)])
         body = np.einsum("nji,nj->ni", r_nav, xyz[idx] - nav)
         delta = np.einsum("nij,nj->ni", r_nav, np.cross(boresight, body))
-        offsets = np.array([offsets_by_sid[int(s)]
-                            for s in points["point_source_id"][idx]])
+        if drift_by_sid is not None:
+            sids = points["point_source_id"][idx]
+            offsets = np.zeros((idx.size, 3))
+            for s in np.unique(sids):
+                m = sids == s
+                nt, vals = drift_by_sid[int(s)]
+                offsets[m, 2] = np.interp(sq[m], nt, vals)
+        else:
+            offsets = np.array([offsets_by_sid[int(s)]
+                                for s in points["point_source_id"][idx]])
         xyz[idx] = xyz[idx] + delta + offsets
     return xyz, int((~inside).sum())

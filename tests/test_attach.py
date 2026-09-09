@@ -215,3 +215,41 @@ def test_apply_corrections_matches_corrected_xyz_on_banked_flight():
         assert np.abs(got - expected).max() < 1e-9
     # and the correction genuinely moved the cloud (not a zero test)
     assert np.abs(applied[:, 2] - points["z"]).max() > 0.05
+
+
+def test_apply_corrections_drift_interpolates_per_point():
+    from pyargus.align.bundles import corrected_xyz
+    from pyargus.align.drift import DriftModel
+
+    sbet, e, n, z, attitude = banked_southbound_scene()
+    points, _ = banked_points(sbet, e, n, z, attitude)
+    me, mn, mz = crs.sbet_to_map(sbet, "EPSG:6447", vertical=GEOID)
+    result = attach.bundles_from_cloud(points, sbet, me, mn, mz)
+
+    boresight = np.array([0.0005, -0.001, 0.002])
+    drift_by_sid, node_times, values = {}, [], []
+    for sid, bundle in zip(result.strip_ids, result.bundles):
+        nt = np.linspace(bundle.times.min(), bundle.times.max(), 4)
+        v = 0.03 * sid * (nt - nt[0]) / (nt[-1] - nt[0])  # per-strip ramp
+        drift_by_sid[sid] = (nt, v)
+        node_times.append(nt)
+        values.append(v)
+    model = DriftModel(node_times=node_times, values=values)
+    means = {sid: np.array([0.0, 0.0, 99.0])  # poison: must be ignored
+             for sid in result.strip_ids}
+    applied, skipped = attach.apply_corrections(
+        points, sbet, me, mn, mz, result.heading_source, boresight, means,
+        drift_by_sid=drift_by_sid)
+    assert skipped == 0
+    for i, (sid, bundle) in enumerate(zip(result.strip_ids, result.bundles)):
+        expected = corrected_xyz(bundle, boresight,
+                                 model.offset_at(i, bundle.times))
+        got = applied[points["point_source_id"] == sid]
+        assert np.abs(got - expected).max() < 1e-9
+    # a strip missing from drift_by_sid refuses, even if the mean dict
+    # covers it
+    partial = {result.strip_ids[0]: drift_by_sid[result.strip_ids[0]]}
+    with pytest.raises(ValueError, match="never saw"):
+        attach.apply_corrections(points, sbet, me, mn, mz,
+                                 result.heading_source, boresight, means,
+                                 drift_by_sid=partial)

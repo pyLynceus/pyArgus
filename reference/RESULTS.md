@@ -287,3 +287,97 @@ A 39-agent panel confirmed 8 findings; all fixed, suite at 146 tests:
   live here). --classes crashed raw on a trailing comma (now a named
   SystemExit, trailing commas tolerated); load() crashed raw on
   non-model joblib files (now a schema guard + a pickle warning).
+
+## Time-dependent (drift) corrections
+
+Measured 2026-09-09 by the drift configuration of
+`python -m reference.alignment_proof`: the crossing-line block again,
+staggered strip start times, and a sinusoidal GNSS wander injected
+into strip 1 (0.10 ft amplitude, 25 s period -- on top of its 0.12 ft
+constant and the usual boresight), solved as piecewise-linear vertical
+corrections in time (5-s nodes, `--drift-spacing`).
+
+The workflow measured is the one reality requires --
+**calibrate-then-drift**:
+
+* Boresight comes from the CLEAN block (recovered there to 6e-6 rad)
+  and is HELD during the drift solve. Calibrating on the wandering
+  block instead errs pitch by **1.05e-3 rad** -- worse than the
+  injected pitch -- and solving boresight+drift together is no better
+  (**1.24e-3 rad**, also measured and pinned): over smooth terrain,
+  pitch's along-track dz signature is a slow function of time that
+  each strip's free drift curve can absorb, with only stiffness
+  resisting. Both contamination numbers are pinned in run_all as
+  documentation: a block that needs drift corrections is not
+  calibration data.
+* With the calibration held, the recovered curve spans -0.210..-0.015
+  ft against the injected -0.22..-0.02, and matches the injected
+  sinusoid's shape to **0.033 ft max** at interior nodes
+  (mean-removed; ~0.02 of that is the chord error inherent to 5-s
+  linear segments on a 25-s sine).
+* Strip dZ (the referee): rmse 0.124 -> **0.081 ft**, the clean
+  block's own floor -- the wander is scrubbed from the surface.
+* Observability in drift mode is judged on the NESTED CONSTANT system
+  (equal nodes = a constant), because the stiffness rows regularize
+  the drift system itself and drag degenerate geometry's conditioning
+  toward healthy (measured: 1.1e5 vs 2.6e5, no safe gate there; the
+  constant system separates 5 vs 2.4e3 at the proven 200 gate).
+* Full-cloud application (`--write`) interpolates each point's
+  correction at its own GPS time, the same clamped piecewise-linear
+  model the solver fits; drift mode ignores the per-strip means to
+  avoid double-correcting.
+
+### Drift adversarial review round (same day)
+
+A 92-agent panel (four lenses, two finders each, three refuters per
+finding) confirmed one headline defect and a set of refusal and test
+gaps; all fixed, suite at 175 tests, every number above re-measured
+after the fixes:
+
+* **The stiffness prior silently washed out (iterated Tikhonov)**:
+  stiffness and gauge pseudo-observations carried rhs 0 on every
+  Gauss-Newton iteration while updates accumulated, so the penalty
+  constrained each iteration's INCREMENT, not the curve -- the solved
+  drift depended on max_iterations (panel measured the recovered
+  amplitude climbing 0.0165 -> 0.0737 as iterations rose) and the
+  tolerance stop never fired. Fixed: the rhs carries the current
+  penalty residual. Node values are now identical at max_iterations 8
+  vs 24, solves converge in 6-7 iterations, and the shape error
+  improved 0.039 -> 0.033 ft. Pinned by an iteration-count-invariance
+  test.
+* **Stiffness became spacing-invariant** (row weight ~ 1/sqrt(node
+  step), approximating a rate-of-change integral): refining
+  drift_spacing no longer dilutes the smoothing.
+* **Refusals grew teeth**: drift_spacing <= 0 was a raw
+  ZeroDivisionError (0) or a silent 2-node ramp (negative);
+  drift_stiffness <= 0 returned ~0.65 ft of invented drift on
+  perfectly aligned strips with both observability gates green; and
+  the observation-count guard credited stiffness rows, which cancels
+  the node count algebraically -- no spacing, however absurd, could
+  ever refuse (a --drift-spacing typo was a memory blowout). All
+  three are named refusals now; a node explosion says "widen
+  drift_spacing".
+* The linearized solve now runs in the COLUMN-SCALED space the
+  condition gate actually measures, instead of gating one matrix and
+  inverting another.
+* **Relative-only drift documented and measured**: patches observe
+  only DIFFERENCES of drift curves, so without control the stiffness
+  prior SPLITS a one-strip wander between overlapping strips
+  (measured: half and half on a two-strip block; the strip dZ
+  collapses either way). The CLI round-trip test injects a wander on
+  one strip, pins the common mode with 27 surveyed marks, and demands
+  the right strip move (max 0.036 ft residual against pre-wander
+  truth; the untouched strip stays within 0.016).
+* Test gaps closed: bracket() pinned against np.interp including
+  end-clamping (the old test discarded its outputs); drift mode now
+  proves it REFUSES degenerate geometry (deleting the nested-constant
+  gate previously survived all tests); drift+control absolute datum
+  covered (shared 0.30 bias pulled to truth through the drift solve);
+  the strip-0 zero-mean gauge convention asserted. The Huber
+  exemption of stiffness/gauge rows stays pinned by documentation
+  only -- measured: on clean synthetics the mutation is
+  outcome-invisible; its value is robustness policy under
+  contamination.
+* The "1.24e-3 together-mode" figure the docstrings quoted is now
+  actually produced by this harness and pinned (it previously lived
+  nowhere in committed code -- an unhonored claim).

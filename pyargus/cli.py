@@ -458,11 +458,20 @@ def _cmd_align(args):
     print(f"strips:  {attached.strip_ids} "
           f"({[b.xyz.shape[0] for b in attached.bundles]} points)")
 
+    if args.drift_spacing is not None and not args.no_boresight:
+        print("caution: solving boresight and drift TOGETHER lets pitch "
+              "leak into the per-strip curves over smooth terrain -- and "
+              "a block that needs drift corrections is poor calibration "
+              "data even in constant mode. Calibrate boresight on clean "
+              "lines, --write that correction, then solve drift on the "
+              "result with --no-boresight.")
     result = solve_alignment(
         attached.bundles, solve_boresight=not args.no_boresight,
         offsets=args.offsets, cell=args.cell, min_points=args.min_points,
         control=control, control_weight=args.control_weight,
-        control_radius=args.control_radius)
+        control_radius=args.control_radius,
+        drift_spacing=args.drift_spacing,
+        drift_stiffness=args.drift_stiffness)
     if result.absolute:
         print(f"datum:   ABSOLUTE, anchored by {result.n_control} control "
               f"observations; control rms "
@@ -477,10 +486,18 @@ def _cmd_align(args):
           f"rad  ({deg[0]:+.4f}/{deg[1]:+.4f}/{deg[2]:+.4f} deg)")
     for i, sid in enumerate(attached.strip_ids):
         tag = "  (gauge)" if i == 0 and not result.absolute else ""
-        extra = (f"  de {result.offsets[i, 0]:+.4f}  "
-                 f"dn {result.offsets[i, 1]:+.4f}"
-                 if args.offsets == "xyz" else "")
-        print(f"offset strip {sid}: dz {result.offsets[i, 2]:+.4f}{extra}{tag}")
+        if result.drift is not None:
+            lo, hi = result.drift.span(i)
+            print(f"drift strip {sid}: mean dz "
+                  f"{result.offsets[i, 2]:+.4f}  span {lo:+.4f} .. "
+                  f"{hi:+.4f} over {len(result.drift.node_times[i])} "
+                  f"nodes{tag}")
+        else:
+            extra = (f"  de {result.offsets[i, 0]:+.4f}  "
+                     f"dn {result.offsets[i, 1]:+.4f}"
+                     if args.offsets == "xyz" else "")
+            print(f"offset strip {sid}: dz "
+                  f"{result.offsets[i, 2]:+.4f}{extra}{tag}")
 
     def dz_map(xa, xb):
         return overlap.strip_dz(
@@ -503,9 +520,15 @@ def _cmd_align(args):
     if args.write:
         offsets_by_sid = {sid: result.offsets[i]
                           for i, sid in enumerate(attached.strip_ids)}
+        drift_by_sid = None
+        if result.drift is not None:
+            drift_by_sid = {sid: (result.drift.node_times[i],
+                                  result.drift.values[i])
+                            for i, sid in enumerate(attached.strip_ids)}
         xyz, skipped = attach.apply_corrections(
             points, trajectory, map_e, map_n, map_z,
-            attached.heading_source, result.boresight, offsets_by_sid)
+            attached.heading_source, result.boresight, offsets_by_sid,
+            drift_by_sid=drift_by_sid)
         with laspy.open(args.path) as reader:
             las = reader.read()
         las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
@@ -658,6 +681,15 @@ def build_parser():
     p_al.add_argument("--control-weight", type=float, default=10.0)
     p_al.add_argument("--control-radius", type=float, default=6.0)
     p_al.add_argument("--offsets", choices=("z", "xyz", "none"), default="z")
+    p_al.add_argument("--drift-spacing", type=float, default=None,
+                      help="solve a piecewise-linear vertical correction in "
+                           "time per strip (node spacing, seconds) instead "
+                           "of constant offsets -- for GNSS wander WITHIN "
+                           "a line")
+    p_al.add_argument("--drift-stiffness", type=float, default=1.0,
+                      help="smoothness weight on the drift curve's rate "
+                           "of change (spacing-invariant; default 1.0, "
+                           "must be positive)")
     p_al.add_argument("--no-boresight", action="store_true")
     p_al.add_argument("--speed-floor", type=float, default=None,
                       help="standstill cutoff for the heading-vs-track "

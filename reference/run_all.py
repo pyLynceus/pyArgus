@@ -51,6 +51,11 @@ CHECKS = [
     ("alignment_proof", "with_cross.dz_before_median", "abs", 0.098, 0.005),
     ("alignment_proof", "parallel.beta_err_max", "below", 5e-5, 0),
     ("alignment_proof", "parallel.offset_err_max", "below", 2e-3, 0),
+    ("alignment_proof", "drift.contaminated_beta_err_max", "abs", 1.05e-3, 2e-4),
+    ("alignment_proof", "drift.together_beta_err_max", "abs", 1.24e-3, 2e-4),
+    ("alignment_proof", "drift.drift_shape_err_max", "below", 0.04, 0),
+    ("alignment_proof", "drift.dz_after_median", "abs", 0.0, 0.01),
+    ("alignment_proof", "drift.dz_after_rmse", "abs", 0.081, 0.005),
 
     ("summerville_align", "track_error_deg", "abs", 0.53, 0.05),
     ("summerville_align", "agl_median", "abs", 331.9, 1.0),

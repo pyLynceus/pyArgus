@@ -35,6 +35,8 @@ class Correspondences:
     normal: np.ndarray   # (K, 3) plane normals, +z up
     j_beta: np.ndarray   # (K, 3) boresight Jacobian rows
     cells: int           # cells considered before the quality gates
+    t_a: np.ndarray = None   # (K,) anchor times per side, when bundles
+    t_b: np.ndarray = None   # carry times; None otherwise
 
 
 def _nearest_to_centroid(xyz, index):
@@ -84,6 +86,7 @@ def correspondences(bundle_a, bundle_b, xyz_a, xyz_b, a, b, *, cell=5.0,
                                           return_indices=True)
 
     d_list, n_list, j_list = [], [], []
+    ta_list, tb_list = [], []
     for pa, pb in zip(pos_a, pos_b):
         sl_a = slice(starts_a[pa], starts_a[pa + 1]
                      if pa + 1 < len(starts_a) else len(order_a))
@@ -120,14 +123,20 @@ def correspondences(bundle_a, bundle_b, xyz_a, xyz_b, a, b, *, cell=5.0,
         d_list.append(d)
         n_list.append(normal)
         j_list.append(j_beta)
+        if bundle_a.times is not None and bundle_b.times is not None:
+            ta_list.append(float(bundle_a.times[ia]))
+            tb_list.append(float(bundle_b.times[ib]))
 
     k = len(d_list)
+    timed = bool(ta_list) and k == len(ta_list)
     return Correspondences(
         a, b,
         np.array(d_list) if k else np.empty(0),
         np.array(n_list) if k else np.empty((0, 3)),
         np.array(j_list) if k else np.empty((0, 3)),
-        int(common.size))
+        int(common.size),
+        np.array(ta_list) if timed else None,
+        np.array(tb_list) if timed else None)
 
 
 @dataclass
@@ -144,6 +153,7 @@ class ControlObservations:
     normal: np.ndarray   # (K, 3)
     j_beta: np.ndarray   # (K, 3)
     marks: np.ndarray    # (K,) indices into the control array
+    t: np.ndarray = None  # (K,) anchor times, when the bundle has times
 
 
 def control_observations(bundle, xyz, strip, control_enz, *, radius=6.0,
@@ -159,7 +169,7 @@ def control_observations(bundle, xyz, strip, control_enz, *, radius=6.0,
     if max_rms is None:
         max_rms = radius / 25.0
     control_enz = np.asarray(control_enz, dtype=float)
-    d_list, n_list, j_list, m_list = [], [], [], []
+    d_list, n_list, j_list, m_list, t_list = [], [], [], [], []
     for k in range(control_enz.shape[0]):
         mark = control_enz[k]
         near = ((np.abs(xyz[:, 0] - mark[0]) <= radius)
@@ -183,10 +193,14 @@ def control_observations(bundle, xyz, strip, control_enz, *, radius=6.0,
         n_list.append(normal)
         j_list.append(j_beta)
         m_list.append(k)
+        if bundle.times is not None:
+            t_list.append(float(bundle.times[anchor]))
     n_obs = len(d_list)
+    timed = bool(t_list) and n_obs == len(t_list)
     return ControlObservations(
         strip,
         np.array(d_list) if n_obs else np.empty(0),
         np.array(n_list) if n_obs else np.empty((0, 3)),
         np.array(j_list) if n_obs else np.empty((0, 3)),
-        np.array(m_list, dtype=int) if n_obs else np.empty(0, dtype=int))
+        np.array(m_list, dtype=int) if n_obs else np.empty(0, dtype=int),
+        np.array(t_list) if timed else None)

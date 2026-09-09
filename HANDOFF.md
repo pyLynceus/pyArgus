@@ -291,21 +291,56 @@ confirmed findings, all fixed):
   disagreement has zero mean); the robust plane refits on survivors
   whenever a plane is still determined.
 
+## Time-dependent (drift) corrections
+
+`align/drift.py` + drift mode in `solve_alignment(drift_spacing=,
+drift_stiffness=)`: per-strip piecewise-linear VERTICAL corrections
+in time (TerraMatch's "fluctuating" idea) replacing the constant
+offsets; per-point times ride StripBundle.times (attach supplies sow;
+synthetic strips derive them from the along-track sweep).
+Observability is judged on the NESTED CONSTANT system (equal nodes =
+a constant) because stiffness regularizes the drift system itself and
+no safe gate exists there -- measured, in solve.py's docstring. CLI:
+`pyargus align --drift-spacing S [--drift-stiffness K]`; --write
+interpolates each point's correction at its own time (drift_by_sid in
+attach.apply_corrections; the per-strip means are deliberately
+ignored to avoid double-correction).
+
+Know these three measured truths before using it (all in
+reference/RESULTS.md, all pinned in run_all):
+
+* **A wandering block is not calibration data.** Calibrate boresight
+  on clean lines, hold it, then solve drift with --no-boresight. The
+  harness measures all three ways: constants-on-wander errs pitch
+  1.05e-3 rad, together-mode 1.24e-3 -- both worse than the injected
+  pitch; calibrate-then-drift recovers the wander to 0.033 ft.
+* **Without control, drift is relative all the way down**: patches
+  see only curve DIFFERENCES, and the stiffness prior splits a
+  one-strip wander half-and-half between overlapping strips. Put
+  marks in the solve when it matters which strip actually moved.
+* **The stiffness prior is a true curve penalty** (seventh panel's
+  headline: rhs used to be zero, so the prior washed out per
+  iteration -- iterated Tikhonov; now the rhs carries the penalty
+  residual, results are independent of max_iterations, and solves
+  actually converge). Weight is spacing-invariant (~1/sqrt(step));
+  spacing/stiffness <= 0 and node explosions REFUSE by name.
+
+Seventh adversarial panel (92 agents): the Tikhonov defect, the
+refusal holes, the guard that algebraically could not fire, and six
+test gaps -- all fixed, everything re-measured; details in
+RESULTS.md's drift review round.
+
 ## Next step, with reasoning
 
 **The roadmap is complete.** What remains open, by value: (1) THE
-REAL PROJECT: a delivery where the imagery AT is tight but control
-misses the lidar INCONSISTENTLY -- above and below across the
-project. That signature points at strip misalignment or
-time-dependent trajectory error, and the diagnosis plan writes
-itself: qa-report with the control CSVs (checkpoint residuals mark by
-mark), strip-dZ maps (does the sign flip follow strip boundaries?),
-control residuals grouped per strip (which strip is high, which
-low?), then `pyargus align` and re-measure. (2) RGB colorization from
-pyLynceus EO (the TerraPhoto bridge). (3) Time-dependent trajectory
-corrections in the alignment core -- the real project may demand
-exactly this. (4) Archive any vendor-stated miscalibrated flight as
-the final alignment acceptance.
+REAL PROJECT (SH 151, set aside pending the vendor's LCP2 list): the
+lidar block is internally rigid and the misses are position-locked;
+when the vendor responds, re-occupy the worst marks and decide
+between control-net vs lidar-datum error -- reference/sh151_* holds
+the case. (2) RGB colorization from pyLynceus EO (the TerraPhoto
+bridge). (3) COPC/streaming reads for clouds beyond memory. (4)
+Archive any vendor-stated miscalibrated flight as the final alignment
+acceptance.
 
 ## Findings so far
 
