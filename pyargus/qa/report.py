@@ -102,6 +102,26 @@ def generate(points, out_dir, *, title, control=None, traj_time=None,
         comparison = checkpoints.local_median_residuals(
             gxyz, ids, np.column_stack([ce, cn, cz]),
             radius=control_radius, min_neighbours=control_min_neighbours)
+        from pyargus.qa import control_by_strip as cbs
+        gathered = {}
+        psid_ground = points["point_source_id"][ground]
+        for sid in np.unique(psid_ground):
+            m = psid_ground == sid
+            sx, sy, sz = gxyz[m, 0], gxyz[m, 1], gxyz[m, 2]
+            marks = {}
+            for k in range(len(ids)):
+                near = ((np.abs(sx - ce[k]) <= control_radius)
+                        & (np.abs(sy - cn[k]) <= control_radius))
+                if near.any():
+                    marks[k] = (sx[near], sy[near], sz[near])
+            if marks:
+                gathered[f"{int(sid)}"] = marks
+        try:
+            deco = cbs.decompose(gathered, ids, ce, cn, cz,
+                                 min_points=control_min_neighbours)
+            summary["control_by_strip"] = deco.per_strip()
+        except ValueError:
+            pass
         values = comparison.values()
         summary["control"] = {
             "residuals": dict(comparison.residuals),
@@ -210,6 +230,17 @@ def _write_html(path, summary, sections, *, dz_limit, density_cell, dz_cell,
                         f'<td style="text-align:left;color:#5c6670">skipped: '
                         f"{esc(reason)}</td></tr>")
         rows.append("</table>")
+        if summary.get("control_by_strip"):
+            rows.append('<p class="note">Per strip (median dz over its '
+                        'marks) -- matching biases across strips mean the '
+                        'miss is position-locked, not misalignment:</p>')
+            rows.append("<table><tr><th>strip</th><th>marks</th>"
+                        "<th>median dz</th><th>nmad</th></tr>")
+            for strip, st in summary["control_by_strip"].items():
+                rows.append(f"<tr><td>{esc(strip)}</td><td>{st['n']}</td>"
+                            f"<td>{st['median']:+.3f}</td>"
+                            f"<td>{st['nmad']:.3f}</td></tr>")
+            rows.append("</table>")
         if "median" in c:
             rows.append(f'<p><b>n {c["n"]} &middot; median {c["median"]:+.3f} '
                         f'&middot; NMAD {c["nmad"]:.3f} {u}</b> &middot; '

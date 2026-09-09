@@ -8,6 +8,7 @@
     pyargus classify-above classified.las --model forest.joblib --out full.las
     pyargus dtm classified.las --out dtm.asc --cell 3
     pyargus align cloud.las --sbet traj.out --vertical=-29.077 --write fixed.las
+    pyargus control-by-strip strips/*.las --control pts.csv --control-order pnez
     pyargus contours classified.las --out contours.dxf --interval 1
     pyargus gui
 
@@ -336,6 +337,57 @@ def _cmd_contours(args):
     return 0
 
 
+
+def _cmd_control_by_strip(args):
+    from pyargus.formats import control as control_mod
+    from pyargus.qa import control_by_strip as cbs
+
+    if not args.control_order:
+        raise SystemExit("--control-order is required; the column order is "
+                         "never guessed (pnez or penz)")
+    ids, ce, cn, cz = control_mod.read_control_csvs(args.control,
+                                                    args.control_order)
+    gathered = cbs.gather_near_marks(
+        args.paths, ce, cn, radius=args.radius,
+        ground_class=args.ground_class)
+    deco = cbs.decompose(gathered, ids, ce, cn, cz,
+                         min_points=args.min_points)
+
+    strips = sorted({c.strip for c in deco.cells})
+    lookup = {(c.mark, c.strip): c for c in deco.cells}
+    print("mark      knownZ   " + "  ".join(f"{s[:6]:>6}" for s in strips))
+    for mark in sorted({c.mark for c in deco.cells}):
+        cells = []
+        for s in strips:
+            cell = lookup.get((mark, s))
+            cells.append(f"{cell.dz_median:+.2f}" if cell else "   . ")
+        print(f"{ids[mark]:8s} {cz[mark]:8.2f}  "
+              + "  ".join(f"{c:>6}" for c in cells))
+
+    print("\n[per-strip bias: median dz over its marks]")
+    for strip, stats in deco.per_strip().items():
+        print(f"  {strip}: n {stats['n']:3d}  median {stats['median']:+.3f}"
+              f"  nmad {stats['nmad']:.3f}")
+
+    print("\n[per-mark: agreement across strips]")
+    print("  mark      strips  mean_dz  spread  plane_dz  reading")
+    for mark_id, stats in deco.per_mark().items():
+        if stats["n_strips"] < 2 and abs(stats["mean_dz"]) < 0.1:
+            continue
+        reading = ("POSITION-LOCKED" if stats["n_strips"] >= 2
+                   and stats["spread"] < 0.06
+                   and abs(stats["mean_dz"]) > 0.1
+                   else "strip-dependent" if stats["spread"] >= 0.06
+                   and abs(stats["mean_dz"]) > 0.1 else "")
+        print(f"  {mark_id:8s}  {stats['n_strips']:4d}   "
+              f"{stats['mean_dz']:+.3f}   {stats['spread']:.3f}   "
+              f"{stats['dz_plane']:+.3f}   {reading}")
+    print("\nposition-locked = every strip reads the same wrong value: "
+          "look at the mark, the survey,\nor a pre-applied adjustment -- "
+          "not at strip alignment. plane_dz is grade-corrected.")
+    return 0
+
+
 def _cmd_align(args):
     from pathlib import Path
 
@@ -567,6 +619,21 @@ def build_parser():
                       help="Chaikin iterations; drawing polish that moves "
                            "vertices off the measured surface")
     p_ct.set_defaults(func=_cmd_contours)
+
+    p_cb = sub.add_parser(
+        "control-by-strip",
+        help="decompose control misses per strip (misalignment vs "
+             "position-locked)")
+    p_cb.add_argument("paths", nargs="+",
+                      help="strip LAS/LAZ files (or one multi-strip cloud)")
+    p_cb.add_argument("--control", action="append", required=True)
+    p_cb.add_argument("--control-order", choices=("pnez", "penz"))
+    p_cb.add_argument("--radius", type=float, default=3.0)
+    p_cb.add_argument("--min-points", type=int, default=8)
+    p_cb.add_argument("--ground-class", type=int, default=None,
+                      help="filter to one class (default: all points -- "
+                           "right for unclassified strips)")
+    p_cb.set_defaults(func=_cmd_control_by_strip)
 
     p_al = sub.add_parser("align", help="strip alignment against the SBET")
     p_al.add_argument("path")
