@@ -32,6 +32,10 @@ Phase 4; the QA that referees it ships first.
     pyargus/surfaces  DTM/DSM gridding + ESRI ASCII export, TIN with
                       soft breaklines, marching-squares contours out to
                       DXF (R12) and GeoJSON
+    pyargus/imagery   RGB colorization from oriented imagery: the
+                      LP360/pyLynceus EO bridge, an Agisoft-native
+                      calibrated camera, occlusion refereed by the
+                      cloud itself (optional [imagery] extra)
 
 The commands:
 
@@ -44,6 +48,8 @@ The commands:
       --vertical EPSG:6360 --proj-network --write aligned.las
     pyargus contours classified.las --out contours.dxf --interval 1 \
       --breaklines creek.geojson
+    pyargus colorize cloud.las --eo eo_Photos.csv --images Flight_dir \
+      --out rgb.las
 
 ## Running
 

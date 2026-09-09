@@ -354,6 +354,43 @@ refusal holes, the guard that algebraically could not fire, and six
 test gaps -- all fixed, everything re-measured; details in
 RESULTS.md's drift review round.
 
+## RGB colorization: the pyLynceus EO bridge
+
+`pyargus colorize cloud.las --eo eo_Photos.csv --images Flight_dir
+--out rgb.las` paints a cloud from oriented aerial imagery.
+`formats/eo.py` reads the LP360-style EO CSV (which pyLynceus's
+adjusted_eo.csv also is), `imagery/camera.py` is a calibrated frame
+camera, `imagery/colorize.py` assigns, checks occlusion and samples.
+Needs the `[imagery]` extra (Pillow). Measured on Summerville:
+70.9% of 15.28M points colored from 1,019 of 1,083 photos in 235 s.
+
+Four things to know before touching it:
+
+* **The lens model lives in the STORED IMAGE's grid**, in Agisoft's
+  own equations and units, because that is what the `.cal` sidecar
+  beside every frame is. Do not "convert" it into a millimetre photo
+  frame: the first version did, and since the radial terms are
+  rotation-invariant while CX/CY and P1/P2 are not, it carried a
+  ~27 px systematic at the shipped `quarter_turns=3` that a suite
+  testing distortion only at turns=0 could not see. The equivalence
+  test now covers all four turns.
+* **Rotation comes from Direction/Up**, never an angle column.
+* **Occlusion is refereed by the cloud**, and its limits are real and
+  pinned: the depth grid holds only the points a photo was assigned,
+  so paint-through survives where the occluder belongs to another
+  photo; a one-cell halo at each depth edge is falsely occluded. Both
+  have tests asserting the CURRENT behavior, so improving them will
+  fail those tests -- update the tests and RESULTS.md together.
+* **Coverage is the datum gate**: overlap and AGL catch a mismatch
+  that separates EO from cloud, not one that scales it (metres over
+  survey feet keeps both happy), so `--min-coverage` refuses below 5%
+  and under half prints a caution.
+
+The eighth adversarial panel (four lenses, 38 findings) drove most of
+that; it ran out of quota mid-verify, so one finding carries a full
+three-refuter quorum and the rest were triaged by hand against the
+code. Details and the honest-gaps list are in RESULTS.md.
+
 ## Next step, with reasoning
 
 **The roadmap is complete.** What remains open, by value: (1) THE
@@ -361,9 +398,11 @@ REAL PROJECT (SH 151, set aside pending the vendor's LCP2 list): the
 lidar block is internally rigid and the misses are position-locked;
 when the vendor responds, re-occupy the worst marks and decide
 between control-net vs lidar-datum error -- reference/sh151_* holds
-the case. (2) RGB colorization from pyLynceus EO (the TerraPhoto
-bridge). (3) COPC/streaming reads for clouds beyond memory. (4)
-Archive any vendor-stated miscalibrated flight as the final alignment
+the case. (2) A better occlusion test for colorize -- a per-photo
+depth grid built from every candidate point rather than only the
+assigned ones, which is what would end paint-through. (3)
+COPC/streaming reads for clouds beyond memory. (4) Archive any
+vendor-stated miscalibrated flight as the final alignment
 acceptance.
 
 ## Findings so far

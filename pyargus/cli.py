@@ -582,18 +582,25 @@ def _cmd_colorize(args):
                          f"{args.images}; wrong --images path?")
     cameras = {}
     for tag, sample in tag_sample.items():
-        cal = Path(args.cal) if args.cal else camera_mod.find_cal(sample.parent)
+        # the sample image's OWN sidecar, not the folder's first: a
+        # flattened multi-camera delivery would otherwise give every
+        # camera the same lens
+        cal = Path(args.cal) if args.cal else camera_mod.find_cal(sample)
         if cal is None:
             raise SystemExit(
-                f"no .cal calibration sidecar found beside {sample.parent} "
+                f"no .cal calibration sidecar found for {sample.name} "
                 f"and no --cal given; refusing to project through an "
                 f"uncalibrated lens (the distortion is ~30 px at the "
                 f"frame corner)")
-        cameras[tag] = camera_mod.read_cal(
-            cal, quarter_turns=args.quarter_turns, name=str(tag))
-        print(f"camera {tag or '-'}: {cal.name}  f "
-              f"{cameras[tag].focal_mm:.3f} mm, "
-              f"{cameras[tag].width_px}x{cameras[tag].height_px}, "
+        try:
+            cameras[tag] = camera_mod.read_cal(
+                cal, quarter_turns=args.quarter_turns, name=str(tag))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+        cam = cameras[tag]
+        print(f"camera {tag or '-'}: {cal.name}  f {cam.focal_mm:.3f} mm "
+              f"({cam.focal_px:.1f} px)  pp ({cam.cx_px:+.1f}, "
+              f"{cam.cy_px:+.1f}) px  {cam.width_px}x{cam.height_px}  "
               f"quarter turns {args.quarter_turns}")
 
     points = las_mod.read_points(args.path, fields=("x", "y", "z"))
@@ -620,16 +627,42 @@ def _cmd_colorize(args):
     print(f"eo:      {len(eo['filename'])} rows, flying height "
           f"~{agl:.0f} above the cloud median")
 
-    rgb, stats = colorize_mod.colorize(
-        xyz, eo, cameras, image_paths, neighbors=args.neighbors,
-        occlusion_tol=args.occlusion_tol)
+    def progress(done, total, name):
+        print(f"  ... {done} of {total} images ({name})", flush=True)
+
+    try:
+        rgb, stats = colorize_mod.colorize(
+            xyz, eo, cameras, image_paths, neighbors=args.neighbors,
+            occlusion_tol=args.occlusion_tol, progress=progress)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     pct = 100.0 * stats["n_colored"] / stats["n_points"]
     print(f"colored: {stats['n_colored']:,} of {stats['n_points']:,} "
           f"points ({pct:.1f}%) from {stats['n_images_used']} images")
     print(f"skipped: {stats['n_occluded']:,} occluded, "
-          f"{stats['n_uncovered']:,} outside every frame"
+          f"{stats['n_unseen']:,} seen by no nearby photo"
           + (f"; {stats['n_eo_dropped']} EO rows had no image file"
              if stats["n_eo_dropped"] else ""))
+    # The overlap and AGL gates catch a frame mismatch that separates
+    # the two datasets, but not one that merely SCALES them (metres
+    # written over survey feet keeps the boxes overlapping on a
+    # site-local grid). Coverage is what that looks like from here.
+    if pct < args.min_coverage:
+        raise SystemExit(
+            f"only {pct:.1f}% of the cloud got a color, below "
+            f"--min-coverage {args.min_coverage}. That is what a unit or "
+            f"datum mismatch between the EO and the cloud looks like "
+            f"(metres vs survey feet, ellipsoidal vs orthometric "
+            f"heights), or imagery from the wrong flight. Nothing was "
+            f"written; lower --min-coverage to colorize a subset "
+            f"deliberately.")
+    if pct < 50.0:
+        print("caution: less than half the cloud got a color. That is "
+              "normal when the imagery covers only part of the block -- "
+              "and it is also what a vertical datum or unit mismatch "
+              "looks like, since a flying height in metres over a "
+              "survey-feet cloud shrinks every footprint by 3.28. Check "
+              "the flying height above against the mission.")
 
     with laspy.open(args.path) as reader:
         las = reader.read()
@@ -836,6 +869,10 @@ def build_parser():
                        help="map units; a point deeper than its pixel "
                             "cell's nearest by more than this stays "
                             "uncolored rather than painted through")
+    p_col.add_argument("--min-coverage", type=float, default=5.0,
+                       help="percent of points that must get a color "
+                            "before anything is written; a unit or datum "
+                            "mismatch shows up here (default 5)")
     p_col.add_argument("--out", required=True)
     p_col.add_argument("--force", action="store_true",
                        help="replace --out if it exists")

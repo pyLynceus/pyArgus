@@ -26,7 +26,12 @@ crs = ["pyproj>=3.6"]
 # pattern; the math core never imports it.
 ml = ["scikit-learn>=1.3"]
 
-dev = ["pytest>=7", "laspy[lazrs]>=2.5", "pyproj>=3.6", "scikit-learn>=1.3"]
+# Colorization: reading the aerial JPEGs. Same lazy pattern --
+# pyargus.imagery.colorize raises with an instruction if it is missing.
+imagery = ["pillow>=10"]
+
+dev = ["pytest>=7", "laspy[lazrs]>=2.5", "pyproj>=3.6",
+       "scikit-learn>=1.3", "pillow>=10"]
 
 [tool.setuptools.packages.find]
 include = ["pyargus*"]
