@@ -883,6 +883,10 @@ class Application:
         ttk.Label(data, text="same = LAS timestamps; week = GPS seconds of week").grid(row=3, column=0, columnspan=3, sticky="w")
         ttk.Button(data, text="Inspect trajectory", command=self.inspect_trajectory).grid(row=4, column=1, sticky="w")
 
+        from pyargus.project_gui import open_project
+        ttk.Button(data, text="Multi-file project…", command=lambda: open_project(self)).grid(
+            row=5, column=0, columnspan=3, sticky="we", pady=(5, 0))
+
         self.notebook = ttk.Notebook(left)
         self.notebook.pack(fill="x", pady=(8, 0))
         self.stages = []

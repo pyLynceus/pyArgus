@@ -878,6 +878,9 @@ def build_parser():
                        help="replace --out if it exists")
     p_col.set_defaults(func=_cmd_colorize)
 
+    from pyargus.project_cli import register as register_project_commands
+    register_project_commands(sub)
+
     p_gui = sub.add_parser(
         "gui", help="open the desktop application (tkinter; no extra "
                     "dependency)")
