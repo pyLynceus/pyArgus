@@ -461,3 +461,20 @@ Importer isolation check: all 248 unit tests passed in C:/Users/bjordan/Desktop/
 Final importer guard: SBET vertical CRS units must match the LAS XYZ unit; a mismatch refuses before attachment. Alignment manifests now record solver cell/minimum-points/boresight settings. An unavailable optional PNG preview does not turn completed output into a failed job. All 24 project tests passed after these refinements.
 
 Final release: isolated reference battery passed all 52 checks (0 failures), in project-validation-20260910/isolated-project-reference.log. Final dist-project-release packaged self-test exited 0. This isolates the earlier active-worktree colorization expectation differences from the importer. All 24 current project tests pass, including the SBET vertical-unit refusal; 248 full-suite tests passed before that final added case.
+
+
+## 2026-09-10: true 3D viewer
+
+`viewer3d.py` adds a Tk/Pillow/numpy orthographic point renderer, streamed
+150k-point sampling, orbit/pan/zoom, camera presets, file visibility, three
+color modes and native TRJ/SBET overlays. Both Data and Project windows launch
+it. No core, formats, alignment or imagery code was changed. Rendering subtracts
+a double-precision local origin first and resolves depth per pixel. Trajectories
+are explicitly drawn on top; no trajectory time/attitude validation is implied.
+Fixed sample, no progressive detail or cross-sections yet. Uses existing deps.
+
+Summerville read-only check: 149,847 displayed / 15,284,332 source points,
+7.17s load, 0.11s rendered frame on this machine. Render inspected visually.
+Full suite passed 252 tests before the additional background-completion test.
+Desktop build: dist-3d/pyArgus/pyArgus.exe. Concurrent imagery changes left alone.
+`nFinal 3D checks: all 4 viewer tests passed, including background load to Finished; packaged dist-3d --self-test exited 0 with actual 3D rendering.
