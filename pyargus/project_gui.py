@@ -235,11 +235,14 @@ class ProjectWindow:
                     completed['inventory']=json.loads((Path(out)/'inventory.json').read_text(encoding='utf-8'))
                 else: completed['inventory']=project.align(spec,out,cell=cell,min_points=min_points,solve_boresight=boresight,**kw)['inventory']
                 if mode!='inspect':
-                    from PIL import Image
-                    import numpy as np
-                    path=Path(out)/('after/density.png' if mode=='align' else 'density.png')
-                    with Image.open(path) as preview:
-                        runner.report=np.array(preview.convert('RGBA'))
+                    try:
+                        from PIL import Image
+                        import numpy as np
+                        path=Path(out)/('after/density.png' if mode=='align' else 'density.png')
+                        with Image.open(path) as preview:
+                            runner.report=np.array(preview.convert('RGBA'))
+                    except (ImportError,OSError) as exc:
+                        runner.log(f'Outputs are complete; preview unavailable: {exc}')
             except project.Cancelled: return
         runner = self.app.runner
         runner.stage_name = f'Project {mode}'

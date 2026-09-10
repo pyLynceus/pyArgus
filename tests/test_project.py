@@ -166,6 +166,19 @@ def test_sbet_week_times_match_adjusted_las(scene,tmp_path):
     assert project.load(replace(scene,trajectories=tracks)).inventory['unmatched']==0
 
 
+def test_sbet_vertical_units_must_match_cloud_xyz(scene,tmp_path):
+    from pyargus.formats.sbet import RECORD_DTYPE
+    week=int((BASE+1e9)//604800)
+    data=np.zeros(401,dtype=RECORD_DTYPE)
+    data['time']=BASE-(week*604800-1e9)+np.arange(401)*.1
+    path=tmp_path/'whole.out'; data.tofile(path)
+    spec=replace(scene,trajectories=[project.TrajectoryInput(str(path),'week',gps_week=week)],
+                 vertical='EPSG:5703')  # meters, while the LAS uses US survey feet
+    with pytest.raises(ValueError,match='vertical CRS units differ'):
+        project.align(spec,tmp_path/'wrong_units',solve_boresight=False)
+    assert not (tmp_path/'wrong_units').exists()
+
+
 def test_manifest_roundtrip_and_cli(scene,tmp_path,capsys):
     from pyargus.cli import main
     p=tmp_path/'project.json'; scene.save(p)
