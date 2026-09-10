@@ -522,3 +522,80 @@ fix from the defect is not a pin.
   ~700 frames, so occlusion barely fires inside the referee itself:
   a few of its counts are genuinely oblique-hidden ground rather than
   radiometry.
+
+## Streaming reads, and COPC
+
+Measured 2026-09-10 by `python -m reference.summerville_streaming`.
+The suite read whole clouds into memory, which put a ceiling on what
+it could open at all: at ~39 bytes per point for the default fields,
+before laspy's own packed record, a 350M-point delivery needs about
+13.6 GB of arrays. Two of the files on this project's own reference
+drive are past that line.
+
+* **Equality first.** On Summerville_SS.las (15.28M points, pf7,
+  three extra dimensions, a real CRS) a streamed pass and a
+  whole-file read return **identical arrays for all seven fields**,
+  and the streamed density grid is **identical to the whole-cloud
+  grid** -- same edges, same counts. A faster path that answers
+  differently is a second program wearing the first one's name, so
+  this is the check that licenses the rest.
+* **Then scale.** `UAS Flight Mission.PointCloud25D.las` --
+  349,794,884 points, 9.09 GB, the dense image-matching product
+  beside the lidar -- streams a 3-ft density grid in **124 s at a
+  peak of 138 MB** for the whole process (27 MB of that is the bare
+  interpreter). Against ~13,642 MB for the whole-file path: the file
+  went from unopenable to routine.
+* `pyargus info` answers from the header alone -- 349.79M points,
+  extent, scales, CRS, extra dimensions, and an estimate of what a
+  whole read would cost -- in **0.6 s on a 9.09 GB file**, without
+  touching a point.
+* `density`, `align --write` and `colorize --out` now stream. The
+  latter two used to read the entire file TWICE: once for the maths
+  and again to write the result. The write is a chunked copy that
+  carries the point format, extra bytes, scales, offsets and CRS VLRs
+  across untouched, because the output header IS the input header.
+
+### COPC
+
+`pyargus copc cloud.las --out cloud.copc.laz` rewrites a cloud with
+an octree index, so a reader can ask for a bounding box or a
+resolution instead of a whole file. laspy READS COPC and cannot write
+it -- no header care can add an octree to a file that has none -- so
+this shells out to pdal, and is deliberate about it: it probes PATH,
+`PDAL_EXE`, then the QGIS/OSGeo4W installs where pdal usually hides,
+and REFUSES by name with the alternatives when none is found.
+
+Two traps the recon measured, both now closed:
+
+* pdal's COPC writer **drops extra dimensions in silence** unless
+  `--writers.copc.extra_dims=all` is passed. Summerville's
+  Amplitude/Reflectance/Deviation would vanish with no error at all.
+  Both that and `--writers.copc.forward=all` are passed on every
+  call, never optional, and the output is REOPENED and checked
+  against the source for point count, extra dimensions and its COPC
+  VLR before the command reports success.
+* `resolution` is not a sampling fraction: it maps to a set of octree
+  LEVELS, so a shallow tree offers few distinct answers and several
+  different resolutions return exactly the same points (measured:
+  50, 20 and 10 all returned 57% of a 120k-point tile). Pinned as
+  monotonic rather than proportional.
+
+### Honest gaps
+
+* **A COPC query's memory tracks the octree nodes it touches, not the
+  points it returns.** The coarse levels span the whole tile and are
+  always touched, so a small box is not a small read -- measured on a
+  5M-point file, a query over 1% of the area decompressed 4.07M
+  points to hand back 50k. Use `resolution` when full density is not
+  needed.
+* `read_points` still exists and is still the right call for anything
+  needing global state -- the TIN, the alignment solve. Those remain
+  whole-cloud operations; SMRF ground classification would need
+  tiling with a halo, which is not done.
+* No COPC file exists anywhere on the reference drive yet; the
+  vendors deliver LAS and LAZ. The COPC path is tested end to end
+  against files this suite writes itself.
+* pdal lives inside a QGIS install here, not on PATH. That is a
+  dependency on software which could move or be uninstalled, which
+  is why the probe reports what it found and the refusal names the
+  alternatives.
