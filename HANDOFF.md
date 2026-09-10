@@ -1,5 +1,36 @@
 # HANDOFF
 
+## 2026-09-10: multi-file projects
+
+`pyargus/project.py` adds saved JSON project references, streamed inventory,
+LAS CRS/clock validation, and matching by timestamps plus native TRJ line IDs.
+File bindings disambiguate overlapping trajectories. No interpolation across
+files or configured internal outages. Shared flights across tiles are combined
+for analysis; reused line IDs on distinct trajectories stay separate. Original
+LAS point_source_id values and all non-coordinate dimensions survive export.
+
+`project_gui.py` is a separate window from Data > Multi-file project, using the
+main job runner/timer/cancellation and preview. Add files/folders, settings,
+matching results, save/load project, project QA and alignment are implemented.
+Existing single-cloud classification and surface tabs remain single-cloud.
+`project_cli.py` registers project-info, project-qa and project-align; no existing
+command signatures were changed. Outputs publish to a new folder only after
+success, with per-source clouds and before/after QA from exported coordinates.
+
+QA/alignment require complete unique matching when trajectories are supplied;
+inventory can diagnose incomplete/ambiguous selections. Without trajectories,
+repeated IDs need an explicit shared-flight namespace declaration. The importer
+requires common XYZ units and vertical datum; untagged CRS must be declared.
+No new sensor conventions have been proven. The array-based analysis has a
+configurable 25M-point default limit; inventory is chunked. Latest desktop build:
+dist-project-final/pyArgus/pyArgus.exe.
+
+Tests: 246 full-suite tests passed, then 23 project tests passed after the final
+guards. Real-data acceptance: two temporary Summerville LAS line samples and two
+SBET intervals, 50,000/50,000 returns matched uniquely. No Z: source or pyLynceus
+code was modified. Concurrent imagery work was not changed by this task.
+
+
 ## 2026-09-09: native TerraScan trajectory import
 
 Native TSCANTRJ 20010715 reader added in `formats/trj.py`; format dispatch
@@ -424,3 +455,5 @@ acceptance.
   dependency yet. Read extents and judge CRS by magnitude until it is.
 
 TRJ release verification: all 46 reference checks passed (0 failures); dist-trj-final packaged self-test exited 0. Unrelated concurrent imagery/EO files were left alone.
+
+Importer isolation check: all 248 unit tests passed in C:/Users/bjordan/Desktop/ClaudeCodeFAA/project-validation-20260910 (committed baseline plus importer changes). The active working tree's reference run passed all 46 non-colorization checks and 3 colorization checks; 3 recorded colorization expectations differed with the separate uncommitted imagery work. Those files and expectations were left untouched.

@@ -33,10 +33,29 @@ def self_test():
         path.write_bytes(header + struct.pack("<7d4B2h", 436024721., 1., 2., 3., 90., 0., 0., 0, 0, 0, 0, 0, 0))
         assert trj.read_trj(path).line_number == 12
         assert trajectory.read_times(path, trj_time="same")[1] == "same"
+    from pyargus import project
+    import laspy
+    from pyproj import CRS
+    with tempfile.TemporaryDirectory(prefix="pyargus-project-") as temp:
+        paths = []
+        for sid in (1, 2):
+            cloud = laspy.LasData(laspy.LasHeader(point_format=6, version="1.4"))
+            cloud.header.add_crs(CRS("EPSG:6447"))
+            cloud.x, cloud.y, cloud.z = np.arange(3.), np.zeros(3), np.ones(3)
+            cloud.point_source_id = np.full(3, sid, dtype=np.uint16)
+            path = Path(temp) / f"cloud_{sid}.las"
+            cloud.write(path); paths.append(str(path))
+        spec = project.Project(paths, same_vertical=True)
+        saved = Path(temp) / "project.json"; spec.save(saved)
+        assert project.load(project.Project.load(saved)).inventory["points"] == 6
     window = tk.Tk()
     window.withdraw()
     app = Application(window)
     assert isinstance(app.stages[-1], AboveStage)
+    from pyargus.project_gui import open_project
+    project_window = open_project(app)
+    project_window.window.withdraw()
+    assert project_window.counts.get() == "0 clouds; 0 trajectories"
     window.update_idletasks()
     window.destroy()
     return 0
