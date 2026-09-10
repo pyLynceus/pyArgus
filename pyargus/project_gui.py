@@ -67,7 +67,7 @@ class ProjectWindow:
                 ('SBET vertical CRS or geoid N in meters',self.vertical),
                 ('Project GPS week (required for LAS week time)',self.week),
                 ('Maximum interpolated trajectory gap (seconds)',self.gap),
-                ('Maximum points for QA/alignment (inventory streams)',self.limit),
+                ('In-memory point limit (larger QA uses disk; alignment stays limited)',self.limit),
                 ('Alignment cell size (map units)',self.cell),('Minimum points per alignment cell',self.min_points))):
             ttk.Label(settings,text=label).grid(row=row,column=0,sticky='w',pady=4)
             ttk.Entry(settings,textvariable=var,width=24).grid(row=row,column=1,sticky='w',padx=8)
@@ -75,7 +75,7 @@ class ProjectWindow:
         ttk.Checkbutton(settings,text='Allow PROJ to download SBET geoid grids',variable=self.network).grid(row=8,column=0,columnspan=2,sticky='w')
         ttk.Checkbutton(settings,text='Solve boresight as well as per-line vertical offsets',variable=self.boresight).grid(row=9,column=0,columnspan=2,sticky='w')
         ttk.Label(settings,wraplength=850,text='TRJ alignment requires clockwise heading from grid north, right-wing-down roll and nose-up pitch. Confirm these against the export convention before checking the TRJ box. Use one sensor/calibration per alignment project.').grid(row=10,column=0,columnspan=2,sticky='w',pady=12)
-        ttk.Label(settings,wraplength=850,text='CRS mismatches are refused; this importer does not reproject LAS files. Original flight-line IDs remain unchanged in exports. QA/alignment hold the selected block in memory; the point limit prevents an unexpectedly large allocation.').grid(row=11,column=0,columnspan=2,sticky='w')
+        ttk.Label(settings,wraplength=850,text='CRS mismatches are refused; this importer does not reproject LAS files. Original flight-line IDs remain unchanged in exports. QA above the point limit uses disk-backed exact statistics. Allow roughly 160 bytes of scratch space per source point on the output drive, plus system temporary space. Alignment still uses arrays and the point limit.').grid(row=11,column=0,columnspan=2,sticky='w')
         ttk.Checkbutton(settings,text='Without trajectories: repeated line IDs across tiles identify the same flights',variable=self.shared_ids).grid(row=12,column=0,columnspan=2,sticky='w',pady=6)
         self.result_tree = ttk.Treeview(results,columns=('points','matched','unmatched','ambiguous'),show='tree headings')
         self.result_tree.heading('#0',text='Cloud / analysis strip → source line → trajectory')

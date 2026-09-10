@@ -303,3 +303,46 @@ exports retain all points. After **Contours**, the preview shows the generated
 index contours in gold, intermediate contours in blue, and supplied breaklines
 in pink. Existing preview pan/zoom controls work on both images. Preview
 rendering failure is logged separately from a successfully saved output.
+
+
+### Large-project QA (including the 402-million-point Connector block)
+
+Use `dist-large-qa/pyArgus/pyArgus.exe`. Load the saved multi-file project,
+keep **In-memory point limit** at 25,000,000, choose a NEW output folder, and
+click **Project QA**. Above that limit QA automatically uses a disk-backed
+path; it does not require raising the limit. Alignment still requires a block
+within the in-memory limit. Matching is revalidated during QA; an earlier
+Inspect result is not treated as a permanent cache of source files.
+
+Prefer an output folder on a local SSD with ample free space. The initial disk
+check conservatively allows 160 bytes per input point plus overhead: about
+60 GiB for 402,465,700 returns. SQLite external sorting may also use the system
+temporary drive, which needs free space. This allowance is an estimate, not a
+hard maximum. Disk-full errors fail the job without publishing a partial report.
+Temporary data is removed on success, normal failure, or Stop; a forced process
+termination may leave a `.pyargus-large-qa-*` folder beside the output.
+
+The job streams 500,000 returns at a time through the same trajectory matching
+logic. All returns contribute to density; all class-2 returns contribute to
+exact per-strip cell medians. No point sampling is used. Every source contributes
+to the same world-aligned cells before display tiles are made. Density cells
+are 3 map units, ground dZ cells 6 map units with at least 3 returns per strip.
+Cells are half-open, including the outermost edge, unlike the legacy report's
+maximum-edge folding. These cell-local statistics need no overlap buffer.
+Sparse geometry is stored on disk rather than allocating a project-wide raster.
+
+Open **report.html** in the chosen folder when the job says Finished. The
+project density overview is reduced only if needed for display; full-resolution
+256x256 map tiles have PNG/world-file pairs. Use the project's CRS in GIS.
+`density_cells.csv`, `strip_dz_cells.csv`, `summary.json`, `inventory.json`,
+`tiles.json` and `project.json` preserve exact cell results and source identities.
+Keep the report folder together. Positive dZ means strip B is above strip A.
+No qualifying overlap is reported explicitly, not as a successful alignment.
+Optional API checkpoints retain local-median residuals; the large report does
+not yet include the small report's per-strip plane decomposition. No checkpoints
+means no absolute vertical accuracy assessment.
+
+Stop remains active during file scans, SQL reduction, and report writing.
+This release was tested on the full 15.28M-point Summerville reference and
+synthetic multi-file cases; the complete 402M-point Connector block has not yet
+been run through this release.
