@@ -48,6 +48,8 @@ class ProjectWindow:
         file_actions = ttk.Frame(inputs); file_actions.pack(fill='x')
         ttk.Button(file_actions,text='Load project…',command=self.load_project).pack(side='left')
         ttk.Button(file_actions,text='Save project…',command=self.save_project).pack(side='left',padx=4)
+        from pyargus.viewer3d import Viewer
+        ttk.Button(file_actions,text="3D viewer…",command=lambda: Viewer(app.root,list(self.clouds))).pack(side="left",padx=4)
         self.counts = tk.StringVar(); ttk.Label(file_actions,textvariable=self.counts).pack(side='right')
         self.crs = tk.StringVar()
         self.vertical = tk.StringVar(value='EPSG:6360')
