@@ -1,0 +1,87 @@
+Subject: SH 151 LiDAR — ground control list and adjustment report
+
+Hi [name],
+
+I've finished my independent accuracy checks on the SH 151 corridor
+LiDAR (Flights 1-3, the delivered strip files labeled
+`..._LCP2_s.las`). I have a clearer picture than when I first wrote,
+and one finding I think you'll want to see.
+
+Good news first, unchanged: the flight data itself looks excellent.
+Where flight lines overlap — including the western corridor flown
+twice, about five hours apart — the strips agree with each other to
+within about a hundredth of a foot. I have no concerns about the
+sensor calibration or about how the flight lines fit together.
+
+What I'm seeing: at specific spots along the corridor the delivered
+surface sits consistently higher or lower than my ground survey, by
+up to about 0.23 ft on hard pavement, and every strip from every
+flight reads the same offset at the same spot. The differences follow
+locations on the ground, not flight lines.
+
+The new part is that I have a second, independent measurement of
+those same points. The stereo photogrammetry from this project was
+measured against the same survey marks, and at 14 of the 16 marks
+where the LiDAR is out by more than a tenth of a foot, the imagery
+lands within about a tenth of a foot of the surveyed elevation — with
+no systematic vertical bias across the 65 marks as a whole. Where the
+LiDAR reads clean, the imagery agrees too. So two independent sensors
+sit over one control network and only one of them disagrees with the
+ground survey. That points at the delivered surface rather than at
+the marks.
+
+A few hard-surface examples, all on ground flat enough that grade and
+vegetation are not in play:
+
+- point 200203, E 2,488,656 / N 424,180: surface reads 0.23 ft high;
+  imagery is within 0.02 ft of my elevation
+- point 200205, E 2,487,137 / N 425,265: 0.22 ft high; imagery within
+  0.02 ft
+- point 80809, E 2,476,021 / N 416,011: 0.15 ft low; imagery within
+  0.01 ft
+- point 80818, E 2,487,585 / N 424,919: 0.14 ft high; imagery within
+  0.01 ft
+
+In fairness, the same test flagged two of my own marks — 80806 and
+80822 — where both the LiDAR and the imagery disagree with my
+published elevation. Those are mine to re-observe and I've pulled
+them out of the comparison. I mention them so you know the check cuts
+both ways.
+
+Separately, there is a broad east-west tilt in the comparison of
+about 0.14 ft per mile across the corridor, on top of the local
+differences. I want to be straight that my imagery check cannot
+resolve that part — the aerotriangulation is adjusted to these same
+marks, so it would absorb a tilt in my network rather than reveal
+one. A difference in geoid model between your processing and my
+survey would produce exactly this, which is why item 3 below matters
+more than it looks.
+
+Since the file names indicate the strips were fitted to LiDAR control
+("LCP2"), my working conclusion is that the values used in that
+adjustment disagree with my survey at these locations, which would
+pull every strip the same direction at each spot. To confirm that or
+rule it out, could you send:
+
+1. The LiDAR control point list used for the LCP2 adjustment — point
+   numbers, coordinates, elevations, and where those values came from
+   (who surveyed them, when, and on what datum and geoid).
+2. The strip adjustment / calibration report from processing — the
+   before-and-after fit to those control points, and what corrections
+   were applied to the strips.
+3. The geoid model used to get to NAVD88. My control, checkpoints and
+   OSSDA shots were all observed by Frontier Land Survey in Oklahoma
+   State Plane North on GEOID18; if your processing used a different
+   model, that would explain the corridor tilt and is worth settling
+   before anything else.
+4. The unadjusted strips (before the LCP2 fit), or word on whether
+   they can be regenerated. The raw flight data looks strong enough
+   that a clean re-fit — or possibly just a bias shift — should
+   resolve everything.
+
+Happy to send my check-point comparisons, the per-mark numbers, and
+the imagery residuals in whatever format is useful. The flight work
+looks good; I just need to see what the surface was fitted to.
+
+Thanks,
+Bryon
