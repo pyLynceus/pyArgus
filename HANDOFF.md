@@ -508,3 +508,29 @@ ordering, and actual Classify/Contours GUI work closures. Preview images
 visually inspected (Summerville classes and synthetic contours). Build target:
 dist-usability/pyArgus/pyArgus.exe. Unrelated imagery work remains untouched.
 Final usability validation: 261 tests passed; dist-usability packaged self-test exited 0, including DXF read and contour rendering. Full reference run: 49 passed / 3 failed of 52; all 46 non-colorization checks passed. Failures match the pre-existing concurrent imagery differences exactly: pct_colored 95.3115 vs 70.86, pct_occluded 4.68528 vs 29.14, images_used 1033 vs 1019. No imagery code or expectations changed. Full log: usability-reference.log.
+
+
+## Large-project disk-backed QA
+
+`large_qa.py` and a chunk_sink seam in project.load add exact disk-backed
+statistics above Project.max_points. Smaller QA and alignment remain unchanged.
+SQLite cache 32MiB, external sorts, input chunks 500k; stores density cell counts
+and class-2 elevations/strip identities, then exact cell medians and pair joins.
+Tiles partition final cells, no per-tile median approximations or duplicate
+halo counts. Uses half-open world-aligned cells including the outer edge;
+legacy maximum-edge folding differs only at that edge. Source metadata and
+trajectory signatures are rechecked before publication. Scratch is separate
+from result publication and connections close before Windows directory cleanup.
+Automatic disk allowance 160 bytes/input point; system temp also needs room.
+GUI explains automatic mode. HTML, PNG/PGW tiles, full CSV cells and manifests.
+Optional control local median retained; per-strip control plane decomposition
+not implemented in large report and explicitly disclosed. Alignment not scaled.
+
+Validation: 268 full-suite tests passed. Six new tests cover parity with legacy
+QA, chunk/tile boundaries, matching refusal, checkpoints/no-ground, low disk,
+and cancellation cleanup. Full 15,284,332-point Summerville run finished in
+47.39 seconds, all points counted, 1,011,700 ground; density median 8.333333,
+p95 22.888889, strip medians 0/-0.005/+0.030 ft and pair 1/2 RMSE 0.20980012,
+matching recorded reference results. Outputs reference/reports/large-qa-20260910.
+No full Connector 402M run yet. Desktop dist-large-qa/pyArgus/pyArgus.exe.
+Final large-QA validation: all 8 focused tests passed, including SQLite interruption and a safe mocked-metadata change before publication. Packaged dist-large-qa --self-test exited 0 and exercised automatic disk-backed QA. A proposed file-mutation test was rejected by automatic approval review and was never executed; replaced by metadata simulation.

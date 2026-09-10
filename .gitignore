@@ -48,3 +48,7 @@ dist-usability/
 build-usability/
 usability-build.log
 usability-reference.log
+
+dist-large-qa/
+build-large-qa/
+large-qa-build.log
