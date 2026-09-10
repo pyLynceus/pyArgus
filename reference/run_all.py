@@ -72,12 +72,13 @@ CHECKS = [
     ("summerville_contours", "dsm_dtm_median", "abs", 42.60, 0.1),
     ("summerville_contours", "below_dtm_cells", "abs", 33, 5),
 
-    ("summerville_colorize", "pct_colored", "abs", 70.86, 0.5),
-    ("summerville_colorize", "pct_occluded", "abs", 29.14, 0.5),
-    ("summerville_colorize", "n_images_used", "abs", 1019, 10),
+    ("summerville_colorize", "pct_colored", "abs", 95.31, 0.5),
+    ("summerville_colorize", "pct_occluded", "abs", 4.69, 0.5),
+    ("summerville_colorize", "pct_best_occluded", "abs", 31.54, 1.0),
+    ("summerville_colorize", "n_images_used", "abs", 1033, 10),
     ("summerville_colorize", "n_eo_dropped", "equal", 0, 0),
-    ("summerville_colorize", "cross_camera_median_drgb", "below", 26, 0),
-    ("summerville_colorize", "veg_green_margin", "abs", 11.7, 1.5),
+    ("summerville_colorize", "cross_camera_median_drgb", "below", 30, 0),
+    ("summerville_colorize", "veg_green_margin", "abs", 11.3, 1.5),
 
     ("summerville_above", "agreement", "abs", 0.9972, 0.001),
     ("summerville_above", "kappa", "abs", 0.9881, 0.004),

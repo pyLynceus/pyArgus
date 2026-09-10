@@ -393,7 +393,7 @@ RESULTS.md's drift review round.
 adjusted_eo.csv also is), `imagery/camera.py` is a calibrated frame
 camera, `imagery/colorize.py` assigns, checks occlusion and samples.
 Needs the `[imagery]` extra (Pillow). Measured on Summerville:
-70.9% of 15.28M points colored from 1,019 of 1,083 photos in 235 s.
+95.3% of 15.28M points colored from 1,033 of 1,083 photos in 275 s.
 
 Four things to know before touching it:
 
@@ -406,12 +406,18 @@ Four things to know before touching it:
   testing distortion only at turns=0 could not see. The equivalence
   test now covers all four turns.
 * **Rotation comes from Direction/Up**, never an angle column.
-* **Occlusion is refereed by the cloud**, and its limits are real and
-  pinned: the depth grid holds only the points a photo was assigned,
-  so paint-through survives where the occluder belongs to another
-  photo; a one-cell halo at each depth edge is falsely occluded. Both
-  have tests asserting the CURRENT behavior, so improving them will
-  fail those tests -- update the tests and RESULTS.md together.
+* **Occlusion is refereed by the cloud, photo-major.** Each photo's
+  depth grid is built from every CANDIDATE point landing in that
+  frame, not merely the ones it colored, and a point whose
+  most-centred view is blocked falls back to its next-best unblocked
+  view; only a point hidden in every candidate frame stays uncolored.
+  Batching under `memory_budget_mb` is what makes the candidate set
+  (~122M pairs at Summerville) affordable. A one-cell halo at each
+  depth edge is still falsely occluded, and the fallback is what
+  keeps that cheap. Two tests assert WHICH photo colored the point --
+  weaken them to "did it get a color" and they stop distinguishing
+  the fix from the bug, which is exactly how the previous pin went
+  stale.
 * **Coverage is the datum gate**: overlap and AGL catch a mismatch
   that separates EO from cloud, not one that scales it (metres over
   survey feet keeps both happy), so `--min-coverage` refuses below 5%
@@ -429,12 +435,11 @@ REAL PROJECT (SH 151, set aside pending the vendor's LCP2 list): the
 lidar block is internally rigid and the misses are position-locked;
 when the vendor responds, re-occupy the worst marks and decide
 between control-net vs lidar-datum error -- reference/sh151_* holds
-the case. (2) A better occlusion test for colorize -- a per-photo
-depth grid built from every candidate point rather than only the
-assigned ones, which is what would end paint-through. (3)
-COPC/streaming reads for clouds beyond memory. (4) Archive any
-vendor-stated miscalibrated flight as the final alignment
-acceptance.
+the case. (2) COPC/streaming reads for clouds beyond memory --
+`read_points` still loads a whole cloud, which is the suite's
+structural ceiling. (3) A GUI stage for colorize; it is CLI-only.
+(4) Archive any vendor-stated miscalibrated flight as the final
+alignment acceptance.
 
 ## Findings so far
 
