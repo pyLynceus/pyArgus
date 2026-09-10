@@ -279,3 +279,18 @@ def test_project_window_runs_qa_in_job_runner(scene,tmp_path,root):
     finally:
         for event in root.tk.call('after','info'):
             root.tk.call('after','cancel',event)
+
+
+def test_unset_time_is_highlighted_and_bulk_apply_preserves_approval(scene,root):
+    from pyargus.gui import Application
+    from pyargus.project_gui import open_project
+    app=Application(root); w=open_project(app); w.window.withdraw()
+    w.add_paths([t.path for t in scene.trajectories],True)
+    with pytest.raises(ValueError,match='need a time base'): w.check_time_settings()
+    assert len(w.track_box.curselection())==len(w.tracks)
+    w.track_time.set('same'); w.track_confirm.set(True)
+    w.apply_all_time()
+    assert all(t.time_mode=='same' and not t.confirmed for t in w.tracks)
+    w.check_time_settings()
+    assert len(w.track_box.curselection())==len(w.tracks)
+    assert 'NEED TIME' not in w.counts.get()
