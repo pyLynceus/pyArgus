@@ -58,6 +58,9 @@ def self_test():
         spec = project.Project(paths, same_vertical=True)
         saved = Path(temp) / "project.json"; spec.save(saved)
         assert project.load(project.Project.load(saved)).inventory["points"] == 6
+        spec.max_points = 1
+        report = project.qa(spec, Path(temp) / "large-qa")
+        assert report["mode"] == "disk-backed" and report["points"] == 6
     window = tk.Tk()
     window.withdraw()
     app = Application(window)

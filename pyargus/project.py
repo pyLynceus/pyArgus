@@ -223,7 +223,7 @@ class LoadedProject:
     sources: list[slice]
 
 
-def load(project, *, keep_points=False, log=lambda text: None, cancel=lambda: False):
+def load(project, *, keep_points=False, log=lambda text: None, cancel=lambda: False, chunk_sink=None):
     """Stream inventory/matching; retain arrays only for requested analysis."""
     import laspy
     crs, clouds = _cloud_headers(project)
@@ -309,6 +309,8 @@ def load(project, *, keep_points=False, log=lambda text: None, cancel=lambda: Fa
                     key = int(j),int(s)
                     item = counts.setdefault(key, dict(count=0, clouds=set()))
                     item['count'] += int(n); item['clouds'].add(c['path'])
+                if chunk_sink is not None:
+                    chunk_sink(p,chosen)
                 if keep_points:
                     parts.append(p); assignments.append(chosen)
         if read_count != c['points']:
@@ -376,6 +378,10 @@ def _target(out):
 
 
 def qa(project, out, *, control=None, log=lambda text: None, cancel=lambda: False):
+    _, headers = _cloud_headers(project)
+    if sum(h['points'] for h in headers) > project.max_points:
+        from pyargus.large_qa import qa as large_qa
+        return large_qa(project,out,control=control,log=log,cancel=cancel)
     out = _target(out)
     data = load(project,keep_points=True,log=log,cancel=cancel)
     if data.tracks and (data.inventory['unmatched'] or data.inventory['ambiguous']):
