@@ -384,31 +384,41 @@ after the fixes:
 
 ## Colorization: the cloud through the imagery
 
-Measured 2026-09-09 by `python -m reference.summerville_colorize`
+Measured 2026-09-10 by `python -m reference.summerville_colorize`
 (`pyargus colorize` is the command form): Summerville_SS.las painted
 from the delivered TrueView 660 imagery -- 1083 JPEGs across
 Nadir/Port/Starboard, the LP360 EO CSV, per-camera `.cal` sidecars,
-quarter_turns 3. 15.28M points in 235 s.
+quarter_turns 3. 15.28M points in 275 s.
 
-* **70.9% colored** from 1,019 of 1,083 photos; 496 points are seen by
-  no nearby photo. **29.1% marked occluded is the site, not a
-  defect**: 42 ft median canopy, and ground under trees genuinely
-  cannot be colored from aerial imagery. The honest answer is no
-  color -- paint-through would color that ground with its own canopy.
+* **95.3% colored** from 1,033 of 1,083 photos; 496 points are seen by
+  no nearby photo. The most-centred view is blocked for **31.5%** of
+  the cloud -- 42 ft median canopy at this site -- and a next-best
+  view rescues 4.10M of those 4.82M points, leaving **4.7% hidden in
+  every candidate frame**. Those stay uncolored, which is the honest
+  answer: paint-through would color ground under a tree with the tree.
+  (The first version of this feature had no fallback and built each
+  photo's depth grid only from the points it had been assigned; it
+  colored 70.9%. See the occlusion note below.)
 * **Cross-camera referee, with its scale measured**: 300k
   nadir-colored points recolored through the OBLIQUE cameras only
-  agree to **median |dRGB| (23, 23, 22) of 255**. The anchors that
+  agree to **median |dRGB| (26, 25, 23) of 255**. The anchors that
   make that number mean something are measured by
   `reference/colorize_referee_scale.py` on a common 100k sample:
   recoloring through OTHER NADIR frames -- same lens, same look
   angle, so whatever it measures is frame-to-frame radiometry, not
-  geometry -- gives **17**, and mis-stating the oblique
-  `quarter_turns` gives **37**. Healthy sits a little above the
-  radiometric floor and nowhere near the geometric fault. Pinned
-  below 26.
-* **Vegetation greener than ground**: mean G-R is +20.2 over the
-  delivered vegetation classes vs +8.5 over class-2 ground
-  (margin +11.7 of 255) -- colors land on the right objects.
+  geometry -- gives **19**, and mis-stating the oblique
+  `quarter_turns` gives **38**. Healthy sits 7 above the radiometric
+  floor and 12 below the geometric fault. Pinned below 30.
+
+  All three numbers rose by about 2 when the occlusion fallback
+  landed, INCLUDING the floor, which is the control: at 95% coverage
+  the sample carries far more points seen only at steep obliquity, so
+  every configuration compares harder geometry than it did at 71%.
+  The referee's position BETWEEN its anchors is what carries meaning,
+  and that barely moved.
+* **Vegetation greener than ground**: mean G-R is +20.3 over the
+  delivered vegetation classes vs +9.0 over class-2 ground
+  (margin +11.3 of 255) -- colors land on the right objects.
 * Intensity-vs-luminance was tried as a referee and measured
   UNINFORMATIVE (r = -0.08 on ground): lidar NIR amplitude and
   visible brightness legitimately decorrelate across grass vs
@@ -467,22 +477,48 @@ polynomial).
 * LAS RGB is 16-bit: 8-bit samples ship shifted left 8 bits, and a
   point-format-6 input is converted to 7 with an announcement.
 
-### Honest gaps (v1, pinned by tests so they cannot drift)
+### Occlusion: what the second pass changed
 
-* **Paint-through is still possible.** Each photo's depth grid holds
-  only the points ASSIGNED to that photo, so an occluder whose own
-  best photo is a different one never shadows anything. The guarantee
-  is "occlusion by what this photo colored", not "by the whole
-  cloud".
+The first version built each photo's depth grid from the points
+ASSIGNED to that photo, because the planner was point-major and that
+is the only per-photo set such a pass has in hand. It left a real
+hole -- an occluder whose own best photo was a different one entered
+no grid and shadowed nothing -- and the guarantee was "occlusion by
+what this photo colored" rather than "by the cloud". Since a point's
+occluder sits a few feet from it horizontally, which is exactly the
+neighbourhood its OTHER candidate photos own, the hole opened along
+every footprint boundary.
+
+The planner is photo-major now: candidate (point, photo) pairs are
+collected for a BATCH of photos, each photo renders its grid from all
+of them, and the contest runs over the survivors. Batching keeps it
+affordable -- the candidate set is ~122M pairs at Summerville, a
+per-photo grid ~1.2 MB, and `memory_budget_mb` fixes how many photos
+share one pass over the cloud. A point whose best view is blocked
+falls back to its next-best unblocked view. Coverage went 70.9% ->
+95.3% and runtime 235 -> 275 s.
+
+Pinned by two tests that assert WHICH photo did the colouring: a
+blocked best view must be rescued by the oblique, and a point hidden
+in every frame must stay uncolored. The test they replace asserted
+only that the hidden point ended up colored -- which the fallback
+also satisfies, so it passed unchanged against the fixed code while
+its docstring still described the bug. A test that cannot tell the
+fix from the defect is not a pin.
+
+### Honest gaps (pinned by tests so they cannot drift)
+
 * **A one-cell halo of visible ground is marked occluded** at every
-  depth edge, because an 8-px cell straddling a discontinuity mixes
-  occluder and background (~0.7 ft on the ground at Summerville).
-* An occluded point does not fall back to its second-best photo.
+  depth edge, because an `occlusion_grid` cell straddling a
+  discontinuity mixes occluder and background (~0.7 ft on the ground
+  at Summerville). The fallback softens the cost: such a point is
+  usually visible in another candidate frame and is colored from
+  there rather than lost.
 * The candidate set is the k nearest footprint centers, computed
   against a single plane at the cloud's median z, so `n_unseen` means
   "no nearby photo saw it", not "outside every frame" -- on strong
   relief a distant frame that does contain the point is never asked.
-* The cross-camera referee's oblique recolor spreads 300k points over
-  ~700 frames, roughly one point per depth cell, so occlusion barely
-  fires inside the referee itself: a few of its 23 counts are
-  genuinely oblique-hidden ground, not radiometry.
+* The cross-camera referee's oblique recolor spreads its sample over
+  ~700 frames, so occlusion barely fires inside the referee itself:
+  a few of its counts are genuinely oblique-hidden ground rather than
+  radiometry.

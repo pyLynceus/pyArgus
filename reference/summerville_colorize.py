@@ -8,11 +8,12 @@ and nothing written there.
 Referees (colors cannot be diffed against a truth cloud, so the
 checks are cross-sensor):
 
-* coverage: the fraction of points that get a color, and how many
-  photos actually contribute. The ~29% marked OCCLUDED is the site
-  itself: 42 ft median canopy, and ground under trees genuinely
-  cannot be colored from aerial imagery -- the honest answer is no
-  color, not the canopy's;
+* coverage: the fraction of points that get a color, how many photos
+  contribute, and the two occlusion numbers the planner separates --
+  how often the MOST-CENTERED view was blocked (the site's own
+  occlusion: 42 ft median canopy), and how much of the cloud is
+  hidden in EVERY candidate frame and so stays honestly uncolored
+  rather than being painted with the canopy it is under;
 * CROSS-CAMERA consistency, the geometric referee: a sample of
   nadir-colored points recolored through the OBLIQUE cameras only.
   Nadir and obliques are different lenses on different mounts looking
@@ -78,17 +79,21 @@ def main():
     ctx = colorize_mod.prepare(eo, cameras, image_paths)
     plan = colorize_mod.plan_colorization(xyz, ctx["origins"],
                                           ctx["rotations"], ctx["cameras"])
-    rgb, occluded, stats = colorize_mod.apply_plan(plan, ctx["paths"],
-                                                   ctx["cameras"])
+    rgb, occluded, stats = colorize_mod.apply_plan(plan, ctx["paths"])
     stats["n_eo_dropped"] = ctx["n_eo_dropped"]
     runtime = time.perf_counter() - t0
     pct = 100.0 * stats["n_colored"] / stats["n_points"]
     pct_occ = 100.0 * stats["n_occluded"] / stats["n_points"]
+    pct_best_occ = 100.0 * stats["n_best_occluded"] / stats["n_points"]
     print(f"colored: {stats['n_colored']:,} of {stats['n_points']:,} "
           f"({pct:.2f}%) from {stats['n_images_used']} images, "
-          f"{pct_occ:.2f}% occluded, {stats['n_unseen']:,} unseen, "
+          f"{pct_occ:.2f}% hidden in every candidate frame, "
+          f"{stats['n_unseen']:,} unseen, "
           f"{stats['n_eo_dropped']} EO rows without files; "
           f"{runtime:.0f} s")
+    print(f"occl:    best view blocked for {stats['n_best_occluded']:,} "
+          f"points ({pct_best_occ:.2f}%); a next-best view rescued "
+          f"{stats['n_recovered']:,} of them")
 
     r8 = (rgb >> 8).astype(float)
     colored = rgb.any(axis=1)
@@ -136,6 +141,7 @@ def main():
     return {
         "pct_colored": pct,
         "pct_occluded": pct_occ,
+        "pct_best_occluded": pct_best_occ,
         "n_images_used": stats["n_images_used"],
         "n_eo_dropped": stats["n_eo_dropped"],
         "cross_camera_median_drgb": cross,

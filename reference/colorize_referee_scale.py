@@ -53,7 +53,7 @@ def main():
     ctx = colorize_mod.prepare(eo, cameras, image_paths)
     plan = colorize_mod.plan_colorization(xyz, ctx["origins"],
                                           ctx["rotations"], ctx["cameras"])
-    rgb, _, _ = colorize_mod.apply_plan(plan, ctx["paths"], ctx["cameras"])
+    rgb, _, _ = colorize_mod.apply_plan(plan, ctx["paths"])
     tags = np.array(ctx["tags"])
     colored = rgb.any(axis=1)
 

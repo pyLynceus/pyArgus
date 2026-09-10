@@ -557,28 +557,62 @@ def test_wrong_image_size_refuses_before_any_decoding(tmp_path):
                               colorize_mod.find_images(tmp_path))
 
 
-def test_paint_through_limit_is_real_and_pinned(tmp_path):
-    """The occlusion test sees only the points ASSIGNED to a photo, so
-    an occluder whose own best photo is a different one does not
-    shadow anything. Pinned as KNOWN v1 behavior: if a future change
-    fixes it, this test fails and the docs must follow."""
+def test_blocked_best_view_falls_back_instead_of_painting_through(tmp_path):
+    """The v1 hole, now closed, and pinned so it cannot reopen.
+
+    v1 built each photo's depth grid from the points ASSIGNED to it,
+    so an occluder belonging to a different photo shadowed nothing and
+    the hidden point was painted through. The grid is candidate-based
+    now, and a point whose most-centred view is blocked falls back to
+    its next one.
+
+    The test this replaces asserted only that the hidden point ended
+    up coloured, which the fallback ALSO satisfies -- it passed
+    unchanged against the fixed code while its docstring described the
+    bug. Assert WHICH photo did the colouring, or the test cannot tell
+    the fix from the defect.
+    """
     cam = simple_camera(width=400, height=400, focal_px=300.0)
-    for name, val in (("side.png", 250), ("over.png", 30)):
+    for name, val in (("best.png", 250), ("side.png", 30)):
         img = np.zeros((400, 400, 3), dtype=np.uint8)
         img[..., 0] = val
         write_png(tmp_path / name, img)
-    # a wall of points at x=30, z=45, and a ground point at x=60 that
-    # the side camera can only see through the wall
-    wall = np.column_stack([np.full(200, 30.0),
-                            np.linspace(-2.0, 2.0, 200),
-                            np.full(200, 45.0)])
-    hidden = np.array([[60.0, 0.0, 0.0]])
-    xyz = np.vstack([wall, hidden])
-    origins = np.array([[0.0, 0.0, 90.0], [30.0, 0.0, 120.0]])
-    eo = eo_for(["side.png", "over.png"], origins)
+    # a small roof directly over the target: it blocks the overhead
+    # view (the most-centred one) but not the oblique one
+    gx, gy = np.meshgrid(np.arange(-3.0, 3.01, 0.2),
+                         np.arange(-3.0, 3.01, 0.2))
+    roof = np.column_stack([gx.ravel(), gy.ravel(),
+                            np.full(gx.size, 50.0)])
+    target = np.array([[0.0, 0.0, 0.0]])
+    xyz = np.vstack([roof, target])
+    origins = np.array([[0.0, 0.0, 100.0], [25.0, 0.0, 100.0]])
     rgb, stats = colorize_mod.colorize(
-        xyz, eo, {None: cam}, colorize_mod.find_images(tmp_path))
-    plan_cam = rgb[-1]
-    # the wall belongs to the overhead photo, so it never enters the
-    # side photo's depth grid and the hidden point gets painted
-    assert plan_cam.any(), "hidden point uncolored -- occlusion improved?"
+        xyz, eo_for(["best.png", "side.png"], origins), {None: cam},
+        colorize_mod.find_images(tmp_path))
+    assert stats["n_best_occluded"] == 1 and stats["n_recovered"] == 1
+    # 30 is the oblique photo; 250 would be the overhead painting
+    # straight through its own roof
+    assert rgb[-1, 0] == 30 << 8, int(rgb[-1, 0]) >> 8
+
+
+def test_hidden_in_every_frame_stays_uncoloured(tmp_path):
+    """The other half of the contract: a fallback that always finds
+    SOMETHING would be paint-through wearing a different hat."""
+    cam = simple_camera(width=400, height=400, focal_px=300.0)
+    for name, val in (("best.png", 250), ("side.png", 30)):
+        img = np.zeros((400, 400, 3), dtype=np.uint8)
+        img[..., 0] = val
+        write_png(tmp_path / name, img)
+    # a roof wide enough to block both views of the target
+    gx, gy = np.meshgrid(np.arange(-40.0, 40.01, 0.5),
+                         np.arange(-6.0, 6.01, 0.5))
+    roof = np.column_stack([gx.ravel(), gy.ravel(),
+                            np.full(gx.size, 50.0)])
+    target = np.array([[0.0, 0.0, 0.0]])
+    xyz = np.vstack([roof, target])
+    origins = np.array([[0.0, 0.0, 100.0], [25.0, 0.0, 100.0]])
+    rgb, stats = colorize_mod.colorize(
+        xyz, eo_for(["best.png", "side.png"], origins), {None: cam},
+        colorize_mod.find_images(tmp_path))
+    assert stats["n_occluded"] == 1 and stats["n_recovered"] == 0
+    assert not rgb[-1].any()
