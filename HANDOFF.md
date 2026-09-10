@@ -428,6 +428,56 @@ that; it ran out of quota mid-verify, so one finding carries a full
 three-refuter quorum and the rest were triaged by hand against the
 code. Details and the honest-gaps list are in RESULTS.md.
 
+## Streaming reads and COPC
+
+`formats/las.py` is the whole point-input surface, and it now offers
+three ways in, chosen by memory rather than taste:
+
+* `read_points(path, fields)` -- the whole cloud. Right for anything
+  needing global state (the TIN, the alignment solve). ~39 bytes per
+  point for the default fields.
+* `iter_points(path, fields, chunk_size)` -- chunks, never more than
+  one held. Right for every accumulator. 1M points per chunk by
+  default; below ~250k, lazrs's parallel decompressor is re-driven
+  often enough that wall time rises several fold for little further
+  saving.
+* `copc_query(path, bounds=, resolution=)` -- a spatial or
+  level-of-detail read, when the file is COPC.
+
+Plus `cloud_info(path)` (header only, no points) and
+`stream_update(src, dst, update)` (chunked read-modify-write).
+`pyargus info` and `pyargus copc` are the commands.
+
+Things worth knowing before touching it:
+
+* **read_points COPIES on purpose.** laspy returns several fields as
+  VIEWS into its packed record -- measured on pf6: gps_time,
+  intensity, classification, point_source_id -- so a dict holding one
+  pinned the whole 30 B/point record alive and a "39 bytes" read
+  really cost 56. Do not "optimise" the copies away.
+* **DecompressionSelection is not used, deliberately.** It is ~2x
+  faster and does not zero what it skips: a skipped field comes back
+  filled with the chunk's first point's value, so a wrong mask reads
+  as plausible constant data rather than an error (measured: mean Z
+  45.99 against a true 50.01).
+* **The output header IS the input header** in stream_update. Hand
+  building one writes a DUPLICATE ExtraBytesVlr, which laspy reads
+  back happily and other software may not.
+* **laspy cannot write COPC.** `formats/copc.py` shells out to pdal,
+  probing PATH then PDAL_EXE then QGIS/OSGeo4W, refusing by name when
+  absent. It ALWAYS passes `--writers.copc.extra_dims=all` (pdal drops
+  extra dimensions silently without it) and re-opens the output to
+  check point count, extra dims and the COPC VLR before reporting
+  success.
+* **A COPC query's memory tracks nodes touched, not points returned**;
+  a small box is not a small read.
+
+Measured: the 349.79M-point / 9.09 GB dense-matching cloud streams a
+density grid in 124 s at a peak of 138 MB, against ~13.6 GB for the
+whole-file path. A streamed pass returns arrays identical to a whole
+read on the real 15.28M-point delivery -- that equality is what
+licenses the rest, and it is pinned in the harness.
+
 ## Next step, with reasoning
 
 **The roadmap is complete.** What remains open, by value: (1) THE
@@ -435,9 +485,10 @@ REAL PROJECT (SH 151, set aside pending the vendor's LCP2 list): the
 lidar block is internally rigid and the misses are position-locked;
 when the vendor responds, re-occupy the worst marks and decide
 between control-net vs lidar-datum error -- reference/sh151_* holds
-the case. (2) COPC/streaming reads for clouds beyond memory --
-`read_points` still loads a whole cloud, which is the suite's
-structural ceiling. (3) A GUI stage for colorize; it is CLI-only.
+the case. (2) A GUI stage for colorize; it is CLI-only. (3)
+Tiling with a halo for SMRF ground classification -- the last
+genuinely whole-cloud consumer besides the TIN and the solve, and the
+thing standing between streaming and classifying a 900M-point block.
 (4) Archive any vendor-stated miscalibrated flight as the final
 alignment acceptance.
 
