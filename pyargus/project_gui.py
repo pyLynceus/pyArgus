@@ -31,7 +31,7 @@ class ProjectWindow:
         self.track_box = self._files_panel(lists,'Trajectories',True)
         editor = ttk.LabelFrame(inputs,text='Settings for selected trajectories',padding=5)
         editor.pack(fill='x',pady=5)
-        self.track_time = tk.StringVar(value='same')
+        self.track_time = tk.StringVar(value='Choose time base')
         self.track_week = tk.StringVar()
         self.track_confirm = tk.BooleanVar(value=False)
         ttk.Label(editor,text='Time base').grid(row=0,column=0)
@@ -41,6 +41,7 @@ class ProjectWindow:
         ttk.Button(editor,text='Apply to selected',command=self.apply_track_settings).grid(row=0,column=4,padx=10)
         ttk.Checkbutton(editor,text='TRJ: verified LAS XYZ frame/units/datum and attitude conventions',variable=self.track_confirm).grid(row=1,column=0,columnspan=5,sticky='w')
         ttk.Label(editor,text='same = stored LAS clock; week = GPS seconds of week. SBET always uses week.').grid(row=2,column=0,columnspan=5,sticky='w')
+        ttk.Button(editor,text='Apply time base to ALL trajectories',command=self.apply_all_time).grid(row=3,column=0,columnspan=5,sticky='w',pady=4)
         binding = ttk.Frame(inputs); binding.pack(fill='x')
         ttk.Button(binding,text='Bind selected clouds to selected trajectory',command=self.bind_selected).pack(side='left')
         ttk.Button(binding,text='Restore automatic matching',command=self.unbind_selected).pack(side='left',padx=4)
@@ -112,13 +113,18 @@ class ProjectWindow:
         return box
 
     def refresh(self):
+        cloud_selection = self.cloud_box.curselection()
+        track_selection = self.track_box.curselection()
         self.cloud_box.delete(0,'end'); self.track_box.delete(0,'end')
         for p in self.clouds:
             bound = self.bindings.get(p)
             self.cloud_box.insert('end',p + (f' → {Path(bound).name}' if bound else ''))
         for t in self.tracks:
             self.track_box.insert('end',f'{t.path} [{t.time_mode or "set time"}; week {t.gps_week if t.gps_week is not None else "auto"}]')
-        self.counts.set(f'{len(self.clouds)} clouds; {len(self.tracks)} trajectories')
+        for i in cloud_selection: self.cloud_box.select_set(i)
+        for i in track_selection: self.track_box.select_set(i)
+        unset = sum(t.time_mode not in ('same','week') for t in self.tracks)
+        self.counts.set(f'{len(self.clouds)} clouds; {len(self.tracks)} trajectories' + (f' — {unset} NEED TIME BASE' if unset else ''))
 
     def add_paths(self,paths,is_track):
         existing = {t.path for t in self.tracks} if is_track else set(self.clouds)
@@ -150,6 +156,8 @@ class ProjectWindow:
 
     def apply_track_settings(self):
         try:
+            if self.track_time.get() not in ('same','week'):
+                raise ValueError('Choose same or week before applying trajectory settings.')
             week = int(self.track_week.get()) if self.track_week.get().strip() else None
             project._week(week)
             selected = self.track_box.curselection()
@@ -160,6 +168,26 @@ class ProjectWindow:
                 self.tracks[i] = replace(t,time_mode=mode,gps_week=week,confirmed=self.track_confirm.get())
             self.refresh()
         except ValueError as exc: messagebox.showerror('Project',str(exc),parent=self.window)
+
+    def apply_all_time(self):
+        mode = self.track_time.get()
+        if mode not in ('same','week'):
+            messagebox.showerror('Project','Choose same or week first.',parent=self.window)
+            return
+        # Only the time base changes; do not spread attitude approval or GPS weeks.
+        self.tracks = [replace(t,time_mode=mode if Path(t.path).suffix.lower()=='.trj' else 'week') for t in self.tracks]
+        self.refresh()
+
+    def check_time_settings(self):
+        missing = [i for i,t in enumerate(self.tracks) if t.time_mode not in ('same','week')]
+        if not missing: return
+        self.tabs.select(0)
+        self.track_box.selection_clear(0,'end')
+        for i in missing: self.track_box.selection_set(i)
+        self.track_box.see(missing[0])
+        raise ValueError(f'{len(missing)} trajectories need a time base. They are now selected. '
+                         'Choose same or week, then click Apply to selected, or Apply time base to ALL trajectories. '
+                         'Each file must show [same; ...] or [week; ...] instead of [set time; ...].')
 
     def bind_selected(self):
         clouds,tracks = self.cloud_box.curselection(),self.track_box.curselection()
@@ -219,6 +247,7 @@ class ProjectWindow:
     def start(self,mode):
         if self.app.runner.running: return
         try:
+            self.check_time_settings()
             spec = self.snapshot()
             out = self.out.get().strip()
             if mode!='inspect' and not out: raise ValueError('choose a new output folder')

@@ -478,3 +478,11 @@ Summerville read-only check: 149,847 displayed / 15,284,332 source points,
 Full suite passed 252 tests before the additional background-completion test.
 Desktop build: dist-3d/pyArgus/pyArgus.exe. Concurrent imagery changes left alone.
 `nFinal 3D checks: all 4 viewer tests passed, including background load to Finished; packaged dist-3d --self-test exited 0 with actual 3D rendering.
+
+
+Trajectory GUI follow-up: removed misleading default same display; explicit
+Apply time base to ALL trajectories does not propagate attitude approval or
+GPS week. Refresh preserves selections; start preflight highlights unset
+trajectories and gives actionable instructions without a worker traceback.
+25 project tests passed. Release path: dist-3d-timefix/pyArgus/pyArgus.exe.
+Time-setting release checks: 253 passed, 1 skipped in full suite; all 25 project tests passed separately; packaged self-test exited 0.

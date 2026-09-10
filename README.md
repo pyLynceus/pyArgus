@@ -262,3 +262,11 @@ LAS files must also share their vertical datum. No source files are modified.
 
 Progressive detail, perspective projection, cross-sections, point measurement,
 and coordinated before/after comparison are not part of this first release.
+
+
+Trajectory time setup: imported TRJ files initially show `[set time; ...]`.
+Choose `same` or `week`, then use **Apply time base to ALL trajectories**, or
+select files and **Apply to selected**. The all-files action changes time base
+only, preserving individual GPS weeks and attitude confirmations. Inspection
+highlights unassigned files before starting. Current desktop build:
+`dist-3d-timefix/pyArgus/pyArgus.exe`.
