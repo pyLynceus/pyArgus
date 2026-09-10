@@ -56,6 +56,16 @@ def self_test():
     project_window = open_project(app)
     project_window.window.withdraw()
     assert project_window.counts.get() == "0 clouds; 0 trajectories"
+    from pyargus.viewer3d import Viewer
+    viewer = Viewer(window)
+    viewer.window.withdraw()
+    points = np.array([[0.,0,0],[1,2,3],[3,1,2]])
+    viewer.scene = (points, np.full(3,2), np.arange(3), np.zeros(3,dtype=int), 3, None)
+    viewer.visible = [tk.BooleanVar(master=viewer.window,value=True)]
+    viewer.center = np.ones(3); viewer.span = 4.
+    viewer.draw(); viewer.view(40,30)
+    assert viewer.photo.width() > 0
+    viewer.close()
     window.update_idletasks()
     window.destroy()
     return 0

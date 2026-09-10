@@ -887,6 +887,9 @@ class Application:
         ttk.Button(data, text="Multi-file project…", command=lambda: open_project(self)).grid(
             row=5, column=0, columnspan=3, sticky="we", pady=(5, 0))
 
+        from pyargus.viewer3d import open_viewer
+        ttk.Button(data, text="3D viewer…", command=lambda: open_viewer(self)).grid(row=6, column=0, columnspan=3, sticky="we", pady=5)
+
         self.notebook = ttk.Notebook(left)
         self.notebook.pack(fill="x", pady=(8, 0))
         self.stages = []

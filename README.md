@@ -233,3 +233,32 @@ unmatched or ambiguous returns. The reference inputs on Z: were read only.
 The final isolated baseline plus importer passed all 248 unit tests. The packaged self-test exited 0, including multi-file import and the project window.
 
 Final reference validation: all 52 checks passed on the isolated committed baseline plus importer (0 failures). The final dist-project-release packaged self-test exited 0. The separate in-progress imagery changes in the shared working tree produced 3 colorization expectation mismatches in the earlier full run; they were not modified by this work. SBET coordinate conversion retains the existing NAD83(2011) source-datum assumption; SBETs in another datum need conversion before alignment.
+
+
+### 3D desktop inspection
+
+Launch `dist-3d/pyArgus/pyArgus.exe`, then **Data > 3D viewer** (or the
+multi-file project's **3D viewer** button). Open one or several LAS/LAZ files.
+Left drag orbits in three dimensions, right drag pans, and the wheel zooms.
+Top, Front, Side, Oblique and Fit buttons reset the camera. Projection is
+orthographic, with equal XYZ scale. Files can be hidden independently.
+
+Choose elevation, classification or original flight-line ID coloring. The
+categorical palette repeats after eight IDs; identical source IDs in different
+files share a color. Loading runs in a cancellable worker with elapsed time and
+Finished/Failed status. This first viewer streams a fixed, deterministic sample
+of at most 150,000 points; zoom does not fetch additional detail. Small or rare
+features may be omitted. It is an inspection view, not a measurement tool.
+All source points remain available to analysis and export independently.
+
+**Add tracks** accepts multiple TRJ or SBET files. Confirm TRJ XYZ frame, units
+and vertical datum; SBET conversion assumes NAD83(2011) ellipsoidal meters and
+requires the stated LAS vertical CRS or geoid undulation. Geoid CRS conversion
+requires a locally available grid. Trajectories are drawn on top of the cloud
+and split at time gaps over one second; overlay alone does not validate timing,
+attitude, or alignment. Project launch transfers the cloud list; add trajectories
+inside the viewer. Matching projected CRS and common XYZ units are required;
+LAS files must also share their vertical datum. No source files are modified.
+
+Progressive detail, perspective projection, cross-sections, point measurement,
+and coordinated before/after comparison are not part of this first release.

@@ -37,3 +37,7 @@ build-project/
 project-build.log
 project-reference.log
 dist-project-release/
+
+dist-3d/
+build-3d/
+3d-build.log
