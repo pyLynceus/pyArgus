@@ -1,6 +1,8 @@
 """Command line: the commands that are real today.
 
     pyargus sbet-info trajectory.sbet
+    pyargus info cloud.las
+    pyargus copc cloud.las --out cloud.copc.laz
     pyargus density cloud.las --cell 2.0
     pyargus qa-report cloud.las --out qa/ --control pts.csv --control-order pnez
     pyargus classify-ground cloud.las --out classified.las --cell 3
@@ -22,6 +24,10 @@ import argparse
 import numpy as np
 
 import pyargus
+
+# LAS point formats that carry red/green/blue (2/3/5 legacy, 7/8/10
+# in the 1.4 family); 6 and 9 deliberately do not
+_RGB_POINT_FORMATS = frozenset({2, 3, 5, 7, 8, 10})
 
 
 def _cmd_trajectory_info(args):
@@ -47,10 +53,15 @@ def _cmd_sbet_info(args):
 def _cmd_density(args):
     from pyargus.formats import las
     from pyargus.qa import density
-    points = las.read_points(args.path, fields=("x", "y", "z"))
-    dens, _, _ = density.density_grid(points["x"], points["y"], cell=args.cell)
+    # the header fixes the grid, so this never holds more than one
+    # chunk -- a 350M-point delivery is a few hundred MB, not 20 GB
+    info = las.cloud_info(args.path)
+    dens, _, _ = density.density_grid_streamed(
+        las.iter_points(args.path, fields=("x", "y"),
+                        chunk_size=args.chunk_size),
+        info["mins"][:2], info["maxs"][:2], cell=args.cell)
     covered = dens[dens > 0]
-    print(f"points:        {points['x'].size}")
+    print(f"points:        {info['point_count']}")
     print(f"cell size:     {args.cell} (data units)")
     print(f"covered cells: {covered.size} of {dens.size}")
     print(f"density/unit2: median {np.median(covered):.2f}, "
@@ -539,10 +550,15 @@ def _cmd_align(args):
             points, trajectory, map_e, map_n, map_z,
             attached.heading_source, result.boresight, offsets_by_sid,
             drift_by_sid=drift_by_sid, time_mode=time_mode)
-        with laspy.open(args.path) as reader:
-            las = reader.read()
-        las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
-        las.write(str(dst))
+        # the corrected coordinates are already in hand; streaming the
+        # copy means the original record is never materialized a second
+        # time (this command used to read the whole file twice)
+        def place(_points, start):
+            stop = start + _points["x"].size
+            block = xyz[start:stop]
+            return {"x": block[:, 0], "y": block[:, 1], "z": block[:, 2]}
+
+        las_mod.stream_update(args.path, dst, place, fields=("x",))
         note = (f" ({skipped:,} outside the trajectory left unchanged)"
                 if skipped else "")
         print(f"wrote:   {dst}{note}")
@@ -556,7 +572,7 @@ def _cmd_colorize(args):
 
     from pyargus.formats import eo as eo_mod
     from pyargus.formats import las as las_mod
-    from pyargus.imagery import camera as camera_mod
+    from pyargus.imagery import camera as camera_mod  # noqa: F401
     from pyargus.imagery import colorize as colorize_mod
 
     dst = Path(args.out)
@@ -665,16 +681,70 @@ def _cmd_colorize(args):
               "survey-feet cloud shrinks every footprint by 3.28. Check "
               "the flying height above against the mission.")
 
-    with laspy.open(args.path) as reader:
-        las = reader.read()
-    if "red" not in las.point_format.dimension_names:
-        target = las.header.point_format.id
-        las = laspy.convert(las, point_format_id=7)
-        print(f"format:  point format {target} carries no RGB; "
-              f"converted to 7")
-    las.red, las.green, las.blue = rgb[:, 0], rgb[:, 1], rgb[:, 2]
-    las.write(str(dst))
+    source_format = las_mod.cloud_info(args.path)["point_format"]
+    target_format = None
+    if source_format not in _RGB_POINT_FORMATS:
+        target_format = 7
+        print(f"format:  point format {source_format} carries no RGB; "
+              f"converting to 7")
+
+    def paint(_points, start):
+        block = rgb[start:start + _points["x"].size]
+        return {"red": block[:, 0], "green": block[:, 1],
+                "blue": block[:, 2]}
+
+    las_mod.stream_update(args.path, dst, paint, fields=("x",),
+                          point_format=target_format)
     print(f"wrote:   {dst}")
+    return 0
+
+
+def _cmd_copc(args):
+    from pathlib import Path
+
+    from pyargus.formats import copc as copc_mod
+
+    dst = Path(args.out)
+    if dst.exists() and not args.force:
+        raise SystemExit(f"{dst} exists; pass --force to replace it")
+    try:
+        result = copc_mod.write_copc(args.path, dst, pdal=args.pdal)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    print(f"pdal:    {result['pdal']}")
+    print(f"points:  {result['point_count']:,}"
+          + (f"  extra {', '.join(result['extra_dims'])}"
+             if result["extra_dims"] else ""))
+    print(f"crs:     {result['crs'] or 'none declared'}")
+    print(f"size:    {result['size_ratio']:.2f}x the source")
+    print(f"wrote:   {dst}")
+    return 0
+
+
+def _cmd_info(args):
+    from pyargus.formats import las
+
+    info = las.cloud_info(args.path)
+    span = info["maxs"] - info["mins"]
+    # ~39 bytes per point for the default field set; the point of this
+    # command is to answer "can I open this at all" before trying
+    whole_gb = info["point_count"] * 39 / 1e9
+    print(f"points:     {info['point_count']:,}")
+    print(f"format:     point format {info['point_format']}, "
+          f"LAS {info['version']}"
+          + ("  (COPC)" if info["is_copc"] else ""))
+    print(f"extent:     {info['mins'][0]:,.2f} .. {info['maxs'][0]:,.2f} E"
+          f"  ({span[0]:,.1f} wide)")
+    print(f"            {info['mins'][1]:,.2f} .. {info['maxs'][1]:,.2f} N"
+          f"  ({span[1]:,.1f} tall)")
+    print(f"            {info['mins'][2]:,.2f} .. {info['maxs'][2]:,.2f} Z"
+          f"  ({span[2]:,.1f} range)")
+    print(f"scales:     {info['scales']}")
+    if info["extra_dims"]:
+        print(f"extra:      {', '.join(info['extra_dims'])}")
+    print(f"crs:        {info['crs'].name if info['crs'] else 'none declared'}")
+    print(f"whole-read: ~{whole_gb:.1f} GB of RAM for the default fields; "
+          f"streaming commands need one chunk instead")
     return 0
 
 
@@ -691,9 +761,31 @@ def build_parser():
     p_sbet.add_argument("path")
     p_sbet.set_defaults(func=_cmd_sbet_info)
 
+    p_info = sub.add_parser(
+        "info", help="what the LAS/LAZ header says, without reading points")
+    p_info.add_argument("path")
+    p_info.set_defaults(func=_cmd_info)
+
+    p_copc = sub.add_parser(
+        "copc", help="rewrite a cloud as COPC (needs pdal; laspy reads "
+                     "COPC but cannot write it)")
+    p_copc.add_argument("path")
+    p_copc.add_argument("--out", required=True,
+                        help="output path, conventionally *.copc.laz")
+    p_copc.add_argument("--pdal", help="path to the pdal executable "
+                                       "(default: PATH, PDAL_EXE, then "
+                                       "a QGIS/OSGeo4W install)")
+    p_copc.add_argument("--force", action="store_true",
+                        help="replace --out if it exists")
+    p_copc.set_defaults(func=_cmd_copc)
+
     p_dens = sub.add_parser("density", help="point density summary for a LAS/LAZ file")
     p_dens.add_argument("path")
     p_dens.add_argument("--cell", type=float, default=1.0)
+    p_dens.add_argument("--chunk-size", type=int, default=1_000_000,
+                        help="points held at once while streaming "
+                             "(default 1M; below ~250k it gets slower "
+                             "without saving much)")
     p_dens.set_defaults(func=_cmd_density)
 
     p_qa = sub.add_parser("qa-report", help="strip QA report for a LAS/LAZ file")

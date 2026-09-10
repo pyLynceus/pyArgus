@@ -72,6 +72,14 @@ CHECKS = [
     ("summerville_contours", "dsm_dtm_median", "abs", 42.60, 0.1),
     ("summerville_contours", "below_dtm_cells", "abs", 33, 5),
 
+    ("summerville_streaming", "fields_identical", "equal", True, 0),
+    ("summerville_streaming", "density_grid_identical", "equal", True, 0),
+    ("summerville_streaming", "density_median", "abs", 8.33, 0.01),
+    ("summerville_streaming", "big_point_count", "equal", 349794884, 0),
+    ("summerville_streaming", "big_density_median", "abs", 205.44, 0.01),
+    ("summerville_streaming", "big_covered_cells", "equal", 191535, 0),
+    ("summerville_streaming", "big_peak_mb", "below", 400.0, 0),
+
     ("summerville_colorize", "pct_colored", "abs", 95.31, 0.5),
     ("summerville_colorize", "pct_occluded", "abs", 4.69, 0.5),
     ("summerville_colorize", "pct_best_occluded", "abs", 31.54, 1.0),
