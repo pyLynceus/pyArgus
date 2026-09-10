@@ -43,3 +43,8 @@ build-3d/
 3d-build.log
 
 dist-3d-timefix/
+
+dist-usability/
+build-usability/
+usability-build.log
+usability-reference.log

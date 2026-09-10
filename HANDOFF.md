@@ -486,3 +486,19 @@ GPS week. Refresh preserves selections; start preflight highlights unset
 trajectories and gives actionable instructions without a worker traceback.
 25 project tests passed. Release path: dist-3d-timefix/pyArgus/pyArgus.exe.
 Time-setting release checks: 253 passed, 1 skipped in full suite; all 25 project tests passed separately; packaged self-test exited 0.
+
+
+## DXF breakline import and output-specific previews
+
+New formats/breaklines.py dispatches GeoJSON/DXF with ezdxf>=1.4,<2 in the
+cad extra and desktop bundle. Refuses unsupported or ambiguous planar geometry;
+no automatic draping, units conversion or projection. GUI Contours and CLI
+contours use it. Surface math unchanged: breaklines remain soft TIN constraints.
+New stage_preview.py renders bounded north-up classification and vector contour
+previews, legends and optional breakline overlay. Classify and Above Apply use
+the produced labels; Contours uses the actual exported lines. 3D class colors
+share this palette. Optional preview failure does not misreport saved outputs.
+Seven tests cover DXF XYZ, OCS, closure, export/import roundtrip, refusals, depth
+ordering, and actual Classify/Contours GUI work closures. Preview images
+visually inspected (Summerville classes and synthetic contours). Build target:
+dist-usability/pyArgus/pyArgus.exe. Unrelated imagery work remains untouched.
