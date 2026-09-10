@@ -41,3 +41,5 @@ dist-project-release/
 dist-3d/
 build-3d/
 3d-build.log
+
+dist-3d-timefix/
