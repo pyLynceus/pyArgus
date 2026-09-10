@@ -23,9 +23,9 @@ repeated IDs need an explicit shared-flight namespace declaration. The importer
 requires common XYZ units and vertical datum; untagged CRS must be declared.
 No new sensor conventions have been proven. The array-based analysis has a
 configurable 25M-point default limit; inventory is chunked. Latest desktop build:
-dist-project-final/pyArgus/pyArgus.exe.
+dist-project-release/pyArgus/pyArgus.exe.
 
-Tests: 246 full-suite tests passed, then 23 project tests passed after the final
+Tests: 246 full-suite tests passed, then 24 project tests passed after the final
 guards. Real-data acceptance: two temporary Summerville LAS line samples and two
 SBET intervals, 50,000/50,000 returns matched uniquely. No Z: source or pyLynceus
 code was modified. Concurrent imagery work was not changed by this task.
@@ -457,3 +457,7 @@ acceptance.
 TRJ release verification: all 46 reference checks passed (0 failures); dist-trj-final packaged self-test exited 0. Unrelated concurrent imagery/EO files were left alone.
 
 Importer isolation check: all 248 unit tests passed in C:/Users/bjordan/Desktop/ClaudeCodeFAA/project-validation-20260910 (committed baseline plus importer changes). The active working tree's reference run passed all 46 non-colorization checks and 3 colorization checks; 3 recorded colorization expectations differed with the separate uncommitted imagery work. Those files and expectations were left untouched.
+
+Final importer guard: SBET vertical CRS units must match the LAS XYZ unit; a mismatch refuses before attachment. Alignment manifests now record solver cell/minimum-points/boresight settings. An unavailable optional PNG preview does not turn completed output into a failed job. All 24 project tests passed after these refinements.
+
+Final release: isolated reference battery passed all 52 checks (0 failures), in project-validation-20260910/isolated-project-reference.log. Final dist-project-release packaged self-test exited 0. This isolates the earlier active-worktree colorization expectation differences from the importer. All 24 current project tests pass, including the SBET vertical-unit refusal; 248 full-suite tests passed before that final added case.

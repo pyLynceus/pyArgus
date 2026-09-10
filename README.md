@@ -103,7 +103,7 @@ joblib files. Older models without processing metadata must be retrained
 for GUI use; the existing CLI remains available. Model transfer accuracy
 must be checked on the receiving project.
 
-The current desktop build is `dist-project-final/pyArgus/pyArgus.exe`; keep
+The current desktop build is `dist-project-release/pyArgus/pyArgus.exe`; keep
 the entire folder together. `pyArgus.exe --self-test` exercises the
 bundled forest training/persistence/inference and creates a hidden
 window to verify the Above ground tab, exiting zero on success.
@@ -223,7 +223,7 @@ copies of point clouds. Equivalent CLI entry points:
 `project-align --boresight` also solves boresight; `--cell` and `--min-points`
 set alignment patch construction. Defaults match the project window.
 
-Validation: the full suite passed 246 tests. The final 23 project tests include
+Validation: the full suite passed 246 tests. The final 24 project tests include
 cross-file alignment recovery, repeated line IDs, ambiguous/missing matches,
 gaps, CRS/time refusals, cancellation, and preservation of exported dimensions.
 `python -m reference.project_import` matched all 50,000 sampled Summerville
@@ -231,3 +231,5 @@ returns across two temporary LAS line samples and two SBET intervals, with zero
 unmatched or ambiguous returns. The reference inputs on Z: were read only.
 
 The final isolated baseline plus importer passed all 248 unit tests. The packaged self-test exited 0, including multi-file import and the project window.
+
+Final reference validation: all 52 checks passed on the isolated committed baseline plus importer (0 failures). The final dist-project-release packaged self-test exited 0. The separate in-progress imagery changes in the shared working tree produced 3 colorization expectation mismatches in the earlier full run; they were not modified by this work. SBET coordinate conversion retains the existing NAD83(2011) source-datum assumption; SBETs in another datum need conversion before alignment.
