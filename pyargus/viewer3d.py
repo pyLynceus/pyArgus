@@ -61,7 +61,10 @@ def colors(points, classes, lines, mode):
         z = points[:, 2]
         t = (z-z.min()) / max(float(np.ptp(z)), 1e-9)
         return np.column_stack((255*t, 210*(1-abs(2*t-1))+30, 255*(1-t))).astype('uint8')
-    ids = classes if mode == 'Classification' else lines
+    if mode == 'Classification':
+        from pyargus.stage_preview import class_colors
+        return class_colors(classes)
+    ids = lines
     palette = np.array([[58,190,255],[255,171,65],[113,222,129],[221,115,250],
                         [255,105,125],[235,223,85],[90,221,204],[190,185,255]], dtype='uint8')
     return palette[np.asarray(ids, dtype=int) % len(palette)]

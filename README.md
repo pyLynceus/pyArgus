@@ -270,3 +270,36 @@ select files and **Apply to selected**. The all-files action changes time base
 only, preserving individual GPS weeks and attitude confirmations. Inspection
 highlights unassigned files before starting. Current desktop build:
 `dist-3d-timefix/pyArgus/pyArgus.exe`.
+
+
+### DXF breaklines and stage previews
+
+Current desktop: `dist-usability/pyArgus/pyArgus.exe` (keep its `_internal`
+folder beside it). In **Contours**, use **Breaklines (DXF / 3D GeoJSON)** to
+select the surveyed breakline file, set the contour interval/cell size, choose
+a new output filename, then run the stage. The CLI `contours --breaklines`
+also accepts DXF and remains repeatable for multiple files.
+
+Prepare a model-space, breakline-only DXF using straight **3D POLYLINE**
+entities. Elevated LINE entities and straight planar POLYLINE/LWPOLYLINE
+entities with nonzero stored elevation are also supported. Closed lines stay
+closed, and object-coordinate vertices are converted to world coordinates.
+Curved/bulged entities, meshes, splines, and blocks are refused; export these
+as straight surveyed 3D polylines first. Text, points, dimensions and hatches
+are ignored. Ambiguous zero-elevation planar geometry is refused; a genuine
+zero-elevation surveyed breakline can be supplied as a 3D POLYLINE.
+Coordinates are not reprojected or rescaled: DXF and LAS must share XYZ units,
+coordinate reference and vertical datum. Breaklines use the existing **soft**
+TIN constraints (densified vertices), not enforced triangle edges.
+The importer uses [ezdxf](https://ezdxf.readthedocs.io/en/stable/dxfentities/polyline.html);
+source installs require `.[cad]`, while the desktop bundles the dependency.
+
+After **Classify**, the main preview updates to the resulting class colors:
+ground brown and unclassified gray. **Above ground / Apply model** also updates
+the preview, including vegetation greens and building red when present. A
+legend identifies all displayed class categories. The 3D viewer uses the same
+classification palette. The 2D class preview samples at most 200,000 returns;
+exports retain all points. After **Contours**, the preview shows the generated
+index contours in gold, intermediate contours in blue, and supplied breaklines
+in pink. Existing preview pan/zoom controls work on both images. Preview
+rendering failure is logged separately from a successfully saved output.

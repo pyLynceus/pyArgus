@@ -296,7 +296,8 @@ def _cmd_contours(args):
     if args.breaklines:
         breaks = []
         for path in args.breaklines:
-            breaks.extend(geojson.read_breaklines_geojson(path))
+            from pyargus.formats.breaklines import read_breaklines
+            breaks.extend(read_breaklines(path))
         surface = tin.build_tin(
             np.column_stack([points["x"][m], points["y"][m], points["z"][m]]),
             breaklines=breaks, cell_hint=args.cell)
@@ -780,7 +781,7 @@ def build_parser():
     p_ct.add_argument("--ground-class", type=int, default=2)
     p_ct.add_argument("--max-fill", type=int, default=10)
     p_ct.add_argument("--breaklines", action="append",
-                      help="3D LineString GeoJSON (repeatable); switches "
+                      help="DXF or 3D LineString GeoJSON (repeatable); switches "
                            "the surface to a TIN with soft breaklines")
     p_ct.add_argument("--smooth", type=int, default=0,
                       help="Chaikin iterations; drawing polish that moves "

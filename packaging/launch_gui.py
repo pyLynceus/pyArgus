@@ -22,6 +22,16 @@ def self_test():
         assert restored.feature_cell == 2.0
         assert restored.xyz_units == "metres"
         assert np.array_equal(above.predict(model, matrix), above.predict(restored, matrix))
+    from pyargus.formats.breaklines import read_breaklines
+    from pyargus.formats.dxf import write_contours_dxf
+    from pyargus.surfaces.contours import ContourLine
+    from pyargus import stage_preview
+    with tempfile.TemporaryDirectory(prefix="pyargus-cad-") as temp:
+        path = Path(temp) / "breaklines.dxf"
+        lines = [ContourLine(5., np.array([[0.,0.],[1.,1.]]), False, True)]
+        write_contours_dxf(path, lines)
+        assert read_breaklines(path)[0].shape == (2,3)
+        assert stage_preview.contours(lines).shape[2] == 4
     # Ensure native trajectory modules are also present in the frozen bundle.
     import struct
     from pyargus.formats import trj, trajectory

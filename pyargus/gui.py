@@ -108,7 +108,7 @@ SURFACE_TYPES = (("ESRI ASCII surface", "*.asc"),)
 CONTOUR_TYPES = (("DXF contours", "*.dxf"), ("GeoJSON contours", "*.geojson"))
 CSV_TYPES = (("Control CSV", "*.csv"),)
 SBET_TYPES = (("TerraScan trajectory", "*.trj"), ("SBET trajectory", "*.out"))
-BREAKLINE_TYPES = (("3D GeoJSON breaklines", "*.geojson"), ("JSON", "*.json"))
+BREAKLINE_TYPES = (("DXF breaklines", "*.dxf"), ("3D GeoJSON breaklines", "*.geojson"), ("JSON", "*.json"))
 
 
 def path_row(parent, label, variable, row, directory=False, save=False,
@@ -479,6 +479,8 @@ class ClassifyStage:
             runner.log(f"ground: {n:,} ({100.0 * n / x.size:.1f}% of cloud)")
             runner.log(f"wrote: {out}")
             runner.products.append(("classified", Path(out)))
+            from pyargus import stage_preview
+            stage_preview.publish(runner, stage_preview.classification, x, y, z, classification)
 
         return work
 
@@ -589,6 +591,8 @@ class AboveStage:
                 data.write(out)
                 runner.log(f"Without ground coverage: {missing:,} points left class 1")
                 runner.products.append(("classified", Path(out)))
+                from pyargus import stage_preview
+                stage_preview.publish(runner, stage_preview.classification, points["x"], points["y"], points["z"], classification)
             runner.log(f"Wrote {out}")
         return work
 
@@ -670,8 +674,9 @@ class ContourStage:
                  0)
         path_row(box, "Contours out (.dxf/.geojson)", self.out_path, 1,
                  save=True, filetypes=CONTOUR_TYPES)
-        path_row(box, "Breaklines (3D GeoJSON, optional)", self.breaklines,
+        path_row(box, "Breaklines (DXF / 3D GeoJSON)", self.breaklines,
                  2, filetypes=BREAKLINE_TYPES)
+        ttk.Label(box, text="Breaklines must share LAS XYZ units/datum. DXF: straight elevated lines; soft constraints.", wraplength=360).grid(row=5,column=0,columnspan=3,sticky="w")
         for i, (label, var) in enumerate((("Interval", self.interval),
                                           ("Cell", self.cell))):
             ttk.Label(box, text=label).grid(row=3 + i, column=0, sticky="w")
@@ -702,8 +707,10 @@ class ContourStage:
             m = points["classification"] == 2
             if not m.any():
                 raise ValueError("no class-2 points; classify first")
+            breaks = []
             if breakline_path:
-                breaks = geojson.read_breaklines_geojson(breakline_path)
+                from pyargus.formats.breaklines import read_breaklines
+                breaks = read_breaklines(breakline_path)
                 surface = tin.build_tin(
                     np.column_stack([points["x"][m], points["y"][m],
                                      points["z"][m]]),
@@ -730,6 +737,8 @@ class ContourStage:
                 geojson.write_contours_geojson(out, lines)
             runner.log(f"{len(lines)} lines, "
                        f"{len({line.level for line in lines})} levels")
+            from pyargus import stage_preview
+            stage_preview.publish(runner, stage_preview.contours, lines, breaks)
             runner.log(f"wrote: {out}")
 
         return work
