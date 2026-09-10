@@ -502,3 +502,4 @@ Seven tests cover DXF XYZ, OCS, closure, export/import roundtrip, refusals, dept
 ordering, and actual Classify/Contours GUI work closures. Preview images
 visually inspected (Summerville classes and synthetic contours). Build target:
 dist-usability/pyArgus/pyArgus.exe. Unrelated imagery work remains untouched.
+Final usability validation: 261 tests passed; dist-usability packaged self-test exited 0, including DXF read and contour rendering. Full reference run: 49 passed / 3 failed of 52; all 46 non-colorization checks passed. Failures match the pre-existing concurrent imagery differences exactly: pct_colored 95.3115 vs 70.86, pct_occluded 4.68528 vs 29.14, images_used 1033 vs 1019. No imagery code or expectations changed. Full log: usability-reference.log.
