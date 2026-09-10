@@ -400,6 +400,17 @@ def align(project, out, *, cell=6., min_points=6, solve_boresight=True,
     if not project.trajectories:
         raise ValueError('project alignment requires trajectories')
     data = load(project,keep_points=True,log=log,cancel=cancel)
+    if any(not t.native for t in data.tracks) and project.vertical is not None:
+        if isinstance(project.vertical,str):
+            import pyproj
+            vertical_crs=pyproj.CRS.from_user_input(project.vertical)
+            if not vertical_crs.is_vertical:
+                raise ValueError('SBET vertical setting must be a vertical CRS or geoid N in meters')
+            if not np.isclose(vertical_crs.axis_info[0].unit_conversion_factor,
+                              data.crs.axis_info[0].unit_conversion_factor,rtol=1e-12,atol=0):
+                raise ValueError('SBET vertical CRS units differ from LAS XYZ units; choose a matching vertical CRS')
+        elif not np.isfinite(project.vertical):
+            raise ValueError('SBET geoid undulation must be finite')
     inv, pts = data.inventory,data.points
     if inv['unmatched'] or inv['ambiguous']:
         raise ValueError(f"alignment refused: {inv['unmatched']:,} unmatched and "
@@ -469,6 +480,7 @@ def align(project, out, *, cell=6., min_points=6, solve_boresight=True,
         project.save(temp/'project.json')
         summary = dict(outputs=output_map,boresight=result.boresight.tolist(),
             offsets={str(k):v.tolist() for k,v in offsets.items()},inventory=inv,
+            parameters=dict(cell=cell,min_points=min_points,solve_boresight=solve_boresight,offsets='z'),
             patch_rms_before=result.rms_before,patch_rms_after=result.rms_after,
             accuracy='relative strip adjustment; absolute accuracy requires independent checkpoints')
         (temp/'alignment.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
