@@ -74,6 +74,10 @@ def check_datum(eo, xyz):
     overlapping on a site-local grid) -- coverage is what that looks
     like, and the caller judges it after colorizing.
     """
+    if xyz.shape[0] == 0:
+        raise ValueError(
+            "the cloud holds no points, so there is nothing to colorize "
+            "and no extent to check the EO against")
     lo = xyz[:, :2].min(axis=0)
     hi = xyz[:, :2].max(axis=0)
     olo = eo["origin"][:, :2].min(axis=0)
@@ -95,7 +99,7 @@ def check_datum(eo, xyz):
 
 def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
                    quarter_turns=3, neighbors=8, occlusion_tol=3.0,
-                   min_coverage=5.0, memory_budget_mb=512,
+                   min_coverage=5.0, memory_budget_mb=None,
                    coverage_label="the coverage floor",
                    log=print, progress=None, should_stop=None):
     """Paint ``cloud`` from oriented imagery and write ``out``.
@@ -127,10 +131,15 @@ def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
     log(f"eo:      {len(eo['filename'])} rows, flying height "
         f"~{agl:.0f} above the cloud median")
 
+    # memory_budget_mb stays UNSET unless a caller asks: passing a
+    # number here would silently override colorize()'s own default,
+    # which is what the extraction did (256 -> 512) with nothing to
+    # notice
+    budget = ({} if memory_budget_mb is None
+              else {"memory_budget_mb": memory_budget_mb})
     rgb, stats = colorize_mod.colorize(
         xyz, eo, cameras, image_paths, neighbors=neighbors,
-        occlusion_tol=occlusion_tol, memory_budget_mb=memory_budget_mb,
-        progress=progress)
+        occlusion_tol=occlusion_tol, progress=progress, **budget)
     del xyz
     pct = 100.0 * stats["n_colored"] / stats["n_points"]
     stats["pct_colored"] = pct
