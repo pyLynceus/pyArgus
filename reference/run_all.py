@@ -72,6 +72,13 @@ CHECKS = [
     ("summerville_contours", "dsm_dtm_median", "abs", 42.60, 0.1),
     ("summerville_contours", "below_dtm_cells", "abs", 33, 5),
 
+    ("summerville_tiled", "mismatches", "equal", 0, 0),
+    ("summerville_tiled", "tiles", "equal", 12, 0),
+    ("summerville_tiled", "halo", "abs", 1260.0, 0.1),
+    ("summerville_tiled", "whole_ground_fraction", "abs", 0.2956, 0.001),
+    ("summerville_tiled", "tiled_ground_fraction", "abs", 0.2956, 0.001),
+    ("summerville_tiled", "strip_cells", "equal", 1321500, 0),
+
     ("summerville_streaming", "fields_identical", "equal", True, 0),
     ("summerville_streaming", "density_grid_identical", "equal", True, 0),
     ("summerville_streaming", "density_median", "abs", 8.33, 0.01),

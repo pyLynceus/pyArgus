@@ -521,6 +521,30 @@ pick by type now; and a second `_FakeRunner` defined at the bottom of
 `test_gui.py` silently shadowed the real one. Reuse the fixture that
 is already there.
 
+## Tiled ground classification
+
+`pyargus classify-ground --tiled` builds the SMRF surface tile by
+tile, so a cloud larger than memory can be classified. `classify/
+tiles.py` holds the geometry, `classify/job.py` the driver.
+
+Why it works: SMRF's expensive half makes a RASTER (11 MB for a
+10,569 ft SH 151 strip of 41.4M points) and its cheap half is one
+bilinear sample per point. Build the surface tiled, apply it streamed.
+
+* **The halo is the whole problem.** The progressive opening is
+  ITERATIVE, so influence accumulates as R(R+1) cells, not R -- 1,260
+  ft at cell 3 / window 60. That bound is the default. Measured: no
+  halo puts a 30 ft error in the DEM where a building straddles a
+  seam; 2 * window was exact on that scene; under 2 * window REFUSES.
+* **Verified on real data with real seams**: 12 tiles over Summerville
+  classify 0 of 15.28M points differently from the whole-cloud run.
+  Force multiple tiles in any future acceptance -- the first version
+  of this one ran as a single tile and its 0 meant nothing.
+* **No COPC index means one pass per tile**, and the job says so.
+  `pyargus copc` first makes it roughly one read.
+* **COPC reorders points**: row i of a copy is not row i of the
+  source. Do not pair them by index.
+
 ## Next step, with reasoning
 
 **The roadmap is complete.** What remains open, by value: (1) THE
@@ -528,11 +552,7 @@ REAL PROJECT (SH 151, set aside pending the vendor's LCP2 list): the
 lidar block is internally rigid and the misses are position-locked;
 when the vendor responds, re-occupy the worst marks and decide
 between control-net vs lidar-datum error -- reference/sh151_* holds
-the case. (2)
-Tiling with a halo for SMRF ground classification -- the last
-genuinely whole-cloud consumer besides the TIN and the solve, and the
-thing standing between streaming and classifying a 900M-point block.
-(3) Archive any vendor-stated miscalibrated flight as the final
+the case. (2) Archive any vendor-stated miscalibrated flight as the final
 alignment acceptance.
 
 ## Findings so far
