@@ -661,3 +661,72 @@ until a panel went looking.
   dependency on software which could move or be uninstalled, which
   is why the probe reports what it found and the refusal names the
   alternatives.
+
+## Tiled ground classification
+
+Measured 2026-09-11 by `python -m reference.summerville_tiled`
+(`pyargus classify-ground --tiled`). SMRF was the last consumer in the
+suite that wanted a whole cloud at once, which put SH 151's 917M
+points across 22 strips out of reach however well the reads streamed.
+
+The way past it is the shape of the algorithm. Its expensive half
+produces a RASTER -- a DEM and its slope -- and a raster is small
+whatever the point count: **11 MB for a 10,569 ft SH 151 strip of
+41.4M points**. Its cheap half judges each point against that raster
+with one bilinear sample, which streams perfectly. So the surface is
+built tile by tile, assembled once, and applied in a streaming pass.
+
+* **EQUALITY on real data, with real seams.** On Summerville
+  (15.28M points, where the whole-cloud answer still exists to compare
+  against), a run forced into **12 tiles of 600 ft** classifies
+  **0 of 15,284,332 points differently** from the whole-cloud run.
+  4,518,517 ground either way.
+
+  The first version of this acceptance used the default tile size,
+  which is six halos -- larger than Summerville -- so it ran as ONE
+  tile and reported a meaningless 0. It now forces a seam grid and
+  REFUSES to pass if fewer than four tiles ran.
+
+### The halo is the whole problem
+
+SMRF's progressive opening is ITERATIVE: each round opens the previous
+round's output, so influence accumulates. One opening of radius r
+reaches 2r cells, and the cascade r = 1..R reaches R(R+1) -- at the
+survey-feet defaults (cell 3, window 60) that is 420 cells, **1,260
+ft**. Measured on a hard synthetic scene with a building straddling
+the seam (cell 3, window 30, bound 330):
+
+| halo | result |
+|------|--------|
+| 0    | DEM wrong by 30.7 units, 197 points misclassified |
+| 12   | DEM exact, 8 points still differ (the slope raster) |
+| 60   | exact: identical DEM and identical ground mask |
+| 330  | exact |
+
+So twice the window sufficed there, a quarter of the bound. The
+DEFAULT is the bound anyway, because "openings usually converge" is
+not a guarantee and a seam that silently classifies differently from a
+whole-cloud run is the defect this suite exists to refuse. A halo
+under 2 * window refuses by name: a single opening already reaches
+that far. The test suite pins both the equality AND the failure --
+one test assembles a no-halo surface by hand to show the 30-unit seam
+error the guard prevents, because a guard nothing demonstrates is
+decoration.
+
+### Honest gaps
+
+* **Without a COPC index every tile is another pass over the file.**
+  The job says so rather than letting an operator discover it: 12
+  tiles meant 12 passes on Summerville (90 s against 9 s whole-cloud).
+  `pyargus copc` first turns that into roughly one read, which is what
+  the octree is for -- and the default tile size (six halos) keeps the
+  count low on real projects.
+* **A COPC copy REORDERS its points.** Row *i* of a COPC file is not
+  row *i* of its source, so anything pairing them by index is wrong.
+  This cost an afternoon here: a tiled-classification check read as
+  4,330 mismatches until the orders were matched, at which point it
+  was exact. `pyargus copc` now prints the warning.
+* The tiled path classifies against the finished surface, so it
+  matches the whole-cloud command exactly -- including that command's
+  own choice to build the surface from returns that can see the
+  ground while classifying every point.

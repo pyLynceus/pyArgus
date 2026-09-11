@@ -24,6 +24,15 @@ the recon measured:
   reopened and its point count, extra dimensions and COPC VLR are
   checked against the source. A converter that quietly loses a
   dimension is worse than one that fails.
+
+POINT ORDER DOES NOT SURVIVE. Building the octree REORDERS the points,
+so row *i* of a COPC copy is not row *i* of its source. Anything that
+pairs the two by index -- applying a per-point array computed against
+the original, diffing two classifications element-wise -- is wrong on
+a COPC file and will look like a scattering of disagreements rather
+than an error. (It cost an afternoon here: a tiled-classification
+check read as 4,330 mismatches until the orders were matched, at which
+point it was exact.)
 """
 
 import os
@@ -113,6 +122,7 @@ def write_copc(src, dst, *, pdal=None, timeout=None):
             f"drops them silently without --writers.copc.extra_dims")
     return {
         "pdal": exe,
+        "reordered": True,      # always: the octree decides the order
         "point_count": after["point_count"],
         "extra_dims": after["extra_dims"],
         "size_ratio": dst.stat().st_size / max(src.stat().st_size, 1),
