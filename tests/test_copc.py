@@ -130,3 +130,56 @@ def test_copc_resolution_snaps_to_octree_levels(tmp_path):
     assert counts[0] < n, "the coarsest level should drop something"
     full = las_mod.copc_query(dst, fields=("x",))["x"].size
     assert full == n
+
+
+@needs_pdal
+def test_streaming_out_of_a_copc_source_works(tmp_path):
+    """laspy refuses to WRITE a header that still claims an octree, so
+    a COPC source used to abort with a raw NotImplementedError and
+    leave a 0-byte file -- meaning `pyargus copc` produced clouds the
+    rest of the suite could not then process."""
+    src = tmp_path / "src.las"
+    n = make_cloud(src, n=120_000, seed=8)
+    copc = tmp_path / "out.copc.laz"
+    copc_mod.write_copc(src, copc)
+    assert las_mod.cloud_info(copc)["is_copc"]
+
+    dst = tmp_path / "shifted.laz"
+    written = las_mod.stream_update(copc, dst,
+                                    lambda p, _s: {"z": p["z"] + 1.0},
+                                    fields=("z",))
+    assert written == n
+    out = las_mod.cloud_info(dst)
+    # the copy is a plain LAZ: an octree cannot survive a point-by-point
+    # rewrite, and claiming one it does not have would be a lie
+    assert not out["is_copc"]
+    assert out["extra_dims"] == ["Amplitude"]
+
+
+@needs_pdal
+def test_oversized_bounds_do_not_come_back_empty(tmp_path):
+    """laspy converts the requested box into the file's scaled integer
+    system with an unchecked int32 cast, so a box merely LARGER than
+    the cloud could overflow and return zero points instead of
+    everything."""
+    src = tmp_path / "src.las"
+    n = make_cloud(src, n=120_000, seed=9)
+    dst = tmp_path / "out.copc.laz"
+    copc_mod.write_copc(src, dst)
+
+    got = las_mod.copc_query(dst, fields=("x",),
+                             bounds=((-1e9, -1e9), (1e9, 1e9)))
+    assert got["x"].size == n
+
+
+@needs_pdal
+def test_a_box_that_misses_the_cloud_refuses(tmp_path):
+    src = tmp_path / "src.las"
+    make_cloud(src, n=20_000, seed=10)
+    dst = tmp_path / "out.copc.laz"
+    copc_mod.write_copc(src, dst)
+    with pytest.raises(ValueError, match="does not overlap"):
+        las_mod.copc_query(dst, fields=("x",),
+                           bounds=((0.0, 0.0), (10.0, 10.0)))
+    with pytest.raises(ValueError, match="resolution must be positive"):
+        las_mod.copc_query(dst, fields=("x",), resolution=0.0)

@@ -221,3 +221,132 @@ def test_copc_query_refuses_a_plain_las(tmp_path):
     assert las_mod.cloud_info(path)["is_copc"] is False
     with pytest.raises(ValueError, match="not a COPC file"):
         las_mod.copc_query(path, bounds=((0, 0), (1, 1)))
+
+
+# --- what the ninth review panel found, pinned -----------------------
+
+def test_stale_header_refuses_instead_of_dropping_points(tmp_path):
+    """np.histogram2d DISCARDS samples outside its explicit bins. With
+    the edges fixed from a header that no longer describes its own
+    points -- a clip or a reproject that never rewrote min/max -- the
+    streamed grid would be computed from a subset while printing a
+    perfectly believable density on the suite's own QA metric."""
+    import struct
+
+    path = tmp_path / "c.las"
+    make_cloud(path, n=20000, seed=21)
+    raw = bytearray(path.read_bytes())
+    struct.pack_into("<d", raw, 179, 600050.0)   # max_x: half the true span
+    path.write_bytes(bytes(raw))
+
+    info = las_mod.cloud_info(path)
+    assert info["maxs"][0] == 600050.0
+    with pytest.raises(ValueError, match="fall outside the declared extent"):
+        density_mod.density_grid_streamed(
+            las_mod.iter_points(path, fields=("x", "y")),
+            info["mins"][:2], info["maxs"][:2], cell=5.0)
+
+    # and the way out: take the extent from the points themselves
+    lo, hi = density_mod.scan_extent(
+        las_mod.iter_points(path, fields=("x", "y")))
+    grid, _, _ = density_mod.density_grid_streamed(
+        las_mod.iter_points(path, fields=("x", "y")), lo, hi, cell=5.0)
+    assert round(grid.sum() * 25) == 20000
+
+
+def test_scan_extent_matches_the_points(tmp_path):
+    path = tmp_path / "c.las"
+    make_cloud(path, n=5000, seed=22)
+    pts = las_mod.read_points(path, fields=("x", "y"))
+    lo, hi = density_mod.scan_extent(
+        las_mod.iter_points(path, fields=("x", "y"), chunk_size=321))
+    assert np.isclose(lo[0], pts["x"].min()) and np.isclose(hi[0], pts["x"].max())
+    assert np.isclose(lo[1], pts["y"].min()) and np.isclose(hi[1], pts["y"].max())
+
+
+def test_evlrs_survive_a_streamed_copy(tmp_path):
+    """LAS 1.4 allows the OGC WKT in an EVLR, and many writers put it
+    there. Dropping EVLRs strips the georeferencing off the delivery
+    that align --write and colorize --out produce."""
+    pyproj = pytest.importorskip("pyproj")
+    src = tmp_path / "src.las"
+    make_cloud(src, n=2000, seed=23)
+    las = laspy.read(str(src))
+    las.header.global_encoding.wkt = True
+    las.evlrs = laspy.vlrs.vlrlist.VLRList(
+        [laspy.vlrs.known.WktCoordinateSystemVlr(
+            pyproj.CRS.from_epsg(6447).to_wkt())])
+    las.write(str(src))
+    assert las_mod.cloud_info(src)["crs"] is not None
+
+    dst = tmp_path / "dst.las"
+    las_mod.stream_update(src, dst, lambda p, _s: {"z": p["z"]},
+                          fields=("z",), chunk_size=500)
+    crs = las_mod.cloud_info(dst)["crs"]
+    assert crs is not None and "Georgia West" in crs.name
+
+
+def test_stream_update_refuses_to_overwrite_its_own_source(tmp_path):
+    """The source is read chunk by chunk WHILE the destination is
+    written; the same path destroys the cloud mid-read and reports
+    success."""
+    path = tmp_path / "c.las"
+    make_cloud(path, n=1000, seed=24)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="onto itself"):
+        las_mod.stream_update(path, path, lambda p, _s: {"z": p["z"]},
+                              fields=("z",))
+    assert path.read_bytes() == before
+
+
+def test_a_failed_write_leaves_nothing_at_the_destination(tmp_path):
+    """A truncated cloud opens perfectly and is quietly missing its
+    tail, which is worse than no file at all."""
+    src = tmp_path / "src.las"
+    make_cloud(src, n=5000, seed=25)
+    dst = tmp_path / "dst.las"
+
+    def explode(points, start):
+        if start >= 2000:
+            raise RuntimeError("deliberate mid-stream failure")
+        return {"z": points["z"]}
+
+    with pytest.raises(RuntimeError, match="deliberate"):
+        las_mod.stream_update(src, dst, explode, fields=("z",),
+                              chunk_size=1000)
+    assert not dst.exists()
+    assert list(tmp_path.glob("dst.las*")) == []
+
+
+def test_empty_source_still_honours_the_requested_format(tmp_path):
+    src = tmp_path / "empty.las"
+    laspy.LasData(laspy.LasHeader(version="1.4", point_format=6)).write(
+        str(src))
+    dst = tmp_path / "dst.las"
+    written = las_mod.stream_update(src, dst, lambda p, _s: {},
+                                    fields=("x",), point_format=7)
+    assert written == 0
+    assert las_mod.cloud_info(dst)["point_format"] == 7
+
+
+def test_zero_point_file_still_refuses_a_missing_field(tmp_path):
+    """The refusal must come from the HEADER: a per-record check never
+    runs on an empty file, so streaming and whole-file consumers would
+    disagree about the same cloud."""
+    src = tmp_path / "empty.las"
+    laspy.LasData(laspy.LasHeader(version="1.4", point_format=6)).write(
+        str(src))
+    with pytest.raises(ValueError, match="no field 'red'"):
+        list(las_mod.iter_points(src, fields=("x", "red")))
+    with pytest.raises(ValueError, match="no field 'red'"):
+        las_mod.read_points(src, fields=("x", "red"))
+
+
+def test_update_length_mismatch_is_named_not_broadcast(tmp_path):
+    """A length-1 array would broadcast silently over a whole chunk."""
+    src = tmp_path / "src.las"
+    make_cloud(src, n=1000, seed=26)
+    with pytest.raises(ValueError, match="returned 1 values"):
+        las_mod.stream_update(src, tmp_path / "dst.las",
+                              lambda p, _s: {"z": np.zeros(1)},
+                              fields=("z",))

@@ -56,11 +56,26 @@ def _cmd_density(args):
     # the header fixes the grid, so this never holds more than one
     # chunk -- a 350M-point delivery is a few hundred MB, not 20 GB
     info = las.cloud_info(args.path)
-    dens, _, _ = density.density_grid_streamed(
-        las.iter_points(args.path, fields=("x", "y"),
-                        chunk_size=args.chunk_size),
-        info["mins"][:2], info["maxs"][:2], cell=args.cell)
+
+    def stream():
+        return las.iter_points(args.path, fields=("x", "y"),
+                               chunk_size=args.chunk_size)
+
+    if args.rescan:
+        mins, maxs = density.scan_extent(stream())
+        print(f"rescanned:     extent from the points, not the header")
+    else:
+        mins, maxs = info["mins"][:2], info["maxs"][:2]
+    try:
+        dens, _, _ = density.density_grid_streamed(
+            stream(), mins, maxs, cell=args.cell)
+    except ValueError as exc:
+        raise SystemExit(f"{exc}  (pass --rescan to take the extent from "
+                         f"the points, at the cost of one extra pass)")
     covered = dens[dens > 0]
+    if covered.size == 0:
+        raise SystemExit("no cell received a point; the extent and the "
+                         "data do not overlap")
     print(f"points:        {info['point_count']}")
     print(f"cell size:     {args.cell} (data units)")
     print(f"covered cells: {covered.size} of {dens.size}")
@@ -782,6 +797,11 @@ def build_parser():
     p_dens = sub.add_parser("density", help="point density summary for a LAS/LAZ file")
     p_dens.add_argument("path")
     p_dens.add_argument("--cell", type=float, default=1.0)
+    p_dens.add_argument("--rescan", action="store_true",
+                        help="take the extent from the points instead of "
+                             "the header (one extra streaming pass); use "
+                             "when the header does not describe its own "
+                             "points")
     p_dens.add_argument("--chunk-size", type=int, default=1_000_000,
                         help="points held at once while streaming "
                              "(default 1M; below ~250k it gets slower "

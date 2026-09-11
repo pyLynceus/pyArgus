@@ -8,7 +8,8 @@ Three ways in, and the choice is about memory, not taste:
 
 * ``read_points`` materializes the whole cloud. Simple, and right for
   anything that needs global state (a Delaunay triangulation, a
-  solve). Budget ~39 bytes per point for the default fields.
+  solve). Budget ~39 bytes per point for the default fields, plus
+  laspy's own packed record while the read is in flight.
 * ``iter_points`` streams it in chunks and never holds more than one.
   Right for every accumulator: counting, gridding, per-cell medians,
   culling to a region. This is what makes a 350M-point delivery
@@ -34,6 +35,10 @@ than as an error -- measured, on a real file, as a mean Z of 45.99
 against a true 50.01. Not worth it here.
 """
 
+import copy
+import os
+from pathlib import Path
+
 import numpy as np
 
 FIELDS = ("x", "y", "z", "gps_time", "intensity", "classification",
@@ -44,6 +49,10 @@ DEFAULT_CHUNK = 1_000_000
 decompressor is re-driven often enough that wall time rises several
 fold for very little further memory saving (measured)."""
 
+BYTES_PER_POINT = 39
+"""Array bytes for the default FIELDS. laspy's packed record costs
+another ~30 on top while a whole read is in flight."""
+
 
 def _laspy():
     try:
@@ -53,6 +62,24 @@ def _laspy():
             "reading LAS/LAZ needs laspy: uv pip install -e \".[lidar]\""
         ) from exc
     return laspy
+
+
+def _check_fields(header, fields, path):
+    """Refuse unknown fields against the HEADER, before any points.
+
+    Checking per record would let a zero-point file accept anything,
+    because the loop that would have raised never runs -- and then a
+    streaming consumer and a whole-file consumer disagree about the
+    same file.
+    """
+    known = set(header.point_format.dimension_names)
+    # the header lists the RAW integer dimensions X/Y/Z; x/y/z are
+    # laspy's scaled accessors over them, and are what callers ask for
+    scaled = {"x": "X", "y": "Y", "z": "Z"}
+    for name in fields:
+        if scaled.get(name, name) not in known:
+            raise ValueError(
+                f"{path}: point format has no field {name!r}")
 
 
 def _extract(record, fields, path):
@@ -110,6 +137,7 @@ def iter_points(path, fields=FIELDS, chunk_size=DEFAULT_CHUNK):
     if chunk_size < 1:
         raise ValueError(f"chunk_size must be positive, got {chunk_size}")
     with laspy.open(path) as reader:
+        _check_fields(reader.header, fields, path)
         for chunk in reader.chunk_iterator(chunk_size):
             yield _extract(chunk, fields, path)
 
@@ -123,8 +151,36 @@ def read_points(path, fields=FIELDS):
     """
     laspy = _laspy()
     with laspy.open(path) as reader:
+        _check_fields(reader.header, fields, path)
         las = reader.read()
         return _extract(las, fields, path)
+
+
+def _output_header(laspy, src_header, point_format):
+    """The header a chunked copy should be written with.
+
+    Built from the source header, so the point format, extra bytes,
+    scales, offsets and CRS VLRs all come across; laspy deepcopies it
+    again at the writer, resets the counters and regrows the bounds
+    per chunk. Two adjustments the source cannot carry:
+
+    * the COPC VLRs are DROPPED. A copy written point-by-point is a
+      plain LAZ, and laspy refuses outright ("Writing COPC is not
+      supported") if the header still claims an octree -- which used
+      to leave a 0-byte file where the delivery should be.
+    * the point format is converted here rather than per chunk, so a
+      zero-point source still produces the format that was asked for.
+    """
+    header = copy.deepcopy(src_header)
+    if any(v.user_id == "copc" for v in header.vlrs):
+        header.vlrs = laspy.vlrs.vlrlist.VLRList(
+            [v for v in header.vlrs if v.user_id != "copc"])
+    if point_format is None or point_format == header.point_format.id:
+        return header
+    empty = laspy.LasData(
+        header=header,
+        points=laspy.ScaleAwarePointRecord.zeros(0, header=header))
+    return laspy.convert(empty, point_format_id=point_format).header
 
 
 def stream_update(src, dst, update, *, fields=("x", "y", "z"),
@@ -139,62 +195,97 @@ def stream_update(src, dst, update, *, fields=("x", "y", "z"),
     per-point array it computed earlier without re-reading anything:
     ``values[start:start + n]``. Only the named fields change;
     everything else -- point format, extra bytes, scales, offsets, CRS
-    VLRs -- is carried across untouched, because the output header IS
-    the input header (laspy deepcopies it, resets the counters and
-    regrows the bounds per chunk). Building a header by hand instead
-    silently writes a DUPLICATE ExtraBytesVlr, which laspy reads back
-    happily and other software may not.
+    records, EVLRs -- is carried across, because the output header IS
+    the input header. Building a header by hand instead silently
+    writes a DUPLICATE ExtraBytesVlr, which laspy reads back happily
+    and other software may not.
 
     ``point_format`` converts on the way through (pf6 -> pf7 to gain
     RGB, say); the conversion happens per chunk, so it costs no extra
-    memory. Returns the number of points written.
+    memory.
+
+    The write goes to a temporary file beside ``dst`` and is renamed
+    into place only after the last chunk. A failure partway therefore
+    leaves no output at all, rather than a truncated cloud that opens
+    perfectly and is quietly missing its tail. Returns the number of
+    points written.
     """
     laspy = _laspy()
+    src_path, dst_path = Path(src), Path(dst)
+    try:
+        same = src_path.resolve() == dst_path.resolve()
+    except OSError:
+        same = False
+    if same:
+        raise ValueError(
+            f"refusing to stream {src_path.name} onto itself: the source is "
+            f"read chunk by chunk while the destination is being written, "
+            f"so this would destroy the cloud it is reading")
+
     written = 0
-    with laspy.open(src) as reader:
-        total = int(reader.header.point_count)
-        converting = (point_format is not None
-                      and point_format != reader.header.point_format.id)
-        writer = None
-        try:
-            for chunk in reader.chunk_iterator(chunk_size):
-                if converting:
-                    holder = laspy.LasData(header=reader.header,
-                                           points=chunk)
-                    holder = laspy.convert(holder,
-                                           point_format_id=point_format)
-                    chunk, header = holder.points, holder.header
-                else:
-                    header = reader.header
-                if writer is None:
-                    writer = laspy.open(dst, mode="w", header=header)
-                changes = update(_extract(chunk, fields, src),
-                                 written) or {}
-                for name, values in changes.items():
-                    try:
-                        chunk[name] = values
-                    except (KeyError, AttributeError, ValueError) as exc:
-                        raise ValueError(
-                            f"{dst}: cannot write field {name!r} to point "
-                            f"format {header.point_format.id}") from exc
-                writer.write_points(chunk)
-                written += len(chunk)
-                if progress is not None:
-                    progress(written, total)
-            if writer is None:                    # an empty source
-                writer = laspy.open(dst, mode="w", header=reader.header)
-        finally:
-            if writer is not None:
-                writer.close()
+    partial = dst_path.with_name(dst_path.name + ".partial")
+    try:
+        with laspy.open(src_path) as reader:
+            _check_fields(reader.header, fields, src_path)
+            total = int(reader.header.point_count)
+            header = _output_header(laspy, reader.header, point_format)
+            converting = header.point_format.id != reader.header.point_format.id
+            evlrs = [v for v in (reader.evlrs or []) if v.user_id != "copc"]
+            with laspy.open(partial, mode="w", header=header) as writer:
+                for chunk in reader.chunk_iterator(chunk_size):
+                    size = len(chunk)
+                    if converting:
+                        holder = laspy.LasData(header=reader.header,
+                                               points=chunk)
+                        chunk = laspy.convert(
+                            holder, point_format_id=header.point_format.id
+                        ).points
+                    changes = update(_extract(chunk, fields, src_path),
+                                     written) or {}
+                    for name, values in changes.items():
+                        values = np.asarray(values)
+                        if values.shape[0] != size:
+                            raise ValueError(
+                                f"update returned {values.shape[0]} values "
+                                f"for {name!r} on a chunk of {size} points")
+                        try:
+                            chunk[name] = values
+                        except (KeyError, AttributeError, ValueError) as exc:
+                            raise ValueError(
+                                f"{dst_path}: cannot write field {name!r} to "
+                                f"point format {header.point_format.id}"
+                            ) from exc
+                    writer.write_points(chunk)
+                    written += size
+                    if progress is not None:
+                        progress(written, total)
+                # EVLRs hold the OGC WKT on many LAS 1.4 files, so
+                # dropping them strips the delivery's georeferencing.
+                # This must follow the last write_points: it finalizes
+                # the point writer.
+                if evlrs and header.version.minor >= 4:
+                    writer.write_evlrs(laspy.vlrs.vlrlist.VLRList(evlrs))
+        os.replace(partial, dst_path)
+    except BaseException:
+        Path(partial).unlink(missing_ok=True)
+        raise
     return written
 
 
 def copc_query(path, fields=FIELDS, *, bounds=None, resolution=None):
     """Points from a COPC file inside ``bounds``, at ``resolution``.
 
-    ``bounds`` is ((min_e, min_n), (max_e, max_n)) or full 3D triples.
+    ``bounds`` is ((min_e, min_n), (max_e, max_n)) or full 3D triples,
+    and is CLAMPED to the file's own extent first: laspy converts the
+    request into the file's scaled integer system with an unchecked
+    int32 cast, so a box merely larger than the cloud can overflow and
+    come back with zero points rather than everything.
+
     ``resolution`` (map units) reads only the octree levels at least
-    that coarse -- an overview, for a preview or a first pass.
+    that coarse -- an overview, for a preview or a first pass. It is
+    not a sampling fraction: it maps to whole octree LEVELS, so a
+    shallow tree offers few distinct answers and several different
+    resolutions can return exactly the same points.
 
     MEMORY WARNING, and it is not a small one: a COPC query
     decompresses every octree NODE that overlaps the box and masks
@@ -219,9 +310,21 @@ def copc_query(path, fields=FIELDS, *, bounds=None, resolution=None):
         if mins.size == 2:
             mins = np.append(mins, info["mins"][2])
             maxs = np.append(maxs, info["maxs"][2])
+        if np.any(maxs < mins):
+            raise ValueError(f"bounds are inverted: {mins} .. {maxs}")
+        mins = np.maximum(mins, info["mins"])
+        maxs = np.minimum(maxs, info["maxs"])
+        if np.any(maxs < mins):
+            raise ValueError(
+                f"the requested box does not overlap {Path(path).name} "
+                f"(file extent {info['mins']} .. {info['maxs']})")
         kwargs["bounds"] = laspy.copc.Bounds(mins=mins, maxs=maxs)
     if resolution is not None:
-        kwargs["resolution"] = float(resolution)
+        resolution = float(resolution)
+        if not resolution > 0:
+            raise ValueError(f"resolution must be positive map units, "
+                             f"got {resolution}")
+        kwargs["resolution"] = resolution
     with laspy.CopcReader.open(path) as reader:
         record = reader.query(**kwargs)
     return _extract(record, fields, path)

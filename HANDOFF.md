@@ -470,7 +470,22 @@ Things worth knowing before touching it:
   check point count, extra dims and the COPC VLR before reporting
   success.
 * **A COPC query's memory tracks nodes touched, not points returned**;
-  a small box is not a small read.
+  a small box is not a small read. Bounds are clamped to the file's
+  extent first, because laspy's unchecked int32 cast made an
+  oversized box return ZERO points.
+* **The streamed density REFUSES when points fall outside the extent
+  it was given.** LAS headers are often stale, and np.histogram2d
+  drops outside samples silently -- that combination printed a
+  believable density computed from a subset (14,977 of 20,000 points
+  dropped, reproduced). `--rescan` takes the extent from the points
+  instead, at the cost of one extra pass.
+* **stream_update writes to a temporary and renames it into place**,
+  so a failure leaves no output rather than a truncated cloud that
+  opens fine and is quietly missing its tail. It refuses src == dst,
+  and it carries EVLRs across: LAS 1.4 allows the OGC WKT there, and
+  dropping them stripped the CRS off the delivery.
+* **A COPC source streams to a PLAIN LAZ.** An octree cannot survive a
+  point-by-point rewrite; re-run `pyargus copc` to rebuild it.
 
 Measured: the 349.79M-point / 9.09 GB dense-matching cloud streams a
 density grid in 124 s at a peak of 138 MB, against ~13.6 GB for the
