@@ -600,3 +600,27 @@ p95 22.888889, strip medians 0/-0.005/+0.030 ft and pair 1/2 RMSE 0.20980012,
 matching recorded reference results. Outputs reference/reports/large-qa-20260910.
 No full Connector 402M run yet. Desktop dist-large-qa/pyArgus/pyArgus.exe.
 Final large-QA validation: all 8 focused tests passed, including SQLite interruption and a safe mocked-metadata change before publication. Packaged dist-large-qa --self-test exited 0 and exercised automatic disk-backed QA. A proposed file-mutation test was rejected by automatic approval review and was never executed; replaced by metadata simulation.
+
+
+## SH151: AT-referenced correction preflight (not applied)
+
+User wants cloud to follow AT rather than adjudicating cause. VRAT_FINAL's
+8242026BundleReportControl.txt has 53 explicit Bundle Coord XYZ values, avoiding
+undocumented stereo residual sign. Read every source strip (22) at these targets.
+Source LAS are unclassified near targets; class-2-only gather was stopped and
+replaced by unclassified surface-neighborhood sampling excluding noise codes.
+Fresh caches at reference/reports/sh151_at_fit/surface_cache. No source edits.
+29 targets pass >=2 enclosing, smooth, <=8% slope local planes, <=0.10ft spread;
+known natural-ground/tall-grass CAL225/CAL226/CAL17 excluded.
+
+at_fit.py implements bounded common Z correction, RBF/plane/bias candidates,
+leave-one-out and five spatial blocks, plus new-file streamed export with full
+point-record readback SHA256 and metadata checks. 3 new tests pass; 305 full-suite
+tests passed. The selected conservative candidate: smoothing100, alpha0.25,
+baseline RMS0.131796ft, fitted RMS0.120826ft, LOO0.125847ft, spatial0.128846ft.
+Grid range -0.049223 to +0.030255ft. This is only marginal predictive improvement.
+Report/model/grid in reference/reports/sh151_at_fit. CANDIDATE ONLY; NO corrected
+LAS copies created. Await target preference / stereo-ground XYZ or ground DTM
+for a meaningful local fit. Do not describe this as a completed correction.
+Initial user question asked whether to use final bundle targets or a stereo
+surface; no answer arrived during preflight. Final bundle used provisionally.
