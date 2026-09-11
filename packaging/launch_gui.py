@@ -64,7 +64,12 @@ def self_test():
     window = tk.Tk()
     window.withdraw()
     app = Application(window)
-    assert isinstance(app.stages[-1], AboveStage)
+    # by TYPE, not position: appending a stage broke this assert and
+    # the two test files that shared the habit, and pytest does not
+    # collect this file so the suite stayed green while it was broken
+    assert any(isinstance(stage, AboveStage) for stage in app.stages)
+    assert any(type(stage).__name__ == "ColorizeStage"
+               for stage in app.stages)
     from pyargus.project_gui import open_project
     project_window = open_project(app)
     project_window.window.withdraw()

@@ -528,11 +528,11 @@ REAL PROJECT (SH 151, set aside pending the vendor's LCP2 list): the
 lidar block is internally rigid and the misses are position-locked;
 when the vendor responds, re-occupy the worst marks and decide
 between control-net vs lidar-datum error -- reference/sh151_* holds
-the case. (2) A GUI stage for colorize; it is CLI-only. (3)
+the case. (2)
 Tiling with a halo for SMRF ground classification -- the last
 genuinely whole-cloud consumer besides the TIN and the solve, and the
 thing standing between streaming and classifying a 900M-point block.
-(4) Archive any vendor-stated miscalibrated flight as the final
+(3) Archive any vendor-stated miscalibrated flight as the final
 alignment acceptance.
 
 ## Findings so far

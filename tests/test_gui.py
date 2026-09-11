@@ -459,3 +459,70 @@ def test_colorize_writes_nothing_after_stop(application, tmp_path):
     work(runner)
     assert not out.exists()
     assert runner.products == []
+
+
+def test_colorize_passes_every_field_through_to_the_job(application,
+                                                        tmp_path,
+                                                        monkeypatch):
+    """Each widget the stage collects must arrive at colorize_cloud.
+    Asserting only the happy-path colours leaves most of the plumbing
+    free to be dropped on the floor: the cloud override, the
+    calibration, the quarter turns, the tolerances."""
+    from pyargus.imagery import job as job_mod
+
+    stage = _colorize_stage(application)
+    cloud, eo, imgdir, _ = _colorize_scene(tmp_path)
+    other = tmp_path / "override.las"
+    other.write_bytes(cloud.read_bytes())
+    cal = imgdir / "0001.png.cal"
+    out = tmp_path / "rgb.las"
+
+    application.cloud_path.set(str(tmp_path / "ignored.las"))
+    stage.cloud_override.set(str(other))
+    stage.eo_path.set(str(eo))
+    stage.images_dir.set(str(imgdir))
+    stage.cal_path.set(str(cal))
+    stage.out_path.set(str(out))
+    stage.quarter_turns.set("2")
+    stage.occlusion_tol.set("4.5")
+    stage.min_coverage.set("1.5")
+
+    seen = {}
+
+    def spy(cloud_arg, eo_arg, images_arg, out_arg, **kwargs):
+        seen.update(cloud=cloud_arg, eo=eo_arg, images=images_arg,
+                    out=out_arg, **kwargs)
+        return {"n_colored": 1, "n_points": 1, "pct_colored": 100.0}
+
+    monkeypatch.setattr(job_mod, "colorize_cloud", spy)
+    stage.prepare()(_FakeRunner())
+
+    assert Path(seen["cloud"]) == other          # the override, not the panel
+    assert Path(seen["eo"]) == eo
+    assert Path(seen["images"]) == imgdir
+    assert Path(seen["out"]) == out
+    assert Path(seen["cal"]) == cal
+    assert seen["quarter_turns"] == 2
+    assert seen["occlusion_tol"] == 4.5
+    assert seen["min_coverage"] == 1.5
+    assert callable(seen["should_stop"]) and callable(seen["log"])
+
+
+def test_colorize_offers_nothing_downstream_when_no_file_appears(
+        application, tmp_path, monkeypatch):
+    """products must follow the FILE, not the intention."""
+    from pyargus.imagery import job as job_mod
+
+    stage = _colorize_stage(application)
+    cloud, eo, imgdir, _ = _colorize_scene(tmp_path)
+    out = tmp_path / "never.las"
+    application.cloud_path.set(str(cloud))
+    stage.eo_path.set(str(eo))
+    stage.images_dir.set(str(imgdir))
+    stage.out_path.set(str(out))
+
+    monkeypatch.setattr(job_mod, "colorize_cloud",
+                        lambda *a, **k: {"n_colored": 0, "n_points": 1})
+    runner = _FakeRunner()
+    stage.prepare()(runner)
+    assert runner.products == []
