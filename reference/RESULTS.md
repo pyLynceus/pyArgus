@@ -628,6 +628,16 @@ Twenty-nine further claims were killed by their refuters, including
 several about `find_pdal`'s version sorting and about RESULTS.md
 numbers being unreproducible.
 
+### The desktop stage
+
+`pyargus gui` grew a Colorize stage. It and the CLI are thin callers
+of one function, `imagery.job.colorize_cloud`, so the two front ends
+cannot drift; the stage's numeric defaults are read from
+`cli.build_parser()` rather than retyped, and a test pins them. That
+is the Phase-7 lesson applied in advance: the GUI's alignment
+defaults had drifted from the CLI's once already, and nothing noticed
+until a panel went looking.
+
 ### Honest gaps
 
 * **A COPC query's memory tracks the octree nodes it touches, not the

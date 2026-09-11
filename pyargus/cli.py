@@ -25,9 +25,6 @@ import numpy as np
 
 import pyargus
 
-# LAS point formats that carry red/green/blue (2/3/5 legacy, 7/8/10
-# in the 1.4 family); 6 and 9 deliberately do not
-_RGB_POINT_FORMATS = frozenset({2, 3, 5, 7, 8, 10})
 
 
 def _cmd_trajectory_info(args):
@@ -583,12 +580,7 @@ def _cmd_align(args):
 def _cmd_colorize(args):
     from pathlib import Path
 
-    import laspy
-
-    from pyargus.formats import eo as eo_mod
-    from pyargus.formats import las as las_mod
-    from pyargus.imagery import camera as camera_mod  # noqa: F401
-    from pyargus.imagery import colorize as colorize_mod
+    from pyargus.imagery import job as job_mod
 
     dst = Path(args.out)
     if dst.resolve() == Path(args.path).resolve():
@@ -597,120 +589,18 @@ def _cmd_colorize(args):
     if dst.exists() and not args.force:
         raise SystemExit(f"{dst} exists; pass --force to replace it")
 
-    eo = eo_mod.read_eo_csv(args.eo)
-    image_paths = colorize_mod.find_images(args.images)
-    if not image_paths:
-        raise SystemExit(f"no images found under {args.images}")
-
-    # one camera per role tag, calibration auto-found beside that
-    # camera's own images (LP360 writes a sidecar per frame)
-    tag_sample = {}
-    for name in eo["filename"]:
-        found = image_paths.get(name.lower())
-        if found is not None:
-            tag_sample.setdefault(eo_mod.camera_tag(name), found)
-    if not tag_sample:
-        raise SystemExit("none of the EO rows' images exist under "
-                         f"{args.images}; wrong --images path?")
-    cameras = {}
-    for tag, sample in tag_sample.items():
-        # the sample image's OWN sidecar, not the folder's first: a
-        # flattened multi-camera delivery would otherwise give every
-        # camera the same lens
-        cal = Path(args.cal) if args.cal else camera_mod.find_cal(sample)
-        if cal is None:
-            raise SystemExit(
-                f"no .cal calibration sidecar found for {sample.name} "
-                f"and no --cal given; refusing to project through an "
-                f"uncalibrated lens (the distortion is ~30 px at the "
-                f"frame corner)")
-        try:
-            cameras[tag] = camera_mod.read_cal(
-                cal, quarter_turns=args.quarter_turns, name=str(tag))
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from None
-        cam = cameras[tag]
-        print(f"camera {tag or '-'}: {cal.name}  f {cam.focal_mm:.3f} mm "
-              f"({cam.focal_px:.1f} px)  pp ({cam.cx_px:+.1f}, "
-              f"{cam.cy_px:+.1f}) px  {cam.width_px}x{cam.height_px}  "
-              f"quarter turns {args.quarter_turns}")
-
-    points = las_mod.read_points(args.path, fields=("x", "y", "z"))
-    xyz = np.column_stack([points["x"], points["y"], points["z"]])
-
-    # the units/CRS trap arrives as geometry: EO that does not overlap
-    # the cloud, or sits below the ground, is a frame mismatch
-    lo = xyz[:, :2].min(axis=0)
-    hi = xyz[:, :2].max(axis=0)
-    olo = eo["origin"][:, :2].min(axis=0)
-    ohi = eo["origin"][:, :2].max(axis=0)
-    if (ohi < lo).any() or (olo > hi).any():
-        raise SystemExit(
-            "the EO positions do not overlap the cloud horizontally -- "
-            "that is what a wrong unit (the LP360 header says [m] even "
-            "when the values are survey feet) or a different CRS looks "
-            "like. Refusing to colorize.")
-    agl = float(np.median(eo["origin"][:, 2]) - np.median(xyz[:, 2]))
-    if agl <= 0:
-        raise SystemExit(
-            f"the EO heights sit {-agl:.0f} map units BELOW the cloud's "
-            f"ground -- a vertical datum or unit mismatch. Refusing to "
-            f"colorize.")
-    print(f"eo:      {len(eo['filename'])} rows, flying height "
-          f"~{agl:.0f} above the cloud median")
-
     def progress(done, total, name):
         print(f"  ... {done} of {total} images ({name})", flush=True)
 
     try:
-        rgb, stats = colorize_mod.colorize(
-            xyz, eo, cameras, image_paths, neighbors=args.neighbors,
-            occlusion_tol=args.occlusion_tol, progress=progress)
+        job_mod.colorize_cloud(
+            args.path, args.eo, args.images, dst, cal=args.cal,
+            quarter_turns=args.quarter_turns, neighbors=args.neighbors,
+            occlusion_tol=args.occlusion_tol,
+            min_coverage=args.min_coverage,
+            coverage_label="--min-coverage", progress=progress)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
-    pct = 100.0 * stats["n_colored"] / stats["n_points"]
-    print(f"colored: {stats['n_colored']:,} of {stats['n_points']:,} "
-          f"points ({pct:.1f}%) from {stats['n_images_used']} images")
-    print(f"skipped: {stats['n_occluded']:,} occluded, "
-          f"{stats['n_unseen']:,} seen by no nearby photo"
-          + (f"; {stats['n_eo_dropped']} EO rows had no image file"
-             if stats["n_eo_dropped"] else ""))
-    # The overlap and AGL gates catch a frame mismatch that separates
-    # the two datasets, but not one that merely SCALES them (metres
-    # written over survey feet keeps the boxes overlapping on a
-    # site-local grid). Coverage is what that looks like from here.
-    if pct < args.min_coverage:
-        raise SystemExit(
-            f"only {pct:.1f}% of the cloud got a color, below "
-            f"--min-coverage {args.min_coverage}. That is what a unit or "
-            f"datum mismatch between the EO and the cloud looks like "
-            f"(metres vs survey feet, ellipsoidal vs orthometric "
-            f"heights), or imagery from the wrong flight. Nothing was "
-            f"written; lower --min-coverage to colorize a subset "
-            f"deliberately.")
-    if pct < 50.0:
-        print("caution: less than half the cloud got a color. That is "
-              "normal when the imagery covers only part of the block -- "
-              "and it is also what a vertical datum or unit mismatch "
-              "looks like, since a flying height in metres over a "
-              "survey-feet cloud shrinks every footprint by 3.28. Check "
-              "the flying height above against the mission.")
-
-    source_format = las_mod.cloud_info(args.path)["point_format"]
-    target_format = None
-    if source_format not in _RGB_POINT_FORMATS:
-        target_format = 7
-        print(f"format:  point format {source_format} carries no RGB; "
-              f"converting to 7")
-
-    def paint(_points, start):
-        block = rgb[start:start + _points["x"].size]
-        return {"red": block[:, 0], "green": block[:, 1],
-                "blue": block[:, 2]}
-
-    las_mod.stream_update(args.path, dst, paint, fields=("x",),
-                          point_format=target_format)
-    print(f"wrote:   {dst}")
     return 0
 
 

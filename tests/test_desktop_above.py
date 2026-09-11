@@ -17,8 +17,7 @@ def test_desktop_training_and_application(application, tmp_path):
     data.classification = labels
     src = tmp_path / 'labeled.las'
     data.write(src)
-    stage = application.stages[-1]
-    assert isinstance(stage, gui.AboveStage)
+    stage = _stage_of(application, gui.AboveStage)
     application.cloud_path.set(str(src))
     stage.mode.set('Train model')
     stage.cell.set('2.0')
@@ -55,7 +54,7 @@ def test_cancel_before_training_writes_nothing(application, tmp_path):
     src = tmp_path / 'source.las'
     src.write_bytes(b'not read when cancelled')
     application.cloud_path.set(str(src))
-    stage = application.stages[-1]
+    stage = _stage_of(application, gui.AboveStage)
     stage.mode.set('Train model')
     out = tmp_path / 'model.joblib'
     stage.out_path.set(str(out))
@@ -64,3 +63,12 @@ def test_cancel_before_training_writes_nothing(application, tmp_path):
     stage.prepare()(runner)
     assert not out.exists()
     assert not runner.products
+
+
+def _stage_of(application, stage_class):
+    """Pick a stage BY TYPE. Positional lookup breaks the moment a
+    stage is added, which is how adding Colorize broke these."""
+    for stage in application.stages:
+        if isinstance(stage, stage_class):
+            return stage
+    raise AssertionError(f'no {stage_class.__name__} registered')

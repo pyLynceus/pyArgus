@@ -103,6 +103,8 @@ def apply_branding(root):
 
 
 CLOUD_TYPES = (("LAS point cloud", "*.las"), ("Compressed LAZ point cloud", "*.laz"))
+EO_TYPES = (("Exterior orientation csv", "*.csv"),)
+CAL_TYPES = (("Camera calibration", "*.cal"),)
 MODEL_TYPES = (("pyArgus classification model", "*.joblib"),)
 SURFACE_TYPES = (("ESRI ASCII surface", "*.asc"),)
 CONTOUR_TYPES = (("DXF contours", "*.dxf"), ("GeoJSON contours", "*.geojson"))
@@ -326,6 +328,23 @@ def cancelled_before(runner, what):
         runner.log(f"cancelled before {what}; nothing written")
         return True
     return False
+
+
+def _cli_defaults(command):
+    """The CLI's own defaults for one subcommand.
+
+    Read from the parser rather than retyped, because the Phase-7
+    panel found the GUI's alignment settings had drifted from the
+    CLI's with nothing to notice. A default can now only differ on
+    purpose.
+    """
+    from pyargus.cli import build_parser
+
+    for action in build_parser()._subparsers._group_actions:
+        parser = action.choices.get(command)
+        if parser is not None:
+            return {a.dest: a.default for a in parser._actions}
+    raise KeyError(command)
 
 
 def _require_cloud(app):
@@ -844,13 +863,116 @@ class AlignStage:
                 xyz, skipped = attach.apply_corrections(
                     points, trajectory, map_e, map_n, map_z,
                     attached.heading_source, result.boresight, offsets, time_mode=time_mode)
-                las = laspy.read(cloud)
-                las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
-                las.write(write)
+
+                def place(chunk, start):
+                    block = xyz[start:start + chunk["x"].size]
+                    return {"x": block[:, 0], "y": block[:, 1],
+                            "z": block[:, 2]}
+
+                # stream the copy: reading the whole record a second
+                # time is what put a ceiling on the cloud size here
+                las_mod.stream_update(cloud, write, place, fields=("x",))
                 runner.log(f"wrote: {write}"
                            + (f" ({skipped:,} outside trajectory "
                               f"unchanged)" if skipped else ""))
                 runner.products.append(("classified", Path(write)))
+
+        return work
+
+
+class ColorizeStage:
+    title = "Colorize"
+
+    def __init__(self, parent, app):
+        self.app = app
+        defaults = _cli_defaults("colorize")
+        self.eo_path = tk.StringVar()
+        self.images_dir = tk.StringVar()
+        self.cal_path = tk.StringVar()
+        self.out_path = tk.StringVar()
+        self.quarter_turns = tk.StringVar(
+            value=str(defaults["quarter_turns"]))
+        self.occlusion_tol = tk.StringVar(
+            value=str(defaults["occlusion_tol"]))
+        self.min_coverage = tk.StringVar(
+            value=str(defaults["min_coverage"]))
+        self.cloud_override = tk.StringVar()
+        box = ttk.Frame(parent)
+        box.pack(fill="x")
+        box.columnconfigure(1, weight=1)
+        path_row(box, "Cloud (blank = the Data panel's)",
+                 self.cloud_override, 0)
+        path_row(box, "EO csv", self.eo_path, 1, filetypes=EO_TYPES)
+        path_row(box, "Imagery folder", self.images_dir, 2, directory=True)
+        path_row(box, "Calibration .cal (blank = beside each camera)",
+                 self.cal_path, 3, filetypes=CAL_TYPES)
+        path_row(box, "Coloured cloud out", self.out_path, 4, save=True)
+        numbers = ttk.Frame(box)
+        numbers.grid(row=5, column=0, columnspan=3, sticky="w")
+        ttk.Label(numbers, text="Quarter turns").grid(row=0, column=0,
+                                                      sticky="w")
+        ttk.Entry(numbers, textvariable=self.quarter_turns, width=4).grid(
+            row=0, column=1, padx=(2, 10))
+        ttk.Label(numbers, text="Occlusion tol").grid(row=0, column=2,
+                                                      sticky="w")
+        ttk.Entry(numbers, textvariable=self.occlusion_tol, width=6).grid(
+            row=0, column=3, padx=(2, 10))
+        ttk.Label(numbers, text="Min coverage %").grid(row=0, column=4,
+                                                       sticky="w")
+        ttk.Entry(numbers, textvariable=self.min_coverage, width=6).grid(
+            row=0, column=5, padx=2)
+        ttk.Label(box, text="Quarter turns is the sensor mounting: 3 for a "
+                            "TrueView 660. Wrong, and every frame is\n"
+                            "rotated -- the cross-camera check in "
+                            "RESULTS.md is how that was caught.").grid(
+            row=6, column=0, columnspan=3, sticky="w")
+
+    def prepare(self):
+        app = self.app
+        cloud = self.cloud_override.get().strip() or _require_cloud(app)
+        if not Path(cloud).is_file():
+            raise ValueError(f"no such cloud: {cloud}")
+        eo_path = self.eo_path.get().strip()
+        if not eo_path:
+            raise ValueError("colorizing needs an EO csv (the LP360 "
+                             "eo_Photos export, or pyLynceus's "
+                             "adjusted_eo.csv)")
+        if not Path(eo_path).is_file():
+            raise ValueError(f"no such EO csv: {eo_path}")
+        images = self.images_dir.get().strip()
+        if not images:
+            raise ValueError("colorizing needs the imagery folder")
+        if not Path(images).is_dir():
+            raise ValueError(f"no such imagery folder: {images}")
+        cal = self.cal_path.get().strip() or None
+        if cal and not Path(cal).is_file():
+            raise ValueError(f"no such calibration file: {cal}")
+        out = _require_new_file(self.out_path.get(), "the coloured cloud")
+        if Path(out).resolve() == Path(cloud).resolve():
+            raise ValueError("the coloured cloud must be a NEW file")
+        _refuse_existing(out, "the coloured cloud")
+        quarter_turns = _int(self.quarter_turns.get(), "Quarter turns")
+        occlusion_tol = _float(self.occlusion_tol.get(), "Occlusion tol")
+        min_coverage = _float(self.min_coverage.get(), "Min coverage %")
+
+        def work(runner):
+            from pyargus.imagery import job as job_mod
+
+            def progress(done, total, name):
+                if total and (done == 1 or done == total or
+                              done % max(1, total // 20) == 0):
+                    runner.log(f"  ... {done} of {total} images")
+
+            stats = job_mod.colorize_cloud(
+                cloud, eo_path, images, out, cal=cal,
+                quarter_turns=quarter_turns, occlusion_tol=occlusion_tol,
+                min_coverage=min_coverage,
+                coverage_label="the Min coverage % field",
+                log=runner.log, progress=progress,
+                should_stop=lambda: cancelled_before(runner, "writing"))
+            if Path(out).is_file():
+                runner.products.append(("classified", Path(out)))
+            return stats
 
         return work
 
@@ -903,7 +1025,7 @@ class Application:
         self.notebook.pack(fill="x", pady=(8, 0))
         self.stages = []
         for stage_class in (QaStage, ClassifyStage, DtmStage, ContourStage,
-                            AlignStage, AboveStage):
+                            AlignStage, AboveStage, ColorizeStage):
             tab = ttk.Frame(self.notebook, padding=6)
             self.notebook.add(tab, text=stage_class.title)
             self.stages.append(stage_class(tab, self))
