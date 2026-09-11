@@ -18,10 +18,19 @@ def test_every_save_dialog_has_formats_and_extension(application, monkeypatch):
         browse(application.stages[index],row)
         assert calls[-1]['filetypes'] == expected
         assert calls[-1]['defaultextension'] == expected[0][1][1:]
-    stage = application.stages[-1]
+    stage = _stage_of(application, gui.AboveStage)
     stage.mode.set('Train model')
     browse(stage,3)
     assert calls[-1]['filetypes'] == gui.MODEL_TYPES
     stage.mode.set('Apply model')
     browse(stage,3)
     assert calls[-1]['filetypes'] == gui.CLOUD_TYPES
+
+
+def _stage_of(application, stage_class):
+    """Pick a stage BY TYPE. Positional lookup breaks the moment a
+    stage is added, which is how adding Colorize broke these."""
+    for stage in application.stages:
+        if isinstance(stage, stage_class):
+            return stage
+    raise AssertionError(f'no {stage_class.__name__} registered')

@@ -307,3 +307,155 @@ def test_gui_align_solves_with_the_cli_defaults():
         ["align", "cloud.las", "--sbet", "traj.out"])
     assert gui_module.ALIGN_CELL == args.cell
     assert gui_module.ALIGN_MIN_POINTS == args.min_points
+
+
+# --- the Colorize stage ----------------------------------------------
+
+def _colorize_scene(tmp_path):
+    """A checkerboard world, one synthetic camera, and a pf6 cloud --
+    the same fixture shape the CLI colorize test uses."""
+    import json
+
+    import laspy
+    import numpy as np
+    from PIL import Image
+
+    from tests.test_colorize import checker, render_nadir_image, simple_camera
+
+    cam = simple_camera(width=600, height=400)
+    origin = np.array([50.0, 80.0, 100.0])
+    imgdir = tmp_path / "imagery"
+    imgdir.mkdir()
+    Image.fromarray(render_nadir_image(cam, origin, checker)).save(
+        imgdir / "0001.png")
+    (imgdir / "0001.png.cal").write_text(json.dumps([{
+        "CalibratedFocalLength": cam.focal_mm / cam.pixel_mm,
+        "ImageWidth": cam.width_px, "ImageHeight": cam.height_px}]))
+
+    eo = tmp_path / "eo.csv"
+    eo.write_text(
+        "Timestamp, Filename, Origin, , , Direction, , , Up, , \n"
+        f"100.0,0001.png,50.0,80.0,100.0,0.0,0.0,-1.0,0.0,1.0,0.0\n")
+
+    gx, gy = np.meshgrid(np.arange(35.0, 76.0, 10.0),
+                         np.arange(65.0, 96.0, 10.0))
+    xyz = np.column_stack([gx.ravel(), gy.ravel(), np.zeros(gx.size)])
+    header = laspy.LasHeader(point_format=6, version="1.4")
+    header.scales = (0.001, 0.001, 0.001)
+    data = laspy.LasData(header)
+    data.x, data.y, data.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    cloud = tmp_path / "cloud.las"
+    data.write(str(cloud))
+    return cloud, eo, imgdir, xyz
+
+
+def _colorize_stage(application):
+    for stage in application.stages:
+        if type(stage).__name__ == "ColorizeStage":
+            return stage
+    raise AssertionError("no ColorizeStage registered")
+
+
+def test_colorize_defaults_come_from_the_cli(application):
+    """The Phase-7 panel found the GUI's alignment settings had drifted
+    from the CLI's. These are READ from the parser, so a difference can
+    only ever be deliberate."""
+    from pyargus.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["colorize", "c.las", "--eo", "e.csv", "--images", "i",
+         "--out", "o.las"])
+    stage = _colorize_stage(application)
+    assert int(stage.quarter_turns.get()) == args.quarter_turns
+    assert float(stage.occlusion_tol.get()) == args.occlusion_tol
+    assert float(stage.min_coverage.get()) == args.min_coverage
+
+
+def test_colorize_names_each_missing_input(application, tmp_path):
+    stage = _colorize_stage(application)
+    cloud, eo, imgdir, _ = _colorize_scene(tmp_path)
+    application.cloud_path.set(str(cloud))
+    stage.out_path.set(str(tmp_path / "rgb.las"))
+
+    with pytest.raises(ValueError, match="EO csv"):
+        stage.prepare()
+    stage.eo_path.set(str(tmp_path / "nope.csv"))
+    with pytest.raises(ValueError, match="no such EO csv"):
+        stage.prepare()
+    stage.eo_path.set(str(eo))
+    with pytest.raises(ValueError, match="imagery folder"):
+        stage.prepare()
+    stage.images_dir.set(str(tmp_path / "nowhere"))
+    with pytest.raises(ValueError, match="no such imagery folder"):
+        stage.prepare()
+    stage.images_dir.set(str(imgdir))
+    stage.quarter_turns.set("sideways")
+    with pytest.raises(ValueError, match="Quarter turns"):
+        stage.prepare()
+    stage.quarter_turns.set("0")
+    assert callable(stage.prepare())
+
+
+def test_colorize_refuses_writing_over_its_input(application, tmp_path):
+    stage = _colorize_stage(application)
+    cloud, eo, imgdir, _ = _colorize_scene(tmp_path)
+    application.cloud_path.set(str(cloud))
+    stage.eo_path.set(str(eo))
+    stage.images_dir.set(str(imgdir))
+    stage.out_path.set(str(cloud))
+    with pytest.raises(ValueError, match="NEW file"):
+        stage.prepare()
+    existing = tmp_path / "taken.las"
+    existing.write_text("")
+    stage.out_path.set(str(existing))
+    with pytest.raises(ValueError, match="already exists"):
+        stage.prepare()
+
+
+def test_colorize_work_paints_the_cloud_and_feeds_downstream(application,
+                                                             tmp_path):
+    import laspy
+    import numpy as np
+
+    from tests.test_colorize import checker
+
+    stage = _colorize_stage(application)
+    cloud, eo, imgdir, xyz = _colorize_scene(tmp_path)
+    out = tmp_path / "rgb.las"
+    application.cloud_path.set(str(cloud))
+    stage.eo_path.set(str(eo))
+    stage.images_dir.set(str(imgdir))
+    stage.out_path.set(str(out))
+    stage.quarter_turns.set("0")
+
+    work = stage.prepare()
+    runner = _FakeRunner()
+    work(runner)
+
+    assert out.is_file()
+    result = laspy.read(str(out))
+    assert result.header.point_format.id == 7        # pf6 carries no RGB
+    want = checker(xyz[:, 0], xyz[:, 1]).astype(np.uint16) << 8
+    got = np.column_stack([result.red, result.green, result.blue])
+    assert np.array_equal(got, want)
+    assert any("colored:" in line for line in runner.logged)
+    # the coloured cloud is offered to the stages downstream
+    assert ("classified", out) in runner.products
+
+
+def test_colorize_writes_nothing_after_stop(application, tmp_path):
+    stage = _colorize_stage(application)
+    cloud, eo, imgdir, _ = _colorize_scene(tmp_path)
+    out = tmp_path / "rgb.las"
+    application.cloud_path.set(str(cloud))
+    stage.eo_path.set(str(eo))
+    stage.images_dir.set(str(imgdir))
+    stage.out_path.set(str(out))
+    stage.quarter_turns.set("0")
+
+    work = stage.prepare()
+    runner = _FakeRunner()
+    runner.cancelled = lambda: True          # Stop pressed mid-run
+    work(runner)
+    assert not out.exists()
+    assert runner.products == []

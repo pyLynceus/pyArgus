@@ -51,7 +51,7 @@ The commands:
     pyargus contours classified.las --out contours.dxf --interval 1 \
       --breaklines creek.geojson
     pyargus colorize cloud.las --eo eo_Photos.csv --images Flight_dir \
-      --out rgb.las
+      --out rgb.las      # or the Colorize stage in `pyargus gui`
     pyargus info cloud.las
     pyargus copc cloud.las --out cloud.copc.laz
 

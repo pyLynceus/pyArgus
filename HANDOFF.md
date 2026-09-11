@@ -493,6 +493,34 @@ whole-file path. A streamed pass returns arrays identical to a whole
 read on the real 15.28M-point delivery -- that equality is what
 licenses the rest, and it is pinned in the harness.
 
+## The Colorize stage, and the shared job
+
+`pyargus.imagery.job.colorize_cloud` is the whole colorize sequence --
+resolve a camera per role tag, gate the datum, colorize, judge
+coverage, stream the RGB out -- and BOTH the CLI and the desktop
+Colorize stage are thin callers of it. That is deliberate: the
+Phase-7 panel found the GUI's alignment defaults had quietly drifted
+from the CLI's with nothing to notice. The stage's numeric defaults
+are now READ from `cli.build_parser()` at construction
+(`gui._cli_defaults`), and a test pins them, so a difference can only
+be on purpose.
+
+Every refusal in the job raises ValueError with the reason; the CLI
+turns those into SystemExit and the GUI shows them in its log.
+Neither front end invents its own wording, except that each names its
+own coverage knob through `coverage_label`.
+
+The Align stage now streams its `--write` copy as well, so the
+desktop application is no longer capped at clouds that fit in memory
+twice.
+
+Two test lessons from adding the stage: `tests/test_desktop_above.py`
+and `tests/test_dialog_types.py` selected stages POSITIONALLY
+(`stages[-1]`), which broke the moment a stage was appended -- they
+pick by type now; and a second `_FakeRunner` defined at the bottom of
+`test_gui.py` silently shadowed the real one. Reuse the fixture that
+is already there.
+
 ## Next step, with reasoning
 
 **The roadmap is complete.** What remains open, by value: (1) THE
