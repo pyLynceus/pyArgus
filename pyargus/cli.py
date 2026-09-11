@@ -81,26 +81,6 @@ def _cmd_density(args):
     return 0
 
 
-def _cmd_classify_ground_tiled(args):
-    from pathlib import Path
-
-    from pyargus.classify import job as ground_job
-
-    dst = Path(args.out)
-    if dst.exists() and not args.force:
-        raise SystemExit(f"{dst} exists; pass --force to replace it")
-    try:
-        result = ground_job.classify_ground_tiled(
-            args.path, dst, cell=args.cell, slope=args.slope,
-            window=args.window, threshold=args.threshold,
-            scalar=args.scalar, low_cut=args.low_cut,
-            tile_size=args.tile_size, halo=args.halo,
-            last_returns=not args.any_return)
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from None
-    return 0
-
-
 def _cmd_qa_report(args):
     from pathlib import Path
 
@@ -162,48 +142,32 @@ def _cmd_qa_report(args):
 def _cmd_classify_ground(args):
     from pathlib import Path
 
-    import laspy
+    from pyargus.classify import job as ground_job
 
-    from pyargus.classify import ground
-
+    # Both paths are thin callers of classify.job, which holds the one
+    # lattice, candidate policy and labeling rule they share.
+    if not args.tiled and (args.tile_size is not None
+                           or args.halo is not None):
+        raise SystemExit("--tile-size and --halo apply only with --tiled")
     src, dst = Path(args.path), Path(args.out)
     if src.resolve() == dst.resolve():
         raise SystemExit("refusing to overwrite the input cloud; --out must "
                          "be a new file")
     if dst.exists() and not args.force:
         raise SystemExit(f"{dst} exists; pass --force to replace it")
-
-    with laspy.open(str(src)) as reader:
-        las = reader.read()
-    x = np.asarray(las.x)
-    y = np.asarray(las.y)
-    z = np.asarray(las.z)
-
-    # Only returns that can see the ground are candidates: last returns
-    # when the file carries return numbers, everything otherwise.
+    common = dict(cell=args.cell, slope=args.slope, window=args.window,
+                  threshold=args.threshold, scalar=args.scalar,
+                  low_cut=args.low_cut, any_return=args.any_return,
+                  rescan=args.rescan)
     try:
-        eligible = (np.asarray(las.return_number)
-                    == np.asarray(las.number_of_returns))
-    except AttributeError:
-        eligible = np.ones(x.size, dtype=bool)
-
-    result = ground.smrf(
-        x[eligible], y[eligible], z[eligible], cell=args.cell,
-        slope=args.slope, window=args.window, threshold=args.threshold,
-        scalar=args.scalar, low_cut=args.low_cut)
-
-    classification = np.ones(x.size, dtype=np.uint8)  # 1: processed, unclassified
-    idx = np.flatnonzero(eligible)
-    classification[idx[result.ground]] = 2
-    las.classification = classification
-    las.write(str(dst))
-
-    n_ground = int(result.ground.sum())
-    print(f"points:  {x.size:,} ({int(eligible.sum()):,} last-return candidates)")
-    print(f"ground:  {n_ground:,} ({100.0 * n_ground / x.size:.1f}% of cloud)")
-    print(f"cells:   {int(result.object_cells.sum()):,} object, "
-          f"{int(result.low_cells.sum()):,} low-outlier")
-    print(f"wrote:   {dst}")
+        if args.tiled:
+            ground_job.classify_ground_tiled(
+                src, dst, tile_size=args.tile_size, halo=args.halo,
+                **common)
+        else:
+            ground_job.classify_ground_whole(src, dst, **common)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     return 0
 
 
@@ -756,27 +720,32 @@ def build_parser():
     p_cls.add_argument("--scalar", type=float, default=1.25,
                        help="threshold growth per unit of DEM slope")
     p_cls.add_argument("--tiled", action="store_true",
-                       help="build the ground surface tile by tile, in "
-                            "bounded memory, for a cloud too large to "
-                            "hold; the answer matches the whole-cloud "
-                            "run where the halo is wide enough")
+                       help="build the ground surface tile by tile, "
+                            "holding one tile's halo box of points at a "
+                            "time instead of the whole cloud; labels "
+                            "exactly as the whole-cloud command does "
+                            "wherever the halo is wide enough")
     p_cls.add_argument("--tile-size", type=float, default=None,
-                       help="core tile width, map units (default: six "
-                            "halos)")
+                       help="with --tiled: core tile width, map units "
+                            "(default: six halos). Smaller holds fewer "
+                            "points at once but re-reads more overlap")
     p_cls.add_argument("--halo", type=float, default=None,
-                       help="tile overlap, map units (default: SMRF's "
-                            "own reach, R(R+1) cells -- shrinking it is "
-                            "a risk decision, and under 2*window it "
-                            "refuses)")
+                       help="with --tiled: tile overlap, map units "
+                            "(default: SMRF's own reach, R(R+1) cells -- "
+                            "shrinking it is a risk decision, and under "
+                            "2*window it refuses)")
     p_cls.add_argument("--any-return", action="store_true",
-                       help="build the surface from every return, not "
-                            "only those that can see the ground")
+                       help="let every return build the surface and be "
+                            "labeled ground, not only last returns")
+    p_cls.add_argument("--rescan", action="store_true",
+                       help="take the grid extent from the points, not "
+                            "the LAS header -- for a header a crop or "
+                            "merge left stale (with --tiled, one extra "
+                            "pass)")
     p_cls.add_argument("--low-cut", type=float, default=None,
                        help="discard low-outlier cells deeper than this below "
                             "the opened inverted surface (map units)")
-    p_cls.set_defaults(func=lambda args: (
-        _cmd_classify_ground_tiled(args) if args.tiled
-        else _cmd_classify_ground(args)))
+    p_cls.set_defaults(func=_cmd_classify_ground)
 
     p_dtm = sub.add_parser("dtm", help="mean-ground DTM as ESRI ASCII")
     p_dtm.add_argument("path")

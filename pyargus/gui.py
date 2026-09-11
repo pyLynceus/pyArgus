@@ -472,34 +472,21 @@ class ClassifyStage:
         threshold = _float(self.threshold.get(), "Threshold")
 
         def work(runner):
-            import laspy
-
-            from pyargus.classify import ground
+            # the same job as `pyargus classify-ground`: one lattice, one
+            # candidate policy, one labeling rule, so the two cannot drift
+            from pyargus.classify import job as ground_job
 
             runner.log(f"reading {cloud}")
-            las = laspy.read(cloud)
-            x, y, z = (np.asarray(las.x), np.asarray(las.y),
-                       np.asarray(las.z))
-            try:
-                eligible = (np.asarray(las.return_number)
-                            == np.asarray(las.number_of_returns))
-            except AttributeError:
-                eligible = np.ones(x.size, dtype=bool)
-            result = ground.smrf(x[eligible], y[eligible], z[eligible],
-                                 cell=cell, slope=slope, window=window,
-                                 threshold=threshold)
-            if cancelled_before(runner, "writing"):
+            result = ground_job.classify_ground_whole(
+                cloud, out, cell=cell, slope=slope, window=window,
+                threshold=threshold, log=runner.log, keep_points=True,
+                should_stop=lambda: cancelled_before(runner, "writing"))
+            if result.get("cancelled"):
                 return
-            classification = np.ones(x.size, dtype=np.uint8)
-            classification[np.flatnonzero(eligible)[result.ground]] = 2
-            las.classification = classification
-            las.write(out)
-            n = int(result.ground.sum())
-            runner.log(f"ground: {n:,} ({100.0 * n / x.size:.1f}% of cloud)")
-            runner.log(f"wrote: {out}")
             runner.products.append(("classified", Path(out)))
             from pyargus import stage_preview
-            stage_preview.publish(runner, stage_preview.classification, x, y, z, classification)
+            stage_preview.publish(runner, stage_preview.classification,
+                                  *result["points"])
 
         return work
 
