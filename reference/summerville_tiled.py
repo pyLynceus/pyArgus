@@ -1,14 +1,28 @@
-"""Tiled ground classification, checked against the whole-cloud run.
+"""Tiled ground classification, checked against the plain command.
 
-The claim tiling makes is EQUALITY, and Summerville is where it can be
-proved on real data: 15.28M points still fit in memory, so the
-whole-cloud answer exists to compare against. A tiled run that merely
-looks plausible would be worthless on the block this exists for -- SH
-151's 917M points across 22 strips, where nobody can check by eye.
+The claim tiling makes is EQUALITY with ``pyargus classify-ground``
+run without ``--tiled``, and this measures exactly that: both commands'
+own code paths (classify.job's two drivers) on the same file, their
+written classifications compared row by row.
 
-Then the scale half, on one real SH 151 strip (41.4M points, 10,569 ft
-of corridor): the surface is an 11 MB raster whatever the point count,
-so the job is bounded by the raster rather than the cloud.
+The first version of this script answered a different question. It
+compared the tiled run with a whole-cloud mask it built for itself,
+under a labeling rule the plain command does not use (it let non-last
+returns be ground), so its "0 mismatches" said nothing about the
+command. And its tiles' halo boxes covered the whole project, so it
+exercised no seam either: a tile whose box spans the project IS the
+whole-cloud run.
+
+So the seams here are made real on purpose. At window 60 the halo is
+1,260 ft, which swallows most of Summerville's 1,841 x 1,687 ft, so
+this runs at window 30 (halo 330 ft, SMRF's own reach) with 600 ft
+cores: all 12 boxes stop short of the project, the largest at about
+half of it. The script refuses to report anything unless that holds.
+``sh151_tiled_strip.py`` runs the same equality at the survey-feet
+defaults on a real 41.4M-point strip.
+
+Then the arithmetic of the DEFAULT plan on that strip, which is where
+tiling's honest limits show.
 
 Z: stays read-only; outputs go to a local temp directory.
 
@@ -22,94 +36,99 @@ from pathlib import Path
 
 import numpy as np
 
-from pyargus.classify import ground as ground_mod
 from pyargus.classify import job as ground_job
 from pyargus.classify import tiles as tiles_mod
 from pyargus.formats import las as las_mod
 
 ROOT = Path("Z:/Users/BJordan/Summerville_SS")
 CLOUD = ROOT / "Summerville_SS.las"
-CELL, SLOPE, WINDOW = 3.0, 0.15, 60.0
-TILE = 600.0        # small on purpose: a real seam grid, not one tile
-THRESHOLD, SCALAR = 1.5, 1.25
+PARAMS = dict(cell=3.0, slope=0.15, window=30.0, threshold=1.5, scalar=1.25)
+TILE = 600.0
+STRIP_GLOB = "Z:/Users/BJordan/SH 151/LIDAR/**/*.las"
+
+
+def classes(path):
+    return las_mod.read_points(path, fields=("classification",))[
+        "classification"]
 
 
 def main():
     results = {}
-    halo = tiles_mod.required_halo(CELL, WINDOW)
     info = las_mod.cloud_info(CLOUD)
     print(f"cloud:   {info['point_count']:,} points, "
           f"{info['maxs'][0] - info['mins'][0]:,.0f} x "
           f"{info['maxs'][1] - info['mins'][1]:,.0f} ft")
-    print(f"halo:    {halo:,.0f} ft (SMRF's own reach, R(R+1) cells at "
-          f"cell {CELL:g} / window {WINDOW:g})")
-    results["halo"] = halo
 
-    # --- the whole-cloud answer, on the returns that see the ground --
-    points = las_mod.read_points(
-        CLOUD, fields=("x", "y", "z", "return_number", "number_of_returns"))
-    last = points["return_number"] == points["number_of_returns"]
-    x, y, z = points["x"], points["y"], points["z"]
-    t0 = time.perf_counter()
-    whole = ground_mod.smrf(x[last], y[last], z[last], cell=CELL,
-                            slope=SLOPE, window=WINDOW,
-                            threshold=THRESHOLD, scalar=SCALAR)
-    whole_s = time.perf_counter() - t0
-    # every point judged against that surface, not just the last returns
-    whole_mask = ground_mod.classify_against(
-        ground_mod.GroundSurface(
-            dem=whole.dem, dem_slope=whole.dem_slope,
-            object_cells=whole.object_cells, low_cells=whole.low_cells,
-            x_edges=whole.x_edges, y_edges=whole.y_edges),
-        x, y, z, threshold=THRESHOLD, scalar=SCALAR)
-    print(f"whole:   {whole_mask.sum():,} ground of {x.size:,} "
-          f"({100 * whole_mask.mean():.2f}%), {whole_s:.0f} s")
-    results["whole_ground_fraction"] = float(whole_mask.mean())
-
-    # --- the same thing, tiled -------------------------------------
     with tempfile.TemporaryDirectory() as temp:
-        out = Path(temp) / "tiled.las"
+        whole_out, tiled_out = Path(temp) / "whole.las", Path(temp) / "tiled.las"
         t0 = time.perf_counter()
-        # FORCE several tiles. Summerville is 1,841 x 1,687 ft and the
-        # default core is six halos (7,560 ft), so the default would
-        # run as ONE tile and prove nothing about seams -- the first
-        # version of this script did exactly that and reported a
-        # meaningless 0.
-        stats = ground_job.classify_ground_tiled(
-            CLOUD, out, cell=CELL, slope=SLOPE, window=WINDOW,
-            threshold=THRESHOLD, scalar=SCALAR, halo=halo,
-            tile_size=TILE)
+        whole = ground_job.classify_ground_whole(CLOUD, whole_out, **PARAMS)
+        whole_s = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        tiled = ground_job.classify_ground_tiled(
+            CLOUD, tiled_out, tile_size=TILE, **PARAMS)
         tiled_s = time.perf_counter() - t0
-        tiled_mask = las_mod.read_points(
-            out, fields=("classification",))["classification"] == 2
-    mismatches = int((tiled_mask != whole_mask).sum())
-    print(f"tiled:   {stats['tiles']} tiles of {TILE:g} ft, "
-          f"{tiled_s:.0f} s, {tiled_mask.sum():,} ground")
-    if stats["tiles"] < 4:
-        raise AssertionError("this acceptance must exercise seams; "
-                             f"only {stats['tiles']} tile(s) ran")
-    print(f"EQUALITY: {mismatches:,} of {x.size:,} points differ from the "
-          f"whole-cloud run")
-    results["tiles"] = stats["tiles"]
-    results["mismatches"] = mismatches
-    results["tiled_ground_fraction"] = float(tiled_mask.mean())
+        if (tiled["tiles"] < 4 or tiled["seamed"] < tiled["tiles"]
+                or tiled["largest_box"] > 0.6):
+            raise AssertionError(
+                f"this acceptance must exercise seams: {tiled['seamed']} of "
+                f"{tiled['tiles']} tiles have one, largest box "
+                f"{100 * tiled['largest_box']:.0f}% of the project")
+        a, b = classes(whole_out), classes(tiled_out)
+        returns = las_mod.read_points(
+            CLOUD, fields=("return_number", "number_of_returns"))
+    nonlast = returns["return_number"] != returns["number_of_returns"]
+    mismatches = int(np.count_nonzero(a != b))
+    print(f"whole:   {whole['ground']:,} ground of {whole['total']:,} "
+          f"({100 * whole['ground_fraction']:.2f}%), {whole_s:.0f} s")
+    print(f"tiled:   {tiled['tiles']} tiles of {TILE:g} ft, halo "
+          f"{tiled['halo']:g}, every box short of the project (largest "
+          f"{100 * tiled['largest_box']:.0f}%), {tiled_s:.0f} s")
+    print(f"         at most {tiled['max_tile_points']:,} points held in one "
+          f"tile; {tiled['points_read']:,} read across all "
+          f"({tiled['points_read'] / whole['candidates']:.1f}x the "
+          f"candidates)")
+    print(f"EQUALITY: {mismatches:,} of {a.size:,} classifications differ "
+          f"from the plain command")
+    print(f"policy:  non-last returns labeled ground: whole "
+          f"{int(np.count_nonzero((a == 2) & nonlast))}, tiled "
+          f"{int(np.count_nonzero((b == 2) & nonlast))} "
+          f"(of {int(nonlast.sum()):,} non-last returns)")
+    results.update(
+        mismatches=mismatches, tiles=tiled["tiles"], seamed=tiled["seamed"],
+        halo=tiled["halo"], largest_box=round(tiled["largest_box"], 4),
+        area_read=round(tiled["area_read"], 3),
+        whole_ground_fraction=whole["ground_fraction"],
+        tiled_ground_fraction=tiled["ground_fraction"],
+        max_tile_points=tiled["max_tile_points"],
+        nonlast_ground=int(np.count_nonzero((a == 2) & nonlast)
+                           + np.count_nonzero((b == 2) & nonlast)))
 
-    # --- scale: one real SH 151 strip ------------------------------
-    strips = sorted(glob.glob("Z:/Users/BJordan/SH 151/LIDAR/**/*.las",
-                              recursive=True))
+    # --- the DEFAULT plan on one real SH 151 strip ------------------
+    strips = sorted(glob.glob(STRIP_GLOB, recursive=True))
     if strips:
         strip = Path(strips[0])
         si = las_mod.cloud_info(strip)
-        xe, ye = tiles_mod.global_edges(si["mins"][:2], si["maxs"][:2], CELL)
+        halo, tile = tiles_mod.resolve_plan(3.0, 60.0)
+        xe, ye = tiles_mod.global_edges(si["mins"][:2], si["maxs"][:2], 3.0)
         cells = (xe.size - 1) * (ye.size - 1)
-        plan = tiles_mod.plan_tiles(xe, ye, CELL, halo, 6.0 * halo)
+        cost = tiles_mod.plan_summary(
+            tiles_mod.plan_tiles(xe, ye, 3.0, halo, tile), xe, ye)
+        # a DEM and its slope in float64, two boolean masks
+        surface_mb = cells * (8 + 8 + 1 + 1) / 1e6
         print(f"\nscale:   {strip.name}: {si['point_count']:,} points, "
-              f"{si['maxs'][0] - si['mins'][0]:,.0f} ft of corridor")
-        print(f"         {cells / 1e6:.1f}M cells = {cells * 8 / 1e6:.0f} MB "
-              f"per raster, {len(plan)} tiles -- the job is bounded by "
-              f"the RASTER, not the {si['point_count'] / 1e6:.0f}M points")
-        results["strip_cells"] = int(cells)
-        results["strip_tiles"] = len(plan)
+              f"{si['maxs'][0] - si['mins'][0]:,.0f} x "
+              f"{si['maxs'][1] - si['mins'][1]:,.0f} ft")
+        print(f"         the surface: {cells / 1e6:.2f}M cells, "
+              f"{surface_mb:.0f} MB -- small whatever the point count")
+        print(f"         the DEFAULT plan (cell 3 / window 60: halo "
+              f"{halo:,.0f}, cores {tile:,.0f}): {cost['tiles']} tiles, the "
+              f"largest box {100 * cost['largest_box']:.0f}% of the strip "
+              f"(~{cost['largest_box'] * si['point_count'] / 1e6:.0f}M "
+              f"points at even density) -- what one tile holds is set by "
+              f"the box, and at these defaults the box is most of the strip")
+        results.update(strip_cells=int(cells), strip_default_tiles=cost["tiles"],
+                       strip_default_largest_box=round(cost["largest_box"], 4))
     return results
 
 

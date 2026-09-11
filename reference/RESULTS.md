@@ -648,8 +648,8 @@ until a panel went looking.
   needed.
 * `read_points` still exists and is still the right call for anything
   needing global state -- the TIN, the alignment solve. Those remain
-  whole-cloud operations; SMRF ground classification would need
-  tiling with a halo, which is not done.
+  whole-cloud operations. SMRF ground classification now tiles with a
+  halo; see the next section.
 * No COPC file exists anywhere on the reference drive yet; the
   vendors deliver LAS and LAZ. The COPC path is tested end to end
   against files this suite writes itself.
@@ -664,28 +664,50 @@ until a panel went looking.
 
 ## Tiled ground classification
 
-Measured 2026-09-11 by `python -m reference.summerville_tiled`
-(`pyargus classify-ground --tiled`). SMRF was the last consumer in the
-suite that wanted a whole cloud at once, which put SH 151's 917M
-points across 22 strips out of reach however well the reads streamed.
+Measured 2026-09-11 by `python -m reference.summerville_tiled` and
+`python -m reference.sh151_tiled_strip` (`pyargus classify-ground
+--tiled`). SMRF was the last consumer in the suite that wanted a whole
+cloud at once, which put SH 151's 917M points across 22 strips out of
+reach however well the reads streamed.
 
 The way past it is the shape of the algorithm. Its expensive half
-produces a RASTER -- a DEM and its slope -- and a raster is small
-whatever the point count: **11 MB for a 10,569 ft SH 151 strip of
-41.4M points**. Its cheap half judges each point against that raster
-with one bilinear sample, which streams perfectly. So the surface is
-built tile by tile, assembled once, and applied in a streaming pass.
+produces a RASTER -- a DEM, its slope and two masks -- and a raster is
+small whatever the point count: **24 MB for a 10,569 ft SH 151 strip
+of 41.4M points** (1.32M cells). Its cheap half judges each point
+against that raster with one bilinear sample, which streams perfectly.
+So the surface is built tile by tile, assembled once, and applied in a
+streaming pass.
 
-* **EQUALITY on real data, with real seams.** On Summerville
-  (15.28M points, where the whole-cloud answer still exists to compare
-  against), a run forced into **12 tiles of 600 ft** classifies
-  **0 of 15,284,332 points differently** from the whole-cloud run.
-  4,518,517 ground either way.
+The claim is EQUALITY with the plain command, so that is what is
+measured: `classify-ground` with and without `--tiled` -- the two
+drivers in `classify/job.py`, which share one lattice, one candidate
+policy and one labeling rule -- on the same file, their written
+classifications compared row by row. Seams have to be real to mean
+anything, because a tile whose halo box spans the project IS the
+whole-cloud run; so both acceptances refuse to report unless every
+tile's box stops short of the project.
 
-  The first version of this acceptance used the default tile size,
-  which is six halos -- larger than Summerville -- so it ran as ONE
-  tile and reported a meaningless 0. It now forces a seam grid and
-  REFUSES to pass if fewer than four tiles ran.
+* **Summerville, in the gate** (cell 3, window 30: halo 330 ft, SMRF's
+  own reach; 600 ft cores). 12 tiles, every one with a real seam, the
+  largest box 51% of the project area. **0 of 15,284,332
+  classifications differ** from the plain command; 4,519,046 ground
+  either way, and 0 of the 2,504,042 non-last returns labeled ground
+  by either. 13 s whole, 22 s tiled. Window 30 rather than 60 because
+  at 60 the halo is 1,260 ft and swallows most of a 1,841 ft project:
+  no tile there can have a seam.
+* **An SH 151 strip, at the survey-feet defaults, by hand** (cell 3,
+  window 60: the DEFAULT halo of 1,260 ft; 1,500 ft cores).
+  `0003_F1_328_B04_LCP2_s.las`, 41,366,226 points over 10,569 x 1,121
+  ft. 8 tiles, every one with a real seam, the largest box 38% of the
+  strip. **0 of 41,366,226 classifications differ**; 17,612,866 ground
+  either way. 51 s whole, 109 s tiled (9 passes, no index). Not in the
+  gate: it reads client data and holds the whole strip to compare.
+
+This section was rewritten after its adversarial review (below): the
+first version's "0 of 15,284,332" compared the tiled run with a mask it
+built for itself under a rule the plain command does not use, and its
+tiles' boxes covered the whole project, so it measured neither the
+command nor a seam.
 
 ### The halo is the whole problem
 
@@ -715,18 +737,74 @@ decoration.
 
 ### Honest gaps
 
-* **Without a COPC index every tile is another pass over the file.**
-  The job says so rather than letting an operator discover it: 12
-  tiles meant 12 passes on Summerville (90 s against 9 s whole-cloud).
-  `pyargus copc` first turns that into roughly one read, which is what
-  the octree is for -- and the default tile size (six halos) keeps the
-  count low on real projects.
+* **What one tile holds is set by its halo box, not the raster.** The
+  box is the core grown by the halo on every side, and the halo is
+  fixed by SMRF's reach, so it can never be much smaller than 2 * halo
+  across: 2,520 ft at the survey-feet defaults. Measured: the largest
+  Summerville tile held 11,054,341 points (51% of the AREA, 86% of the
+  last returns -- density is not even), and the largest strip tile
+  8,610,889. At the DEFAULT tile size (six halos) the strip plans as 2
+  tiles, the larger box 83% of the strip, and Summerville as one tile
+  holding everything. Tiling bounds memory only when `--tile-size` is
+  set smaller, and then the boxes overlap more: the job logs the plan's
+  cost (how many times the boxes cover the project; the largest box)
+  before it runs, and the most points one tile held after.
+* **Without a COPC index every tile is a full pass over the file**,
+  plus one to write (plus one with `--rescan`); the job counts them.
+  An index removes the passes but not the overlap -- and a small COPC
+  box still decompresses the coarse octree levels, which span the
+  whole file (a 1% box cost 77% of a full read in review).
 * **A COPC copy REORDERS its points.** Row *i* of a COPC file is not
   row *i* of its source, so anything pairing them by index is wrong.
   This cost an afternoon here: a tiled-classification check read as
   4,330 mismatches until the orders were matched, at which point it
   was exact. `pyargus copc` now prints the warning.
-* The tiled path classifies against the finished surface, so it
-  matches the whole-cloud command exactly -- including that command's
-  own choice to build the surface from returns that can see the
-  ground while classifying every point.
+* **The grid comes from the LAS header** in both commands, so that
+  they share one lattice. A header short of its points (a crop, merge
+  or append that did not update it) now REFUSES in both, and
+  `--rescan` takes the extent from the points instead. It used to be
+  silent: the tiled grid simply did not reach the points past the
+  header, and they were judged against the surface's edge.
+
+### Tiled-ground adversarial review round (same day)
+
+A 150-agent panel (three lenses, two finders each, three refuters per
+finding) raised 48
+findings and confirmed 25 -- about ten distinct defects once the
+duplicates fold, four of them the same headline found independently
+six times. All fixed; each fix is pinned by a test that FAILS against
+the old code (checked in a separate checkout: 8 of the new tests fail
+there) or, where the old code had no such function, by a mutant the
+test kills (six mutants, six killed).
+
+* **The two commands labeled differently.** The plain command lets
+  only last returns be ground; the tiled driver labeled every point
+  within the threshold of the DEM, so every non-last return near the
+  ground diverged -- 9.5% to 19% of a multi-return cloud in review,
+  23,886 of about 200,000 in the new test. The equality test and the
+  Summerville script were both structurally blind: the test's cloud
+  had one return per pulse, and the script built its own comparison
+  mask under the tiled rule. Now ONE policy (`candidates`) and ONE
+  rule (`labels`) serve both drivers and the desktop Classify stage,
+  and `--any-return` -- which the plain command silently ignored -- is
+  honoured by both.
+* **The acceptance exercised no seam**: at halo 1,260 on a 1,841 ft
+  project, 9 of its 12 boxes WERE the whole project and the tiles read
+  11.1x its area -- which, not the missing index, was most of the "90 s
+  against 9 s". It now refuses unless every box stops short.
+* **A stale header silently misclassified** everything past it
+  (2.8% of a cloud in review). Refused now, with `--rescan`.
+* **The halo box was read inclusive on its upper edge**, folding a
+  point exactly on an interior edge -- routine for quantized survey
+  coordinates -- into the wrong cell. Latent at the default halo, but
+  the margin was zero. Windows are half-open now (`window_points`).
+* **The memory claim was false** ("bounded by the raster"), the
+  reader's non-COPC path peaked at twice a tile's points (now 4/3),
+  the pass count was one short, the COPC message claimed "one read",
+  and "11 MB" counted one of the four grids. All corrected above and
+  in the job's own messages.
+* **Test gaps**: no test ran the DEFAULT halo or tile size (a one-cell
+  default survived the suite), and every scene was square, so a
+  transposed lattice survived too. The new scene is a 2,400 x 600
+  multi-return corridor, run at the default halo.
+* `--tile-size` and `--halo` without `--tiled` now refuse by name.
