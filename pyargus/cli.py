@@ -81,6 +81,26 @@ def _cmd_density(args):
     return 0
 
 
+def _cmd_classify_ground_tiled(args):
+    from pathlib import Path
+
+    from pyargus.classify import job as ground_job
+
+    dst = Path(args.out)
+    if dst.exists() and not args.force:
+        raise SystemExit(f"{dst} exists; pass --force to replace it")
+    try:
+        result = ground_job.classify_ground_tiled(
+            args.path, dst, cell=args.cell, slope=args.slope,
+            window=args.window, threshold=args.threshold,
+            scalar=args.scalar, low_cut=args.low_cut,
+            tile_size=args.tile_size, halo=args.halo,
+            last_returns=not args.any_return)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    return 0
+
+
 def _cmd_qa_report(args):
     from pathlib import Path
 
@@ -622,6 +642,8 @@ def _cmd_copc(args):
              if result["extra_dims"] else ""))
     print(f"crs:     {result['crs'] or 'none declared'}")
     print(f"size:    {result['size_ratio']:.2f}x the source")
+    print("order:   REORDERED into the octree -- row i of this file is "
+          "not row i of the source, so do not pair them by index")
     print(f"wrote:   {dst}")
     return 0
 
@@ -733,10 +755,28 @@ def build_parser():
                        help="point-to-DEM elevation threshold, map units")
     p_cls.add_argument("--scalar", type=float, default=1.25,
                        help="threshold growth per unit of DEM slope")
+    p_cls.add_argument("--tiled", action="store_true",
+                       help="build the ground surface tile by tile, in "
+                            "bounded memory, for a cloud too large to "
+                            "hold; the answer matches the whole-cloud "
+                            "run where the halo is wide enough")
+    p_cls.add_argument("--tile-size", type=float, default=None,
+                       help="core tile width, map units (default: six "
+                            "halos)")
+    p_cls.add_argument("--halo", type=float, default=None,
+                       help="tile overlap, map units (default: SMRF's "
+                            "own reach, R(R+1) cells -- shrinking it is "
+                            "a risk decision, and under 2*window it "
+                            "refuses)")
+    p_cls.add_argument("--any-return", action="store_true",
+                       help="build the surface from every return, not "
+                            "only those that can see the ground")
     p_cls.add_argument("--low-cut", type=float, default=None,
                        help="discard low-outlier cells deeper than this below "
                             "the opened inverted surface (map units)")
-    p_cls.set_defaults(func=_cmd_classify_ground)
+    p_cls.set_defaults(func=lambda args: (
+        _cmd_classify_ground_tiled(args) if args.tiled
+        else _cmd_classify_ground(args)))
 
     p_dtm = sub.add_parser("dtm", help="mean-ground DTM as ESRI ASCII")
     p_dtm.add_argument("path")
