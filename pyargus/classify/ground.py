@@ -122,9 +122,9 @@ class GroundSurface:
 
     Splitting the two is what lets a cloud larger than memory be
     classified: the surface is a RASTER, small enough to hold for a
-    whole project (a 13,700 ft corridor at 3 ft cells is a few
-    megabytes), so it can be built tile by tile and then applied to
-    the points in one streaming pass.
+    whole project (a 10,569 ft SH 151 strip at 3 ft cells is about
+    24 MB for all four grids), so it can be built tile by tile and
+    then applied to the points in one streaming pass.
     """
     dem: np.ndarray
     dem_slope: np.ndarray
