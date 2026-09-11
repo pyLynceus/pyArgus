@@ -580,6 +580,54 @@ Two traps the recon measured, both now closed:
   50, 20 and 10 all returned 57% of a 120k-point tile). Pinned as
   monotonic rather than proportional.
 
+### Streaming adversarial review round (same day)
+
+A 179-agent panel (four lenses, three refuters per finding) confirmed
+eight defects in a layer that sits under every command in the suite.
+All fixed, each pinned by a test that fails against the old
+behaviour; the real-data numbers above were re-measured afterwards
+and did not move.
+
+* **A stale LAS header silently truncated the density.** The streamed
+  grid fixed its bins from the header while `density_grid` derives
+  them from the points, and `np.histogram2d` DISCARDS samples outside
+  explicit bins. On a file whose header no longer describes its own
+  points -- a clip or a reprojection that never rewrote min/max --
+  `pyargus density` printed a believable number computed from a
+  subset. Reproduced: 14,977 of 20,000 points dropped in silence.
+  Now every outside point is counted and REFUSED by name, with
+  `--rescan` offering a first pass that takes the extent from the
+  points. The equality test could not have caught this: its fixture
+  is written by laspy, which always writes a correct header.
+* **`stream_update` dropped every EVLR**, and LAS 1.4 permits the OGC
+  WKT there -- so `align --write` and `colorize --out` could hand
+  back a delivery with its georeferencing stripped and no error.
+* **A COPC source could not be streamed at all**: laspy refuses to
+  write a header still claiming an octree, so the files `pyargus
+  copc` produces aborted the rest of the suite with a raw
+  NotImplementedError and a 0-byte output. The output header now
+  drops the COPC VLRs, because a point-by-point copy is a plain LAZ.
+* **`stream_update(src, src)` destroyed the cloud** it was reading and
+  reported success. Refused.
+* **An oversized COPC bounding box returned ZERO points.** laspy casts
+  the request into the file's scaled integer system unchecked, so a
+  box merely larger than the cloud overflowed int32. Bounds are
+  clamped to the file's extent first, and a box that misses entirely
+  refuses rather than returning nothing.
+* **A failure partway through a write left a truncated cloud** at the
+  destination -- valid, openable, quietly missing its tail. The write
+  now goes to a temporary beside the target and is renamed into place
+  only after the last chunk.
+* A zero-point file accepted any field name (the per-record check
+  never ran), and ignored a requested point format. Both now resolve
+  from the header before the first chunk.
+* An update returning a length-1 array broadcast silently over a
+  whole chunk; lengths are checked.
+
+Twenty-nine further claims were killed by their refuters, including
+several about `find_pdal`'s version sorting and about RESULTS.md
+numbers being unreproducible.
+
 ### Honest gaps
 
 * **A COPC query's memory tracks the octree nodes it touches, not the
@@ -595,6 +643,10 @@ Two traps the recon measured, both now closed:
 * No COPC file exists anywhere on the reference drive yet; the
   vendors deliver LAS and LAZ. The COPC path is tested end to end
   against files this suite writes itself.
+* A COPC copy made by `stream_update` comes back a PLAIN LAZ: an
+  octree cannot survive a point-by-point rewrite, and claiming one it
+  no longer has would be worse. Re-run `pyargus copc` on the result
+  to rebuild the index.
 * pdal lives inside a QGIS install here, not on PATH. That is a
   dependency on software which could move or be uninstalled, which
   is why the probe reports what it found and the refusal names the
