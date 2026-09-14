@@ -251,6 +251,15 @@ def find_cal(image_path):
         return stem
     folder = image_path if image_path.is_dir() else image_path.parent
     if folder.is_dir():
-        for candidate in sorted(folder.rglob(f"*{CAL_SUFFIX}")):
-            return candidate
+        candidates = sorted(p for p in folder.iterdir()
+                            if p.is_file() and p.suffix.lower() == CAL_SUFFIX)
+        if len(candidates) > 1:
+            names = ", ".join(p.name for p in candidates)
+            raise ValueError(
+                f"no image-specific calibration for {image_path.name}; "
+                f"multiple .cal files beside it ({names}). Refusing to "
+                f"choose a camera calibration by filename order. Supply "
+                f"the image's own sidecar or an explicit --cal file.")
+        if candidates:
+            return candidates[0]
     return None
