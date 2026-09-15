@@ -61,6 +61,14 @@ def self_test():
         spec.max_points = 1
         report = project.qa(spec, Path(temp) / "large-qa")
         assert report["mode"] == "disk-backed" and report["points"] == 6
+        from pyargus.sections import extract_section, export_section
+        from pyargus.review import load_review, review_rows
+        section = extract_section(paths, [0., 0.], [2., 0.], 1., limit=10)
+        assert section.matched == 6 and len(section.points) == 6
+        export_section(section, Path(temp) / "section.csv")
+        job_path = next(Path(temp).glob("large-qa.job-*.json"))
+        review = load_review(job_path)
+        assert review_rows(review)[0]["after"] == "completed"
     window = tk.Tk()
     window.withdraw()
     app = Application(window)
@@ -84,6 +92,16 @@ def self_test():
     viewer.draw(); viewer.view(40,30)
     assert viewer.photo.width() > 0
     viewer.close()
+    from pyargus.review_gui import ReviewWorkspace
+    workspace = ReviewWorkspace(window)
+    workspace.window.withdraw()
+    workspace.record = review
+    workspace.refresh()
+    assert workspace.tree.get_children()
+    workspace.profile.set(section.points[:, [3, 2]],
+                          np.tile([58, 190, 255], (len(section.points), 1)), 5.)
+    assert workspace.profile.photo.width() > 0
+    workspace.close()
     window.update_idletasks()
     window.destroy()
     return 0
