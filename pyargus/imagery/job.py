@@ -138,7 +138,7 @@ def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
 
     Returns the stats dict from the colorizer plus ``pct_colored`` and
     ``point_format``. ``should_stop()`` is polled before the write, so
-    a cancelled run leaves nothing on disk.
+    a cancelled run writes no cloud, but retains its job record.
     """
     from pyargus.formats import eo as eo_mod
     from pyargus.formats import las as las_mod
@@ -149,74 +149,92 @@ def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
         raise ValueError("refusing to overwrite the input cloud; the "
                          "coloured cloud must be a new file")
 
-    eo = eo_mod.read_eo_csv(eo_path)
-    image_paths = colorize_mod.find_images(images)
-    if not image_paths:
-        raise ValueError(f"no images found under {images}")
-    calibration_provenance = []
-    cameras = resolve_cameras(eo, image_paths, cal=cal,
-                              quarter_turns=quarter_turns, log=log,
-                              provenance=calibration_provenance)
+    from pyargus.job_manifest import JobRecord, identity
+    settings = dict(cal=str(Path(cal).resolve()) if cal else None,
+                    images=str(Path(images).resolve()), quarter_turns=quarter_turns,
+                    neighbors=neighbors, occlusion_tol=occlusion_tol,
+                    min_coverage=min_coverage, memory_budget_mb=memory_budget_mb,
+                    coverage_label=coverage_label)
+    with JobRecord("colorize", out, settings) as record:
+        log(f"job record: {record.path}")
+        record.data["inputs"] = [identity(cloud), identity(eo_path, hash_content=True)]
+        record.save()
+        eo = eo_mod.read_eo_csv(eo_path)
+        image_paths = colorize_mod.find_images(images)
+        if not image_paths:
+            raise ValueError(f"no images found under {images}")
+        calibration_provenance = []
+        cameras = resolve_cameras(eo, image_paths, cal=cal,
+                                  quarter_turns=quarter_turns, log=log,
+                                  provenance=calibration_provenance)
 
-    points = las_mod.read_points(cloud, fields=("x", "y", "z"))
-    xyz = np.column_stack([points["x"], points["y"], points["z"]])
-    del points
-    agl = check_datum(eo, xyz)
-    log(f"eo:      {len(eo['filename'])} rows, flying height "
-        f"~{agl:.0f} above the cloud median")
+        record.data["calibration_provenance"] = calibration_provenance
+        record.data["matched_images"] = [identity(r["image"]) for r in calibration_provenance]
+        record.save()
 
-    # memory_budget_mb stays UNSET unless a caller asks: passing a
-    # number here would silently override colorize()'s own default,
-    # which is what the extraction did (256 -> 512) with nothing to
-    # notice
-    budget = ({} if memory_budget_mb is None
-              else {"memory_budget_mb": memory_budget_mb})
-    rgb, stats = colorize_mod.colorize(
-        xyz, eo, cameras, image_paths, neighbors=neighbors,
-        occlusion_tol=occlusion_tol, progress=progress, **budget)
-    del xyz
-    stats["calibration_provenance"] = calibration_provenance
-    pct = 100.0 * stats["n_colored"] / stats["n_points"]
-    stats["pct_colored"] = pct
-    log(f"colored: {stats['n_colored']:,} of {stats['n_points']:,} points "
-        f"({pct:.1f}%) from {stats['n_images_used']} images")
-    log(f"skipped: {stats['n_occluded']:,} hidden in every candidate "
-        f"frame, {stats['n_unseen']:,} seen by no nearby photo"
-        + (f"; {stats['n_eo_dropped']} EO rows had no image file"
-           if stats["n_eo_dropped"] else ""))
-    if pct < min_coverage:
-        raise ValueError(
-            f"only {pct:.1f}% of the cloud got a color, below the "
-            f"{min_coverage}% set by {coverage_label}. That is what a "
-            f"unit or datum mismatch between the EO and the cloud looks "
-            f"like (metres vs survey feet, ellipsoidal vs orthometric "
-            f"heights), or imagery from the wrong flight. Nothing was "
-            f"written; lower it to colorize a subset deliberately.")
-    if pct < 50.0:
-        log("caution: less than half the cloud got a color. That is "
-            "normal when the imagery covers only part of the block -- "
-            "and it is also what a vertical datum or unit mismatch looks "
-            "like, since a flying height in metres over a survey-feet "
-            "cloud shrinks every footprint by 3.28. Check the flying "
-            "height above against the mission.")
+        points = las_mod.read_points(cloud, fields=("x", "y", "z"))
+        xyz = np.column_stack([points["x"], points["y"], points["z"]])
+        del points
+        agl = check_datum(eo, xyz)
+        log(f"eo:      {len(eo['filename'])} rows, flying height "
+            f"~{agl:.0f} above the cloud median")
 
-    if should_stop is not None and should_stop():
+        # memory_budget_mb stays UNSET unless a caller asks: passing a
+        # number here would silently override colorize()'s own default,
+        # which is what the extraction did (256 -> 512) with nothing to
+        # notice
+        budget = ({} if memory_budget_mb is None
+                  else {"memory_budget_mb": memory_budget_mb})
+        rgb, stats = colorize_mod.colorize(
+            xyz, eo, cameras, image_paths, neighbors=neighbors,
+            occlusion_tol=occlusion_tol, progress=progress, **budget)
+        del xyz
+        stats["calibration_provenance"] = calibration_provenance
+        pct = 100.0 * stats["n_colored"] / stats["n_points"]
+        stats["pct_colored"] = pct
+        log(f"colored: {stats['n_colored']:,} of {stats['n_points']:,} points "
+            f"({pct:.1f}%) from {stats['n_images_used']} images")
+        log(f"skipped: {stats['n_occluded']:,} hidden in every candidate "
+            f"frame, {stats['n_unseen']:,} seen by no nearby photo"
+            + (f"; {stats['n_eo_dropped']} EO rows had no image file"
+               if stats["n_eo_dropped"] else ""))
+        if pct < min_coverage:
+            raise ValueError(
+                f"only {pct:.1f}% of the cloud got a color, below the "
+                f"{min_coverage}% set by {coverage_label}. That is what a "
+                f"unit or datum mismatch between the EO and the cloud looks "
+                f"like (metres vs survey feet, ellipsoidal vs orthometric "
+                f"heights), or imagery from the wrong flight. Nothing was "
+                f"written; lower it to colorize a subset deliberately.")
+        if pct < 50.0:
+            log("caution: less than half the cloud got a color. That is "
+                "normal when the imagery covers only part of the block -- "
+                "and it is also what a vertical datum or unit mismatch looks "
+                "like, since a flying height in metres over a survey-feet "
+                "cloud shrinks every footprint by 3.28. Check the flying "
+                "height above against the mission.")
+
+        stats["job_manifest"] = str(record.path)
+        if should_stop is not None and should_stop():
+            record.finish("cancelled", stats)
+            return stats
+
+        source_format = las_mod.cloud_info(cloud)["point_format"]
+        target_format = None
+        if source_format not in RGB_POINT_FORMATS:
+            target_format = 7
+            log(f"format:  point format {source_format} carries no RGB; "
+                f"converting to 7")
+
+        def paint(chunk, start):
+            block = rgb[start:start + chunk["x"].size]
+            return {"red": block[:, 0], "green": block[:, 1],
+                    "blue": block[:, 2]}
+
+        las_mod.stream_update(cloud, out, paint, fields=("x",),
+                              point_format=target_format)
+        stats["point_format"] = target_format or source_format
+        record.data["output"] = identity(out)
+        record.finish("completed", stats)
+        log(f"wrote:   {out}")
         return stats
-
-    source_format = las_mod.cloud_info(cloud)["point_format"]
-    target_format = None
-    if source_format not in RGB_POINT_FORMATS:
-        target_format = 7
-        log(f"format:  point format {source_format} carries no RGB; "
-            f"converting to 7")
-
-    def paint(chunk, start):
-        block = rgb[start:start + chunk["x"].size]
-        return {"red": block[:, 0], "green": block[:, 1],
-                "blue": block[:, 2]}
-
-    las_mod.stream_update(cloud, out, paint, fields=("x",),
-                          point_format=target_format)
-    stats["point_format"] = target_format or source_format
-    log(f"wrote:   {out}")
-    return stats
