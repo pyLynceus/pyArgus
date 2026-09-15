@@ -77,3 +77,13 @@ Real-data metadata check: all 1,083 Summerville images passed all-frame consiste
 Added schema-1 per-attempt records to CLI/GUI colorization, including failures
 and cancellation. See docs/JOB_RECORDS.md for identity and transaction limits.
 Other production stages are not integrated yet.
+
+
+## QA and alignment records
+
+Extended records to single-cloud CLI/GUI QA and alignment, plus project QA
+(array and disk-backed dispatch) and project alignment. Cancellation propagates
+while retaining a cancelled record. Project before/after QA summaries are
+persisted and included with export mappings; single-cloud comparisons retain
+their solver/unquantized limitations. Source data and numerical algorithms
+are unchanged. See docs/JOB_RECORDS.md for output locations and coverage.

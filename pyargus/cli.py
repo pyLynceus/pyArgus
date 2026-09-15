@@ -82,61 +82,68 @@ def _cmd_density(args):
 
 
 def _cmd_qa_report(args):
-    from pathlib import Path
+    from pyargus.analysis_records import analysis_job, finish, defaults
+    from pyargus.qa.report import generate
+    settings = {k: v for k, v in vars(args).items() if k != "func"}
+    settings["report_defaults"] = defaults(generate)
+    with analysis_job("qa", args.out, settings, inputs=[args.path, args.sbet], controls=args.control or []) as record:
+        from pathlib import Path
 
-    from pyargus.formats import las
-    from pyargus.qa import report
+        from pyargus.formats import las
+        from pyargus.qa import report
 
-    if args.control and not args.control_order:
-        raise SystemExit("--control-order is required with --control; the "
-                         "column order is never guessed (pnez or penz)")
+        if args.control and not args.control_order:
+            raise SystemExit("--control-order is required with --control; the "
+                             "column order is never guessed (pnez or penz)")
 
-    fields = ["x", "y", "z", "classification", "point_source_id"]
-    if args.sbet:
-        fields.append("gps_time")
-    points = las.read_points(args.path, fields=tuple(fields))
+        fields = ["x", "y", "z", "classification", "point_source_id"]
+        if args.sbet:
+            fields.append("gps_time")
+        points = las.read_points(args.path, fields=tuple(fields))
 
-    control = None
-    if args.control:
-        from pyargus.formats import control as control_mod
-        control = control_mod.read_control_csvs(args.control, args.control_order)
+        control = None
+        if args.control:
+            from pyargus.formats import control as control_mod
+            control = control_mod.read_control_csvs(args.control, args.control_order)
 
-    traj_time, time_mode = None, "week"
-    if args.sbet:
-        from pyargus.formats.trajectory import read_times
-        traj_time, time_mode = read_times(args.sbet, trj_time=args.trj_time)
+        traj_time, time_mode = None, "week"
+        if args.sbet:
+            from pyargus.formats.trajectory import read_times
+            traj_time, time_mode = read_times(args.sbet, trj_time=args.trj_time)
 
-    summary = report.generate(
-        points, args.out, title=args.title or Path(args.path).name,
-        control=control, traj_time=traj_time, time_mode=time_mode, ground_class=args.ground_class,
-        density_cell=args.density_cell, dz_cell=args.dz_cell,
-        dz_limit=args.dz_limit, control_radius=args.radius, units=args.units)
+        record.data["resolved_time_mode"] = time_mode
+        summary = report.generate(
+            points, args.out, title=args.title or Path(args.path).name,
+            control=control, traj_time=traj_time, time_mode=time_mode, ground_class=args.ground_class,
+            density_cell=args.density_cell, dz_cell=args.dz_cell,
+            dz_limit=args.dz_limit, control_radius=args.radius, units=args.units)
 
-    d = summary["density"]
-    print(f"points:  {summary['points']:,} ({summary['ground_points']:,} ground, "
-          f"{len(summary['strips'])} strips)")
-    if "time_base" in summary:
-        tb = summary["time_base"]
-        clock_label = f"week {tb['gps_week']}" if tb['gps_week'] is not None else "same stored timestamps"
-        print(f"time:    {clock_label}, "
-              f"{100 * tb['fraction_inside']:.2f}% inside trajectory")
-    print(f"density: median {d['median']:.2f} pts/{args.units}^2 "
-          f"(p5 {d['p5']:.2f}, p95 {d['p95']:.2f})")
-    for p in summary["strip_dz"]:
-        print(f"dz {p['a']}-{p['b']}:  median {p['median']:+.3f}  "
-              f"rmse {p['rmse']:.3f}  p95|dz| {p['p95_abs']:.3f}  "
-              f"({p['cells']} cells)")
-    if "control" in summary:
-        c = summary["control"]
-        if "median" in c:
-            print(f"control: n {c['n']}  median {c['median']:+.3f}  "
-                  f"nmad {c['nmad']:.3f}  rmse {c['rmse_z']:.3f} {args.units} "
-                  f"({len(c['skipped'])} skipped)")
-        else:
-            print(f"control: no marks with local ground returns "
-                  f"({len(c['skipped'])} skipped)")
-    print(f"report:  {summary['report']}")
-    return 0
+        d = summary["density"]
+        print(f"points:  {summary['points']:,} ({summary['ground_points']:,} ground, "
+              f"{len(summary['strips'])} strips)")
+        if "time_base" in summary:
+            tb = summary["time_base"]
+            clock_label = f"week {tb['gps_week']}" if tb['gps_week'] is not None else "same stored timestamps"
+            print(f"time:    {clock_label}, "
+                  f"{100 * tb['fraction_inside']:.2f}% inside trajectory")
+        print(f"density: median {d['median']:.2f} pts/{args.units}^2 "
+              f"(p5 {d['p5']:.2f}, p95 {d['p95']:.2f})")
+        for p in summary["strip_dz"]:
+            print(f"dz {p['a']}-{p['b']}:  median {p['median']:+.3f}  "
+                  f"rmse {p['rmse']:.3f}  p95|dz| {p['p95_abs']:.3f}  "
+                  f"({p['cells']} cells)")
+        if "control" in summary:
+            c = summary["control"]
+            if "median" in c:
+                print(f"control: n {c['n']}  median {c['median']:+.3f}  "
+                      f"nmad {c['nmad']:.3f}  rmse {c['rmse_z']:.3f} {args.units} "
+                      f"({len(c['skipped'])} skipped)")
+            else:
+                print(f"control: no marks with local ground returns "
+                      f"({len(c['skipped'])} skipped)")
+        print(f"report:  {summary['report']}")
+        finish(record, summary, outputs=[Path(args.out)/"report.html"])
+        return 0
 
 
 def _cmd_classify_ground(args):
@@ -408,157 +415,170 @@ def _cmd_control_by_strip(args):
 
 
 def _cmd_align(args):
-    from pathlib import Path
+    from pyargus.analysis_records import analysis_job, finish, alignment_result, defaults
+    from pyargus.align import solve_alignment
+    settings = {k: v for k, v in vars(args).items() if k != "func"}
+    settings["solver_defaults"] = defaults(solve_alignment)
+    with analysis_job("align", args.write, settings, inputs=[args.path, args.sbet], controls=args.control or []) as record:
+        from pathlib import Path
 
-    import laspy
+        import laspy
 
-    from pyargus.align import attach, solve_alignment
-    from pyargus.formats import las as las_mod
-    from pyargus.qa import overlap
+        from pyargus.align import attach, solve_alignment
+        from pyargus.formats import las as las_mod
+        from pyargus.qa import overlap
 
-    if args.write:
-        dst = Path(args.write)
-        if dst.resolve() == Path(args.path).resolve():
-            raise SystemExit("refusing to overwrite the input cloud; --write "
-                             "must be a new file")
-        if dst.exists() and not args.force:
-            raise SystemExit(f"{dst} exists; pass --force to replace it")
+        if args.write:
+            dst = Path(args.write)
+            if dst.resolve() == Path(args.path).resolve():
+                raise SystemExit("refusing to overwrite the input cloud; --write "
+                                 "must be a new file")
+            if dst.exists() and not args.force:
+                raise SystemExit(f"{dst} exists; pass --force to replace it")
 
-    points = las_mod.read_points(
-        args.path, fields=("x", "y", "z", "gps_time", "point_source_id",
-                           "classification"))
-    from pyargus.formats.trajectory import load_alignment, is_trj
+        points = las_mod.read_points(
+            args.path, fields=("x", "y", "z", "gps_time", "point_source_id",
+                               "classification"))
+        from pyargus.formats.trajectory import load_alignment, is_trj
 
-    map_crs = args.map_crs
-    if map_crs is None:
-        with laspy.open(args.path) as reader:
-            map_crs = reader.header.parse_crs()
-        if map_crs is None and not is_trj(args.sbet):
-            raise SystemExit(f"{args.path} declares no CRS; pass --map-crs")
-    vertical = args.vertical
-    if vertical is not None:
-        try:
-            vertical = float(vertical)
-        except ValueError:
-            pass  # a vertical CRS string
-    trajectory, (map_e, map_n, map_z), time_mode = load_alignment(
-        args.sbet, map_crs, vertical=vertical, allow_network=args.proj_network,
-        trj_time=args.trj_time, trj_confirmed=args.trj_confirmed)
+        map_crs = args.map_crs
+        if map_crs is None:
+            with laspy.open(args.path) as reader:
+                map_crs = reader.header.parse_crs()
+            if map_crs is None and not is_trj(args.sbet):
+                raise SystemExit(f"{args.path} declares no CRS; pass --map-crs")
+        vertical = args.vertical
+        if vertical is not None:
+            try:
+                vertical = float(vertical)
+            except ValueError:
+                pass  # a vertical CRS string
+        trajectory, (map_e, map_n, map_z), time_mode = load_alignment(
+            args.sbet, map_crs, vertical=vertical, allow_network=args.proj_network,
+            trj_time=args.trj_time, trj_confirmed=args.trj_confirmed)
+        record.data["resolved_frame"] = dict(map_crs=str(map_crs) if map_crs is not None else None, vertical=vertical, time_mode=time_mode)
 
-    if args.control and not args.control_order:
-        raise SystemExit("--control-order is required with --control; the "
-                         "column order is never guessed (pnez or penz)")
-    control = None
-    if args.control:
-        from pyargus.formats import control as control_mod
-        _, ce, cn, cz = control_mod.read_control_csvs(args.control,
-                                                      args.control_order)
-        control = np.column_stack([ce, cn, cz])
+        if args.control and not args.control_order:
+            raise SystemExit("--control-order is required with --control; the "
+                             "column order is never guessed (pnez or penz)")
+        control = None
+        if args.control:
+            from pyargus.formats import control as control_mod
+            _, ce, cn, cz = control_mod.read_control_csvs(args.control,
+                                                          args.control_order)
+            control = np.column_stack([ce, cn, cz])
 
-    if args.any_class:
-        mask = np.ones(points["x"].size, dtype=bool)
-    else:
-        mask = points["classification"] == args.ground_class
-        if not mask.any():
-            raise SystemExit(f"no class-{args.ground_class} points to solve "
-                             f"on; classify first or pass --any-class")
-    sub = {k: points[k][mask] for k in ("x", "y", "z", "gps_time",
-                                        "point_source_id")}
-    attached = attach.bundles_from_cloud(sub, trajectory, map_e, map_n, map_z,
-                                         speed_floor=args.speed_floor, time_mode=time_mode)
-    clock_label = f"week {attached.gps_week}" if attached.gps_week is not None else "same stored timestamps"
-    print(f"attach:  {clock_label}, heading source "
-          f"{attached.heading_source!r} (track error "
-          f"{np.degrees(attached.track_error):.1f} deg), "
-          f"AGL {attached.agl_median:.0f}, "
-          f"nadir median {attached.nadir_median_deg:.1f} deg")
-    print(f"strips:  {attached.strip_ids} "
-          f"({[b.xyz.shape[0] for b in attached.bundles]} points)")
-
-    if args.drift_spacing is not None and not args.no_boresight:
-        print("caution: solving boresight and drift TOGETHER lets pitch "
-              "leak into the per-strip curves over smooth terrain -- and "
-              "a block that needs drift corrections is poor calibration "
-              "data even in constant mode. Calibrate boresight on clean "
-              "lines, --write that correction, then solve drift on the "
-              "result with --no-boresight.")
-    result = solve_alignment(
-        attached.bundles, solve_boresight=not args.no_boresight,
-        offsets=args.offsets, cell=args.cell, min_points=args.min_points,
-        control=control, control_weight=args.control_weight,
-        control_radius=args.control_radius,
-        drift_spacing=args.drift_spacing,
-        drift_stiffness=args.drift_stiffness)
-    if result.absolute:
-        print(f"datum:   ABSOLUTE, anchored by {result.n_control} control "
-              f"observations; control rms "
-              f"{result.control_rms_before:.3f} -> "
-              f"{result.control_rms_after:.3f}")
-    deg = np.degrees(result.boresight)
-    print(f"solved:  {result.n_observations:,} observations, "
-          f"{result.iterations} iterations, patch rms "
-          f"{result.rms_before:.3f} -> {result.rms_after:.3f}")
-    print(f"boresight: roll {result.boresight[0]:+.6f}  "
-          f"pitch {result.boresight[1]:+.6f}  yaw {result.boresight[2]:+.6f} "
-          f"rad  ({deg[0]:+.4f}/{deg[1]:+.4f}/{deg[2]:+.4f} deg)")
-    for i, sid in enumerate(attached.strip_ids):
-        tag = "  (gauge)" if i == 0 and not result.absolute else ""
-        if result.drift is not None:
-            lo, hi = result.drift.span(i)
-            print(f"drift strip {sid}: mean dz "
-                  f"{result.offsets[i, 2]:+.4f}  span {lo:+.4f} .. "
-                  f"{hi:+.4f} over {len(result.drift.node_times[i])} "
-                  f"nodes{tag}")
+        if args.any_class:
+            mask = np.ones(points["x"].size, dtype=bool)
         else:
-            extra = (f"  de {result.offsets[i, 0]:+.4f}  "
-                     f"dn {result.offsets[i, 1]:+.4f}"
-                     if args.offsets == "xyz" else "")
-            print(f"offset strip {sid}: dz "
-                  f"{result.offsets[i, 2]:+.4f}{extra}{tag}")
+            mask = points["classification"] == args.ground_class
+            if not mask.any():
+                raise SystemExit(f"no class-{args.ground_class} points to solve "
+                                 f"on; classify first or pass --any-class")
+        sub = {k: points[k][mask] for k in ("x", "y", "z", "gps_time",
+                                            "point_source_id")}
+        attached = attach.bundles_from_cloud(sub, trajectory, map_e, map_n, map_z,
+                                             speed_floor=args.speed_floor, time_mode=time_mode)
+        clock_label = f"week {attached.gps_week}" if attached.gps_week is not None else "same stored timestamps"
+        print(f"attach:  {clock_label}, heading source "
+              f"{attached.heading_source!r} (track error "
+              f"{np.degrees(attached.track_error):.1f} deg), "
+              f"AGL {attached.agl_median:.0f}, "
+              f"nadir median {attached.nadir_median_deg:.1f} deg")
+        print(f"strips:  {attached.strip_ids} "
+              f"({[b.xyz.shape[0] for b in attached.bundles]} points)")
 
-    def dz_map(xa, xb):
-        return overlap.strip_dz(
-            {"x": xa[:, 0], "y": xa[:, 1], "z": xa[:, 2]},
-            {"x": xb[:, 0], "y": xb[:, 1], "z": xb[:, 2]}, cell=args.cell)
+        if args.drift_spacing is not None and not args.no_boresight:
+            print("caution: solving boresight and drift TOGETHER lets pitch "
+                  "leak into the per-strip curves over smooth terrain -- and "
+                  "a block that needs drift corrections is poor calibration "
+                  "data even in constant mode. Calibrate boresight on clean "
+                  "lines, --write that correction, then solve drift on the "
+                  "result with --no-boresight.")
+        result = solve_alignment(
+            attached.bundles, solve_boresight=not args.no_boresight,
+            offsets=args.offsets, cell=args.cell, min_points=args.min_points,
+            control=control, control_weight=args.control_weight,
+            control_radius=args.control_radius,
+            drift_spacing=args.drift_spacing,
+            drift_stiffness=args.drift_stiffness)
+        if result.absolute:
+            print(f"datum:   ABSOLUTE, anchored by {result.n_control} control "
+                  f"observations; control rms "
+                  f"{result.control_rms_before:.3f} -> "
+                  f"{result.control_rms_after:.3f}")
+        metrics = alignment_result(result, attached.strip_ids)
+        metrics.update(corrections_written=False, overlap_before_after=[])
+        record.data["results"] = metrics
+        record.save()
+        deg = np.degrees(result.boresight)
+        print(f"solved:  {result.n_observations:,} observations, "
+              f"{result.iterations} iterations, patch rms "
+              f"{result.rms_before:.3f} -> {result.rms_after:.3f}")
+        print(f"boresight: roll {result.boresight[0]:+.6f}  "
+              f"pitch {result.boresight[1]:+.6f}  yaw {result.boresight[2]:+.6f} "
+              f"rad  ({deg[0]:+.4f}/{deg[1]:+.4f}/{deg[2]:+.4f} deg)")
+        for i, sid in enumerate(attached.strip_ids):
+            tag = "  (gauge)" if i == 0 and not result.absolute else ""
+            if result.drift is not None:
+                lo, hi = result.drift.span(i)
+                print(f"drift strip {sid}: mean dz "
+                      f"{result.offsets[i, 2]:+.4f}  span {lo:+.4f} .. "
+                      f"{hi:+.4f} over {len(result.drift.node_times[i])} "
+                      f"nodes{tag}")
+            else:
+                extra = (f"  de {result.offsets[i, 0]:+.4f}  "
+                         f"dn {result.offsets[i, 1]:+.4f}"
+                         if args.offsets == "xyz" else "")
+                print(f"offset strip {sid}: dz "
+                      f"{result.offsets[i, 2]:+.4f}{extra}{tag}")
 
-    corrected = result.corrected(attached.bundles)
-    for i in range(len(attached.bundles)):
-        for j in range(i + 1, len(attached.bundles)):
-            before = dz_map(attached.bundles[i].xyz, attached.bundles[j].xyz)
-            if before.overlap_cells == 0:
-                continue
-            after = dz_map(corrected[i], corrected[j])
-            print(f"dz {attached.strip_ids[i]}-{attached.strip_ids[j]}: "
-                  f"median {before.summary()['median']:+.3f} -> "
-                  f"{after.summary()['median']:+.3f}   rmse "
-                  f"{before.summary()['rmse']:.3f} -> "
-                  f"{after.summary()['rmse']:.3f}")
+        def dz_map(xa, xb):
+            return overlap.strip_dz(
+                {"x": xa[:, 0], "y": xa[:, 1], "z": xa[:, 2]},
+                {"x": xb[:, 0], "y": xb[:, 1], "z": xb[:, 2]}, cell=args.cell)
 
-    if args.write:
-        offsets_by_sid = {sid: result.offsets[i]
-                          for i, sid in enumerate(attached.strip_ids)}
-        drift_by_sid = None
-        if result.drift is not None:
-            drift_by_sid = {sid: (result.drift.node_times[i],
-                                  result.drift.values[i])
-                            for i, sid in enumerate(attached.strip_ids)}
-        xyz, skipped = attach.apply_corrections(
-            points, trajectory, map_e, map_n, map_z,
-            attached.heading_source, result.boresight, offsets_by_sid,
-            drift_by_sid=drift_by_sid, time_mode=time_mode)
-        # the corrected coordinates are already in hand; streaming the
-        # copy means the original record is never materialized a second
-        # time (this command used to read the whole file twice)
-        def place(_points, start):
-            stop = start + _points["x"].size
-            block = xyz[start:stop]
-            return {"x": block[:, 0], "y": block[:, 1], "z": block[:, 2]}
+        corrected = result.corrected(attached.bundles)
+        for i in range(len(attached.bundles)):
+            for j in range(i + 1, len(attached.bundles)):
+                before = dz_map(attached.bundles[i].xyz, attached.bundles[j].xyz)
+                if before.overlap_cells == 0:
+                    continue
+                after = dz_map(corrected[i], corrected[j])
+                metrics["overlap_before_after"].append(dict(a=int(attached.strip_ids[i]), b=int(attached.strip_ids[j]), before=before.summary(), after=after.summary(), basis="unquantized solved ground coordinates"))
+                print(f"dz {attached.strip_ids[i]}-{attached.strip_ids[j]}: "
+                      f"median {before.summary()['median']:+.3f} -> "
+                      f"{after.summary()['median']:+.3f}   rmse "
+                      f"{before.summary()['rmse']:.3f} -> "
+                      f"{after.summary()['rmse']:.3f}")
 
-        las_mod.stream_update(args.path, dst, place, fields=("x",))
-        note = (f" ({skipped:,} outside the trajectory left unchanged)"
-                if skipped else "")
-        print(f"wrote:   {dst}{note}")
-    return 0
+        if args.write:
+            offsets_by_sid = {sid: result.offsets[i]
+                              for i, sid in enumerate(attached.strip_ids)}
+            drift_by_sid = None
+            if result.drift is not None:
+                drift_by_sid = {sid: (result.drift.node_times[i],
+                                      result.drift.values[i])
+                                for i, sid in enumerate(attached.strip_ids)}
+            xyz, skipped = attach.apply_corrections(
+                points, trajectory, map_e, map_n, map_z,
+                attached.heading_source, result.boresight, offsets_by_sid,
+                drift_by_sid=drift_by_sid, time_mode=time_mode)
+            # the corrected coordinates are already in hand; streaming the
+            # copy means the original record is never materialized a second
+            # time (this command used to read the whole file twice)
+            def place(_points, start):
+                stop = start + _points["x"].size
+                block = xyz[start:stop]
+                return {"x": block[:, 0], "y": block[:, 1], "z": block[:, 2]}
+
+            las_mod.stream_update(args.path, dst, place, fields=("x",))
+            metrics.update(corrections_written=True, points_outside_trajectory_unchanged=int(skipped))
+            note = (f" ({skipped:,} outside the trajectory left unchanged)"
+                    if skipped else "")
+            print(f"wrote:   {dst}{note}")
+        finish(record, metrics, outputs=[dst] if args.write else [])
+        return 0
 
 
 def _cmd_colorize(args):

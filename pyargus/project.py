@@ -365,6 +365,8 @@ def _report(data, out, *, control=None):
     # Append within the report's outer container; all source text is escaped.
     page = page.rsplit('</div>',1)[0] + '\n'.join(rows) + '</div>'
     path.write_text(page,encoding='utf-8')
+    from pyargus.analysis_records import plain
+    (Path(out)/'summary.json').write_text(json.dumps(plain(dict(result, report='report.html')), indent=2, allow_nan=False), encoding='utf-8')
     return result
 
 
@@ -377,7 +379,7 @@ def _target(out):
     return out
 
 
-def qa(project, out, *, control=None, log=lambda text: None, cancel=lambda: False):
+def _qa_impl(project, out, *, control=None, log=lambda text: None, cancel=lambda: False):
     _, headers = _cloud_headers(project)
     if sum(h['points'] for h in headers) > project.max_points:
         from pyargus.large_qa import qa as large_qa
@@ -398,7 +400,7 @@ def qa(project, out, *, control=None, log=lambda text: None, cancel=lambda: Fals
     return result
 
 
-def align(project, out, *, cell=6., min_points=6, solve_boresight=True,
+def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
           control=None, log=lambda text: None, cancel=lambda: False):
     from pyargus.align import attach, solve_alignment
     import laspy
@@ -494,3 +496,32 @@ def align(project, out, *, cell=6., min_points=6, solve_boresight=True,
         temp.rename(out)
     log(f'Wrote {len(output_map)} corrected clouds and before/after QA: {out}')
     return summary
+
+
+def qa(project, out, *, control=None, log=lambda text: None, cancel=lambda: False):
+    from pyargus.analysis_records import analysis_job, finish, project_settings, defaults
+    inputs = list(project.clouds) + [t.path for t in project.trajectories]
+    from pyargus.qa.report import generate
+    settings = project_settings(project, control, report_defaults=defaults(generate))
+    with analysis_job("project-qa", out, settings, inputs=inputs, log=log) as record:
+        result = _qa_impl(project, out, control=control, log=log, cancel=cancel)
+        finish(record, result, outputs=[Path(out)/"report.html", Path(out)/"summary.json", Path(out)/"project.json"])
+        return result
+
+
+def align(project, out, *, cell=6., min_points=6, solve_boresight=True,
+          control=None, log=lambda text: None, cancel=lambda: False):
+    from pyargus.analysis_records import analysis_job, finish, project_settings, defaults
+    inputs = list(project.clouds) + [t.path for t in project.trajectories]
+    from pyargus.align import solve_alignment
+    settings = project_settings(project, control, solver_defaults=defaults(solve_alignment), cell=cell, min_points=min_points,
+                                solve_boresight=solve_boresight, offsets="z")
+    with analysis_job("project-align", out, settings, inputs=inputs, log=log) as record:
+        result = _align_impl(project, out, cell=cell, min_points=min_points,
+                             solve_boresight=solve_boresight, control=control, log=log, cancel=cancel)
+        outputs = [Path(out)/item["output"] for item in result["outputs"]]
+        outputs += [Path(out)/"alignment.json", Path(out)/"before"/"summary.json", Path(out)/"after"/"summary.json"]
+        finish(record, dict(result, corrections_written=True,
+                           before_qa=json.loads((Path(out)/"before"/"summary.json").read_text()),
+                           after_qa=json.loads((Path(out)/"after"/"summary.json").read_text())), outputs=outputs)
+        return result
