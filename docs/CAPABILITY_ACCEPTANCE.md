@@ -46,7 +46,7 @@ points; they are not assertions that every possible edge case is covered.
 | C11 DTM/DSM/TIN generation | Implemented / recorded validation. `dtm`, `surfaces/` | `tests/test_dtm.py`, `tests/test_tin.py`; reference surfaces | Define gap filling, interpolation support and vegetation/structure policy. Not a complete interactive terrain repair workflow. |
 | C12 Breaklines and contours | Implemented / limited validation. `contours`, `formats/breaklines.py` | `tests/test_contours.py`, `tests/test_contour_formats.py`, `tests/test_usability.py`; recorded 2,152 Summerville contour lines | TIN constraints are soft. No automatic trustworthy draping of 2D drawings. Hard topology-preserving breaklines and surface editing remain future work. |
 | C13 Image colorization | Implemented / limited validation. `colorize`, Colorize; `imagery/job.py` | `tests/test_colorize.py`, `tests/test_cli_colorize.py`; recorded Summerville results | Job loads full XYZ and retains RGB arrays. Image cache budget is not a whole-job memory bound. Camera/datum/visibility checks do not prove absolute accuracy. |
-| C14 Calibration provenance | Implemented / limited validation. `imagery/camera.py`, `imagery/job.py` | `tests/test_calibration_selection.py`; image-specific sidecar regression tests | Codex fix rejects ambiguous folder fallback. Resolver still takes one sample per role; different serials/calibrations under one role can be missed. P4D authority/parser question is unresolved and belongs to separate evidence. |
+| C14 Calibration provenance | Implemented / limited validation. `imagery/camera.py`, `imagery/job.py` | `tests/test_calibration_selection.py`; image-specific sidecar regression tests | Codex fix rejects ambiguous folder fallback. Resolver now checks projection-parameter consistency for every matched frame and records provenance. Physical serial identity is still not established; explicit overrides require judgment. P4D authority/parser question is unresolved and belongs to separate evidence. |
 | C15 Desktop workflow and completion | Implemented / limited validation. `gui.py`, `project_gui.py`, stage previews | `tests/test_gui.py`, `tests/test_job_status.py`, `tests/test_dialog_types.py`, packaging self-test | Timer indicates elapsed activity, not reliable ETA. Cancellation varies by job and may wait for expensive work. No durable job resume or complete end-to-end multi-file pipeline demonstrated. |
 | C16 3D viewing | Implemented / limited validation. `viewer3d.py` | `tests/test_viewer3d.py`; recorded Summerville visual inspection | Fixed sample about 150k points, orthographic rendering. No progressive detail, full point editing, cross-section workflow or measurement tools identified. |
 | C17 Classification editing / undo | Not implemented as an operator workflow | Viewer and GUI review | Need stable point identities, durable edit history, selection tools, undo/redo and round-trip verification. Not just drawing a selection rectangle. |
@@ -80,7 +80,7 @@ not an accepted end-to-end product. Evidence should be refreshed per release.
 
 1. Foot units are not interchangeable; control column order is explicit.
 2. Summerville's TrueView frame and camera conventions do not establish SH151's.
-3. Filename camera roles do not uniquely identify physical camera serials.
+3. Filename camera roles do not uniquely identify physical camera serials. All-frame numerical consistency is now checked, but that is not serial provenance.
 4. Class 2 is useful when valid ground labels exist; SH151 near-control data
    were unclassified. Smoothness alone does not prove pavement or bare ground.
 5. Same control used in fitting cannot establish independent accuracy.
@@ -116,7 +116,7 @@ measurement method. Do not invent one universal foot/pixel threshold.
 | Order / issue | Concrete task | Done when |
 |---|---|---|
 | I01 Reproducible baseline | Record exact environment and test/skip results; establish source-to-build identity and a serial validation command. | A fresh checkout reproduces results; every skipped check is explained; executable points to its source commit. |
-| I02 Camera-role consistency | Inspect every matched frame's resolved calibration, compare projection parameters, retain provenance and refuse conflicting same-role cameras. | A synthetic mixed-camera case fails on old code and is handled explicitly; equivalent sidecars still work. No guessing P4D conventions. |
+| I02 Camera-role consistency | Implemented all-frame projection-parameter checks and returned per-image provenance. Next persist provenance with deliverables and validate physical serial mapping. | A synthetic mixed-camera case fails on old code and is handled explicitly; equivalent sidecars still work. No guessing P4D conventions. |
 | I03 Workflow manifest | Define a common run manifest and stage handoff contract, then add it incrementally to existing shared jobs. | Operators can identify inputs, outputs, roles, version, completion and failure state for P1. |
 | I04 Cross-section review | Add non-editing sections and measurements before editing. | Known geometry returns correct distances/heights, and a representative operator can diagnose ground/strip defects. |
 | I05 Project scale | Measure memory and cancellation for each stage; expose honest limits and costs. | Large-file resource report; no claim that streaming write bounds a whole solve. |
@@ -137,3 +137,7 @@ bounded parallel research track, not a gate on every usability improvement.
 
 Documentation-only audit: no processing algorithms or source datasets were
 changed, and no heavy reference run was performed to create this inventory.
+
+## I02 implementation update
+
+All-frame checks and per-image calibration provenance are implemented in the shared colorization job. Explicit overrides remain possible and are identified in provenance. This change does not resolve vendor P4D interpretation or physical-camera serial authority. New regression tests: `tests/test_camera_consistency.py`.
