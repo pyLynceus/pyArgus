@@ -71,3 +71,9 @@ The colorization resolver now checks every distinct matched image's calibration,
 
 Real-data metadata check: all 1,083 Summerville images passed all-frame consistency (361 each for N/P/S). Per-role focal lengths are approximately 4420.2, 4419.1 and 4416.8 pixels. Provenance saved under reference/reports/calibration-consistency/summerville.json. This was not a new image colorization or independent geometry validation run.
 
+
+## Shared job records
+
+Added schema-1 per-attempt records to CLI/GUI colorization, including failures
+and cancellation. See docs/JOB_RECORDS.md for identity and transaction limits.
+Other production stages are not integrated yet.
