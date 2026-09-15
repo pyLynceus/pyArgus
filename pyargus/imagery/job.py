@@ -23,43 +23,75 @@ cloud in one of those is converted on the way out."""
 
 
 def resolve_cameras(eo, image_paths, *, cal=None, quarter_turns=3,
-                    log=None):
-    """A calibrated Camera per role tag found in the EO filenames.
+                    log=None, provenance=None):
+    """Check every matched frame before sharing one camera per role.
 
-    The calibration comes from the sample image's OWN sidecar, never
-    the folder's first: a flattened multi-camera delivery would
-    otherwise hand every camera the same lens (the review panel
-    measured the port camera inheriting the nadir focal length).
+    Equivalent projection parameters may come from different sidecars. A
+    role is not a physical camera ID: conflicting parameters must not be
+    collapsed to the first frame's lens. An explicit cal overrides sidecars.
+    Optional provenance receives one record per distinct matched image.
     """
+    import hashlib
     from pyargus.formats import eo as eo_mod
     from pyargus.imagery import camera as camera_mod
 
-    tag_sample = {}
+    fields = ("focal_px", "width_px", "height_px", "cx_px", "cy_px",
+              "k1", "k2", "k3", "p1", "p2", "quarter_turns")
+    cameras, sources, cached, seen = {}, {}, {}, set()
+    records = []
     for name in eo["filename"]:
-        found = image_paths.get(name.lower())
-        if found is not None:
-            tag_sample.setdefault(eo_mod.camera_tag(name), found)
-    if not tag_sample:
-        raise ValueError(
-            "none of the EO rows' images exist under the imagery "
-            "directory; wrong imagery path, or the wrong flight?")
-    cameras = {}
-    for tag, sample in sorted(tag_sample.items(), key=lambda kv: str(kv[0])):
+        key = name.lower()
+        sample = image_paths.get(key)
+        if sample is None or key in seen:
+            continue
+        seen.add(key)
+        sample = Path(sample)
+        tag = eo_mod.camera_tag(name)
         found = Path(cal) if cal else camera_mod.find_cal(sample)
         if found is None:
-            raise ValueError(
-                f"no .cal calibration sidecar found for {sample.name} and "
-                f"none supplied; refusing to project through an "
-                f"uncalibrated lens (the distortion is ~30 px at the "
-                f"frame corner)")
-        cam = camera_mod.read_cal(found, quarter_turns=quarter_turns,
-                                  name=str(tag))
-        cameras[tag] = cam
-        if log is not None:
-            log(f"camera {tag or '-'}: {found.name}  f {cam.focal_mm:.3f} mm "
-                f"({cam.focal_px:.1f} px)  pp ({cam.cx_px:+.1f}, "
-                f"{cam.cy_px:+.1f}) px  {cam.width_px}x{cam.height_px}  "
-                f"quarter turns {quarter_turns}")
+            raise ValueError(f"no .cal calibration sidecar found for {sample.name}; "
+                             "supply that image's calibration or an explicit --cal file")
+        found = found.resolve()
+        if found not in cached:
+            digest = hashlib.sha256(found.read_bytes()).hexdigest()
+            cam = camera_mod.read_cal(found, quarter_turns=quarter_turns)
+            if hashlib.sha256(found.read_bytes()).hexdigest() != digest:
+                raise ValueError(f"calibration changed while reading: {found}")
+            params = {f: getattr(cam, f) for f in fields}
+            if not all(np.isfinite(v) for v in params.values()):
+                raise ValueError(f"nonfinite camera parameters in {found}")
+            cached[found] = cam, params, digest
+        cam, params, digest = cached[found]
+        if tag in cameras:
+            differing = [f for f in fields if getattr(cameras[tag], f) != params[f]]
+            if differing:
+                raise ValueError(
+                    f"conflicting calibrations for camera role {tag or '(untagged)'}: "
+                    f"{sources[tag]} versus {found} for image {sample.name}; "
+                    f"differing parameters: {', '.join(differing)}. "
+                    "Separate the camera groups or provide a verified common "
+                    "calibration explicitly; refusing to use the first frame's lens.")
+        else:
+            cameras[tag], sources[tag] = cam, found
+        records.append(dict(image=str(sample.resolve()), role=tag,
+                            calibration=str(found), sha256=digest,
+                            selection="explicit" if cal else "sidecar",
+                            parameters=params))
+        if log is not None and len(records) % 100 == 0:
+            log(f"calibration: checked {len(records)} matched images")
+    if not cameras:
+        raise ValueError("none of the EO rows' images exist under the imagery "
+                         "directory; wrong imagery path, or the wrong flight?")
+    if provenance is not None:
+        provenance.extend(records)
+    if log is not None:
+        for tag, cam in sorted(cameras.items(), key=lambda kv: str(kv[0])):
+            count = sum(r["role"] == tag for r in records)
+            log(f"camera {tag or '-'}: verified {count} images; "
+                f"f {cam.focal_px:.1f} px, pp ({cam.cx_px:+.1f}, "
+                f"{cam.cy_px:+.1f}) px; {cam.width_px}x{cam.height_px}; "
+                f"quarter turns {cam.quarter_turns}; "
+                f"{'explicit override' if cal else 'sidecar consistency checked'}")
     return cameras
 
 
@@ -121,8 +153,10 @@ def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
     image_paths = colorize_mod.find_images(images)
     if not image_paths:
         raise ValueError(f"no images found under {images}")
+    calibration_provenance = []
     cameras = resolve_cameras(eo, image_paths, cal=cal,
-                              quarter_turns=quarter_turns, log=log)
+                              quarter_turns=quarter_turns, log=log,
+                              provenance=calibration_provenance)
 
     points = las_mod.read_points(cloud, fields=("x", "y", "z"))
     xyz = np.column_stack([points["x"], points["y"], points["z"]])
@@ -141,6 +175,7 @@ def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
         xyz, eo, cameras, image_paths, neighbors=neighbors,
         occlusion_tol=occlusion_tol, progress=progress, **budget)
     del xyz
+    stats["calibration_provenance"] = calibration_provenance
     pct = 100.0 * stats["n_colored"] / stats["n_points"]
     stats["pct_colored"] = pct
     log(f"colored: {stats['n_colored']:,} of {stats['n_points']:,} points "
