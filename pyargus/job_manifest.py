@@ -65,7 +65,7 @@ class JobRecord:
         self.data.update(status=status, results=results)
 
     def __exit__(self, kind, error, traceback):
-        if error is not None:
+        if error is not None and error is not getattr(self, "_cancelled_exception", None):
             self.data.update(status="failed", error=dict(type=kind.__name__, message=str(error)))
         elif self.data["status"] == "running":
             self.data.update(status="failed", error=dict(type="IncompleteJob", message="No terminal result recorded"))
