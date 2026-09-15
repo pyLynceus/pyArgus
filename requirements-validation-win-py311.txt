@@ -1,0 +1,25 @@
+# Observed Codex Windows Python 3.11 baseline; version pins, not wheel hashes.
+Pygments==2.21.0
+certifi==2026.7.22
+cloudpickle==3.1.2
+colorama==0.4.6
+ezdxf==1.4.4
+fonttools==4.65.0
+iniconfig==2.3.0
+joblib==1.6.0
+laspy==2.7.0
+lazrs==0.8.2
+narwhals==2.26.0
+numpy==2.4.6
+packaging==26.3
+pillow==12.3.0
+pip==24.0
+pluggy==1.6.0
+pyparsing==3.3.2
+pyproj==3.7.2
+pytest==9.1.1
+scikit-learn==1.9.1
+scipy==1.17.1
+setuptools==79.0.1
+threadpoolctl==3.6.0
+typing_extensions==4.16.0

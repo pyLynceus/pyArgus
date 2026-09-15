@@ -58,3 +58,8 @@ Full suite in the isolated environment: 336 passed, 1 skipped (137 seconds). The
 
 The first product audit is in [docs/CAPABILITY_ACCEPTANCE.md](docs/CAPABILITY_ACCEPTANCE.md). It defines 20 capability areas, the P1 production-workflow acceptance gates and a prioritized improvement backlog. Read it before treating an implemented phase as production-ready.
 
+
+## Serial baseline runner
+
+Use python -m devtools.validate in this checkout's environment. See docs/VALIDATION_BASELINE.md for scope, output manifests, skip review and remaining clean-machine/build-provenance work.
+
