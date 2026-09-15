@@ -399,40 +399,48 @@ class QaStage:
         trj_time = app.trj_time.get()
 
         def work(runner):
-            from pyargus.formats import las
+            from pyargus.analysis_records import analysis_job, finish, defaults
             from pyargus.qa import report
+            settings = dict(defaults(report.generate), control_order=order, trj_time=trj_time)
+            with analysis_job("qa", out_dir, settings, inputs=[cloud, sbet_path], controls=[control_csv] if control_csv else [], log=runner.log) as record:
+                from pyargus.formats import las
+                from pyargus.qa import report
 
-            runner.log(f"reading {cloud}")
-            fields = ["x", "y", "z", "classification", "point_source_id"]
-            if sbet_path:
-                fields.append("gps_time")
-            points = las.read_points(cloud, fields=tuple(fields))
-            control = None
-            if control_csv:
-                from pyargus.formats import control as control_mod
-                control = control_mod.read_control_csvs([control_csv], order)
-            traj_time, time_mode = None, "week"
-            if sbet_path:
-                from pyargus.formats.trajectory import read_times
-                traj_time, time_mode = read_times(sbet_path, trj_time=trj_time)
-            if cancelled_before(runner, "the report"):
-                return
-            summary = report.generate(points, out_dir,
-                                      title=Path(cloud).name,
-                                      control=control, traj_time=traj_time, time_mode=time_mode)
-            for pair in summary["strip_dz"]:
-                runner.log(f"dz {pair['a']}-{pair['b']}: "
-                           f"median {pair['median']:+.3f}  "
-                           f"rmse {pair['rmse']:.3f}")
-            if "control" in summary and "median" in summary["control"]:
-                c = summary["control"]
-                runner.log(f"control: n {c['n']}  median {c['median']:+.3f}"
-                           f"  nmad {c['nmad']:.3f}")
-            runner.log(f"report: {summary['report']}")
-            from pyargus.qa import density, raster
-            dens, _, _ = density.density_grid(points["x"], points["y"],
-                                              cell=3.0)
-            runner.report = raster.sequential_rgba(dens)
+                runner.log(f"reading {cloud}")
+                fields = ["x", "y", "z", "classification", "point_source_id"]
+                if sbet_path:
+                    fields.append("gps_time")
+                points = las.read_points(cloud, fields=tuple(fields))
+                control = None
+                if control_csv:
+                    from pyargus.formats import control as control_mod
+                    control = control_mod.read_control_csvs([control_csv], order)
+                traj_time, time_mode = None, "week"
+                if sbet_path:
+                    from pyargus.formats.trajectory import read_times
+                    traj_time, time_mode = read_times(sbet_path, trj_time=trj_time)
+                if cancelled_before(runner, "the report"):
+                    finish(record, {}, status="cancelled")
+                    return
+                record.data["settings"].update(title=Path(cloud).name, time_mode=time_mode)
+                summary = report.generate(points, out_dir,
+                                          title=Path(cloud).name,
+                                          control=control, traj_time=traj_time, time_mode=time_mode)
+                for pair in summary["strip_dz"]:
+                    runner.log(f"dz {pair['a']}-{pair['b']}: "
+                               f"median {pair['median']:+.3f}  "
+                               f"rmse {pair['rmse']:.3f}")
+                if "control" in summary and "median" in summary["control"]:
+                    c = summary["control"]
+                    runner.log(f"control: n {c['n']}  median {c['median']:+.3f}"
+                               f"  nmad {c['nmad']:.3f}")
+                runner.log(f"report: {summary['report']}")
+                from pyargus.qa import density, raster
+                dens, _, _ = density.density_grid(points["x"], points["y"],
+                                                  cell=3.0)
+                runner.report = raster.sequential_rgba(dens)
+
+                finish(record, summary, outputs=[Path(out_dir)/"report.html"])
 
         return work
 
@@ -803,66 +811,82 @@ class AlignStage:
             _refuse_existing(write, "the corrected cloud")
 
         def work(runner):
-            import laspy
+            from pyargus.analysis_records import analysis_job, finish, alignment_result, defaults
+            from pyargus.align import solve_alignment
+            settings = dict(defaults(solve_alignment), cell=ALIGN_CELL, min_points=ALIGN_MIN_POINTS,
+                            vertical=vertical, allow_network=network, trj_time=trj_time,
+                            trj_confirmed=trj_confirmed, ground_class=2)
+            with analysis_job("align", write, settings, inputs=[cloud, sbet_path], log=runner.log) as record:
+                import laspy
 
-            from pyargus.align import attach, solve_alignment
-            from pyargus.formats import las as las_mod
+                from pyargus.align import attach, solve_alignment
+                from pyargus.formats import las as las_mod
 
-            runner.log(f"reading {cloud}")
-            points = las_mod.read_points(
-                cloud, fields=("x", "y", "z", "gps_time",
-                               "point_source_id", "classification"))
-            from pyargus.formats.trajectory import load_alignment, is_trj
-            with laspy.open(cloud) as reader:
-                map_crs = reader.header.parse_crs()
-            if map_crs is None and not is_trj(sbet_path):
-                raise ValueError(f"{cloud} declares no CRS")
-            trajectory, (map_e, map_n, map_z), time_mode = load_alignment(
-                sbet_path, map_crs, vertical=vertical, allow_network=network,
-                trj_time=trj_time, trj_confirmed=trj_confirmed)
-            mask = points["classification"] == 2
-            if not mask.any():
-                raise ValueError("no class-2 points to solve on; "
-                                 "classify first")
-            sub = {k: points[k][mask] for k in
-                   ("x", "y", "z", "gps_time", "point_source_id")}
-            attached = attach.bundles_from_cloud(sub, trajectory,
-                                                 map_e, map_n, map_z, time_mode=time_mode)
-            clock_label = f"week {attached.gps_week}" if attached.gps_week is not None else "same stored timestamps"
-            runner.log(f"{clock_label}, heading "
-                       f"{attached.heading_source!r}, "
-                       f"AGL {attached.agl_median:.0f}")
-            if cancelled_before(runner, "the solve"):
-                return
-            result = solve_alignment(attached.bundles, cell=ALIGN_CELL,
-                                     min_points=ALIGN_MIN_POINTS)
-            runner.log(f"boresight {result.boresight}")
-            for i, sid in enumerate(attached.strip_ids):
-                runner.log(f"offset strip {sid}: "
-                           f"{result.offsets[i, 2]:+.4f}")
-            runner.log(f"patch rms {result.rms_before:.3f} -> "
-                       f"{result.rms_after:.3f}")
-            if write and cancelled_before(runner, "writing"):
-                return
-            if write:
-                offsets = {sid: result.offsets[i]
-                           for i, sid in enumerate(attached.strip_ids)}
-                xyz, skipped = attach.apply_corrections(
-                    points, trajectory, map_e, map_n, map_z,
-                    attached.heading_source, result.boresight, offsets, time_mode=time_mode)
+                runner.log(f"reading {cloud}")
+                points = las_mod.read_points(
+                    cloud, fields=("x", "y", "z", "gps_time",
+                                   "point_source_id", "classification"))
+                from pyargus.formats.trajectory import load_alignment, is_trj
+                with laspy.open(cloud) as reader:
+                    map_crs = reader.header.parse_crs()
+                if map_crs is None and not is_trj(sbet_path):
+                    raise ValueError(f"{cloud} declares no CRS")
+                trajectory, (map_e, map_n, map_z), time_mode = load_alignment(
+                    sbet_path, map_crs, vertical=vertical, allow_network=network,
+                    trj_time=trj_time, trj_confirmed=trj_confirmed)
+                record.data["resolved_frame"] = dict(map_crs=str(map_crs) if map_crs is not None else None, vertical=vertical, time_mode=time_mode)
+                mask = points["classification"] == 2
+                if not mask.any():
+                    raise ValueError("no class-2 points to solve on; "
+                                     "classify first")
+                sub = {k: points[k][mask] for k in
+                       ("x", "y", "z", "gps_time", "point_source_id")}
+                attached = attach.bundles_from_cloud(sub, trajectory,
+                                                     map_e, map_n, map_z, time_mode=time_mode)
+                clock_label = f"week {attached.gps_week}" if attached.gps_week is not None else "same stored timestamps"
+                runner.log(f"{clock_label}, heading "
+                           f"{attached.heading_source!r}, "
+                           f"AGL {attached.agl_median:.0f}")
+                if cancelled_before(runner, "the solve"):
+                    finish(record, {}, status="cancelled")
+                    return
+                result = solve_alignment(attached.bundles, cell=ALIGN_CELL,
+                                         min_points=ALIGN_MIN_POINTS)
+                metrics = alignment_result(result, attached.strip_ids)
+                metrics["corrections_written"] = False
+                record.data["results"] = metrics
+                record.save()
+                runner.log(f"boresight {result.boresight}")
+                for i, sid in enumerate(attached.strip_ids):
+                    runner.log(f"offset strip {sid}: "
+                               f"{result.offsets[i, 2]:+.4f}")
+                runner.log(f"patch rms {result.rms_before:.3f} -> "
+                           f"{result.rms_after:.3f}")
+                if write and cancelled_before(runner, "writing"):
+                    finish(record, metrics, status="cancelled")
+                    return
+                if write:
+                    offsets = {sid: result.offsets[i]
+                               for i, sid in enumerate(attached.strip_ids)}
+                    xyz, skipped = attach.apply_corrections(
+                        points, trajectory, map_e, map_n, map_z,
+                        attached.heading_source, result.boresight, offsets, time_mode=time_mode)
 
-                def place(chunk, start):
-                    block = xyz[start:start + chunk["x"].size]
-                    return {"x": block[:, 0], "y": block[:, 1],
-                            "z": block[:, 2]}
+                    def place(chunk, start):
+                        block = xyz[start:start + chunk["x"].size]
+                        return {"x": block[:, 0], "y": block[:, 1],
+                                "z": block[:, 2]}
 
-                # stream the copy: reading the whole record a second
-                # time is what put a ceiling on the cloud size here
-                las_mod.stream_update(cloud, write, place, fields=("x",))
-                runner.log(f"wrote: {write}"
-                           + (f" ({skipped:,} outside trajectory "
-                              f"unchanged)" if skipped else ""))
-                runner.products.append(("classified", Path(write)))
+                    # stream the copy: reading the whole record a second
+                    # time is what put a ceiling on the cloud size here
+                    las_mod.stream_update(cloud, write, place, fields=("x",))
+                    runner.log(f"wrote: {write}"
+                               + (f" ({skipped:,} outside trajectory "
+                                  f"unchanged)" if skipped else ""))
+                    metrics.update(corrections_written=True, points_outside_trajectory_unchanged=int(skipped))
+                    runner.products.append(("classified", Path(write)))
+
+                finish(record, metrics, outputs=[write] if write else [])
 
         return work
 
