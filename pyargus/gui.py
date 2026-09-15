@@ -1032,6 +1032,10 @@ class Application:
         from pyargus.viewer3d import open_viewer
         ttk.Button(data, text="3D viewer…", command=lambda: open_viewer(self)).grid(row=6, column=0, columnspan=3, sticky="we", pady=5)
 
+        from pyargus.review_gui import open_review
+        ttk.Button(data, text="QA review / cross-sections…", command=lambda: open_review(self)).grid(
+            row=7, column=0, columnspan=3, sticky="we", pady=(0, 5))
+
         self.notebook = ttk.Notebook(left)
         self.notebook.pack(fill="x", pady=(8, 0))
         self.stages = []
