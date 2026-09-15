@@ -53,3 +53,8 @@ integration; worktree creation does not merge or push them.
 
 Full suite in the isolated environment: 336 passed, 1 skipped (137 seconds). The full run did not print the skip reason. Subsequent targeted packaging and COPC checks passed (1 and 9 tests respectively). pip check reported no broken requirements. No real-data reference battery was rerun for this imagery-only change. No source datasets, original-checkout files or pyLynceus files were changed.
 
+
+## Capability inventory
+
+The first product audit is in [docs/CAPABILITY_ACCEPTANCE.md](docs/CAPABILITY_ACCEPTANCE.md). It defines 20 capability areas, the P1 production-workflow acceptance gates and a prioritized improvement backlog. Read it before treating an implemented phase as production-ready.
+
