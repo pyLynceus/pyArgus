@@ -63,3 +63,11 @@ The first product audit is in [docs/CAPABILITY_ACCEPTANCE.md](docs/CAPABILITY_AC
 
 Use python -m devtools.validate in this checkout's environment. See docs/VALIDATION_BASELINE.md for scope, output manifests, skip review and remaining clean-machine/build-provenance work.
 
+
+## All-frame camera consistency
+
+The colorization resolver now checks every distinct matched image's calibration, compares all projection parameters within each role and refuses conflicts before reading the cloud. Equivalent sidecars are allowed; explicit overrides remain explicit. Returned colorization statistics include per-image paths, calibration hashes, parameters and selection mode. These statistics are not yet automatically persisted as an output-sidecar manifest. This does not identify physical serials or establish P4D authority.
+
+
+Real-data metadata check: all 1,083 Summerville images passed all-frame consistency (361 each for N/P/S). Per-role focal lengths are approximately 4420.2, 4419.1 and 4416.8 pixels. Provenance saved under reference/reports/calibration-consistency/summerville.json. This was not a new image colorization or independent geometry validation run.
+
