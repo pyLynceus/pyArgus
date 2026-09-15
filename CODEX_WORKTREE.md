@@ -87,3 +87,13 @@ while retaining a cancelled record. Project before/after QA summaries are
 persisted and included with export mappings; single-cloud comparisons retain
 their solver/unquantized limitations. Source data and numerical algorithms
 are unchanged. See docs/JOB_RECORDS.md for output locations and coverage.
+
+
+## QA review workspace and cross-sections
+
+Added Data > QA review / cross-sections. Reviews schema-1 job records and
+before/after metrics, then loads bounded plan samples and full-file corridor
+sections for original/corrected comparisons. Section geometry, counts,
+sampling, cancellation, input mutation and GUI rendering have synthetic tests.
+See docs/QA_REVIEW.md for workflow and limits. Z: was unavailable during this
+implementation, so no new Summerville/SH151 field-data validation is claimed.
