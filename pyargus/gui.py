@@ -992,7 +992,7 @@ class Application:
     def __init__(self, root):
         self.root = root
         root.title("pyArgus")
-        root.geometry("1100x720")
+        root.geometry("1530x1000")
         root.protocol("WM_DELETE_WINDOW", self._confirm_close)
 
         self.runner = StageRunner()
@@ -1026,11 +1026,11 @@ class Application:
         ttk.Button(data, text="Inspect trajectory", command=self.inspect_trajectory).grid(row=4, column=1, sticky="w")
 
         from pyargus.project_gui import open_project
-        ttk.Button(data, text="Multi-file project…", command=lambda: open_project(self)).grid(
+        ttk.Button(data, text="Project inputs / matching", command=lambda: open_project(self)).grid(
             row=5, column=0, columnspan=3, sticky="we", pady=(5, 0))
 
         from pyargus.viewer3d import open_viewer
-        ttk.Button(data, text="3D viewer…", command=lambda: open_viewer(self)).grid(row=6, column=0, columnspan=3, sticky="we", pady=5)
+        ttk.Button(data, text="View active cloud in 3D", command=lambda: open_viewer(self)).grid(row=6, column=0, columnspan=3, sticky="we", pady=5)
 
         from pyargus.review_gui import open_review
         ttk.Button(data, text="QA review / cross-sections…", command=lambda: open_review(self)).grid(
@@ -1046,27 +1046,10 @@ class Application:
             self.stages.append(stage_class(tab, self))
 
         self._build_run_panel(left)
-        controls = ttk.Frame(right)
-        controls.pack(fill="x", pady=(0, 4))
-        for label, action in (
-                ("Zoom +", lambda: self._zoom_view(1.25)),
-                ("Zoom −", lambda: self._zoom_view(0.8)),
-                ("Rotate ↶", lambda: self._rotate_view(-15)),
-                ("Rotate ↷", lambda: self._rotate_view(15)),
-                ("Reset / Fit", self._reset_view)):
-            ttk.Button(controls, text=label, command=action).pack(side="left", padx=2)
-        self.view_label = tk.StringVar(value="Fit | 0°")
-        ttk.Label(controls, textvariable=self.view_label).pack(side="left", padx=8)
-        ttk.Label(right, text="Wheel: zoom   •   Drag: pan   •   Rotation affects preview only").pack(fill="x")
-        self.canvas = tk.Canvas(right, background=PALETTE["ink"],
-                                highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<MouseWheel>", lambda e: self._zoom_view(1.25 if e.delta > 0 else .8))
-        self.canvas.bind("<Button-4>", lambda e: self._zoom_view(1.25))
-        self.canvas.bind("<Button-5>", lambda e: self._zoom_view(.8))
-        self.canvas.bind("<ButtonPress-1>", self._begin_pan)
-        self.canvas.bind("<B1-Motion>", self._pan_view)
-        self.canvas.bind("<Configure>", lambda e: self._schedule_view())
+        from pyargus.workspace_gui import Workspace
+        self.workspace = Workspace(self, right)
+        self.canvas = self.workspace.viewer.canvas
+        self.view_label = tk.StringVar(value="3D workspace")
 
         self.root.after(PREVIEW_MS, self._tick)
 
@@ -1133,6 +1116,7 @@ class Application:
         self.run_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.runner.stage_name = stage.title
+        self.workspace.begin_stage(stage)
         self.runner.start(work)
         self._update_job_status()
         self._stage_open = True
@@ -1190,6 +1174,7 @@ class Application:
             if not messagebox.askyesno(
                     "pyArgus", "a stage is still running; close anyway?"):
                 return
+        self.workspace.close()
         self.root.destroy()
 
     def _adopt_products(self, runner):
@@ -1239,6 +1224,7 @@ class Application:
                 line = runner.lines.get_nowait()
             except queue.Empty:
                 break
+            self.workspace.observe_log(line)
             self.log.configure(state="normal")
             self.log.insert("end", line + "\n")
             self.log.see("end")
@@ -1261,6 +1247,7 @@ class Application:
         if self._stage_open and not runner.running \
                 and runner.thread is not None:
             self._stage_open = False
+            self.workspace.complete(runner)
             self.run_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
             if runner.error is None and not runner.cancelled():
@@ -1268,8 +1255,8 @@ class Application:
         self.root.after(PREVIEW_MS, self._tick)
 
     def _draw_preview(self, rgba):
+        # Raster reports remain artifacts; the main cloud viewer is exclusively 3D.
         self._view_source = rgba
-        self._reset_view()
 
     def _reset_view(self):
         self._view_zoom, self._view_angle = 1.0, 0.0
