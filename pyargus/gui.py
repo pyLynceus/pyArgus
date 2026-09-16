@@ -1007,12 +1007,26 @@ class Application:
         self._drawn = None      # the report array last put on the canvas
 
         left = ttk.Frame(root, padding=8)
-        left.pack(side="left", fill="y")
+        left.pack(side="right", fill="y")
+        self.task_panel = left
+        ttk.Label(left, text="Task", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self.task_name = tk.StringVar(value="Inspect / match")
+        task_choice = ttk.Combobox(left, textvariable=self.task_name, state="readonly",
+            values=("Inspect / match", "Strip QA", "Classify", "DTM / DSM", "Contours", "Align", "Above ground", "Colorize"))
+        task_choice.pack(fill="x", pady=5)
+        task_choice.bind("<<ComboboxSelected>>", lambda e: self.workspace.select_task())
+        self.task_scope = tk.StringVar(value="Entire project")
+        self.scope_choice = ttk.Combobox(left, textvariable=self.task_scope, state="readonly",
+            values=("Entire project", "Selected cloud"))
+        self.scope_choice.pack(fill="x")
+        self.scope_choice.bind("<<ComboboxSelected>>", lambda e: self.workspace.select_task(reset_scope=False))
+        self.scope_summary = tk.StringVar(value="Add project files to begin.")
+        ttk.Label(left, textvariable=self.scope_summary, wraplength=360).pack(fill="x", pady=6)
         right = ttk.Frame(root, padding=8)
         right.pack(side="right", fill="both", expand=True)
 
         data = ttk.LabelFrame(left, text="Data", padding=6)
-        data.pack(fill="x")
+        # Legacy input variables remain available to stage adapters; the sidebar owns inputs.
         data.columnconfigure(1, weight=1)
         self.cloud_path = tk.StringVar()
         self.sbet_path = tk.StringVar()
@@ -1036,7 +1050,8 @@ class Application:
         ttk.Button(data, text="QA review / cross-sections…", command=lambda: open_review(self)).grid(
             row=7, column=0, columnspan=3, sticky="we", pady=(0, 5))
 
-        self.notebook = ttk.Notebook(left)
+        ttk.Style(root).layout("Task.TNotebook.Tab", [])
+        self.notebook = ttk.Notebook(left, style="Task.TNotebook")
         self.notebook.pack(fill="x", pady=(8, 0))
         self.stages = []
         for stage_class in (QaStage, ClassifyStage, DtmStage, ContourStage,
@@ -1048,6 +1063,7 @@ class Application:
         self._build_run_panel(left)
         from pyargus.workspace_gui import Workspace
         self.workspace = Workspace(self, right)
+        self.workspace.select_task()
         self.canvas = self.workspace.viewer.canvas
         self.view_label = tk.StringVar(value="3D workspace")
 
@@ -1056,28 +1072,27 @@ class Application:
     def _build_run_panel(self, parent):
         box = ttk.Frame(parent)
         box.pack(fill="x", pady=(8, 0))
-        self.run_button = ttk.Button(box, text="Run", command=self.run)
+        self.run_button = ttk.Button(box, text="Run task", command=lambda: self.workspace.run_task())
         self.run_button.pack(side="left")
         self.stop_button = ttk.Button(box, text="Stop", state="disabled",
                                       command=self.runner.cancel)
         self.stop_button.pack(side="left", padx=4)
         self.progress = ttk.Progressbar(box, length=110, mode="determinate")
         self.progress.pack(side="left", padx=6)
-        ttk.Button(box, text="pyLynceus",
-                   command=self.open_pylynceus).pack(side="right")
+        # External application launch remains available through the application API.
 
         self.job_status = tk.StringVar(value="Ready | Elapsed 00:00:00")
         ttk.Label(parent, textvariable=self.job_status, wraplength=420,
                   font=("Segoe UI", 10, "bold")).pack(fill="x", pady=(6, 0))
         self._busy_animation = False
 
-        self.log = tk.Text(parent, height=11, width=46, state="disabled",
+        self.log = tk.Text(self.root, height=8, width=46, state="disabled",
                            font=("Consolas", 8),
                            background=PALETTE["ink"],
                            foreground=PALETTE["ground"],
                            insertbackground=PALETTE["ground"],
                            highlightthickness=0)
-        self.log.pack(fill="both", expand=True, pady=(6, 0))
+        # Packed into the workspace Log dock after workspace construction.
 
     def inspect_trajectory(self):
         if self.runner.running:

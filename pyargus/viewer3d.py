@@ -110,6 +110,7 @@ class Viewer:
             self.window.title('pyArgus — 3D point cloud')
             self.window.geometry('1100x760')
             self.window.protocol('WM_DELETE_WINDOW', self.close)
+        self.on_import_tracks=None; self.track_paths=[]
         self.paths=(); self.on_point=None; self.on_section=None; self.corridor=None
         self.class_filter=None; self.line_filter=None; self.extra_layers=[]; self.extra_points=[]
         self.cancel = threading.Event()
@@ -180,6 +181,11 @@ class Viewer:
         if self.scene is None: return
         if paths is None: paths = filedialog.askopenfilenames(parent=self.window,filetypes=(('Trajectories','*.trj *.out'),))
         if not paths: return
+        if self.busy: return
+        paths=tuple(str(Path(p).resolve()) for p in paths)
+        if self.on_import_tracks: self.on_import_tracks(paths)
+        paths=tuple(p for p in paths if p not in self.track_paths)
+        if not paths: return
         native = any(Path(p).suffix.lower()=='.trj' for p in paths)
         sbet = any(Path(p).suffix.lower()=='.out' for p in paths)
         if native and not messagebox.askyesno('Trajectory coordinates',
@@ -215,7 +221,7 @@ class Viewer:
                 # Keep separate segments across outages; never connect different files.
                 split = np.split(np.arange(len(d)),np.flatnonzero(np.diff(d['time']) > 1.)+1)
                 segments = [positions[i[np.unique(np.r_[np.arange(0,len(i),max(1,math.ceil(len(i)/3000))),len(i)-1])]] for i in split if len(i)>1]
-                result.append((Path(path).name,segments))
+                result.append((str(Path(path).resolve()),segments))
             return ('tracks',result)
         self.launch(work)
 
@@ -232,7 +238,7 @@ class Viewer:
                 if value[0] == 'cloud':
                     _,paths,self.scene = value
                     self.paths=tuple(paths)
-                    self.tracks = []; self.visible = []; self.extra_layers=[]; self.extra_points=[]
+                    self.track_paths = []; self.tracks = []; self.visible = []; self.extra_layers=[]; self.extra_points=[]
                     for child in self.layers.winfo_children(): child.destroy()
                     ttk.Label(self.layers,text='Visible files').pack(anchor='w')
                     for path in paths:
@@ -244,7 +250,9 @@ class Viewer:
                 elif value[0]=='refined':
                     self.scene=value[1]; self.draw()
                 else:
-                    for name,segments in value[1]:
+                    for path,segments in value[1]:
+                        name=Path(path).name
+                        self.track_paths.append(path)
                         var = self.tk.BooleanVar(value=True)
                         self.tracks.append((segments,var))
                         ttk.Checkbutton(self.layers,text=name,variable=var,command=self.draw).pack(anchor='w')
