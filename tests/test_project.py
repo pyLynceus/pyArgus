@@ -240,7 +240,7 @@ def test_project_window_bulk_selection_and_snapshot(scene,monkeypatch):
     root=tk.Tk(); root.withdraw()
     try:
         app=Application(root); w=open_project(app)
-        w.window.withdraw()
+        w.window.update_idletasks()
         w.add_paths(scene.clouds,False); w.add_paths(scene.clouds,False)
         w.add_paths([t.path for t in scene.trajectories],True)
         assert len(w.clouds)==2 and len(w.tracks)==2
@@ -259,7 +259,7 @@ def test_project_window_runs_qa_in_job_runner(scene,tmp_path,root):
     from pyargus.gui import Application
     from pyargus.project_gui import open_project
     try:
-        app=Application(root); w=open_project(app); w.window.withdraw()
+        app=Application(root); w=open_project(app); w.window.update_idletasks()
         w.clouds,w.tracks=scene.clouds,scene.trajectories
         w.same_vertical.set(True); w.out.set(str(tmp_path/'gui_qa'))
         gc.collect()  # Finalize prior tests' destroyed Tk roots on the main thread.
@@ -284,7 +284,7 @@ def test_project_window_runs_qa_in_job_runner(scene,tmp_path,root):
 def test_unset_time_is_highlighted_and_bulk_apply_preserves_approval(scene,root):
     from pyargus.gui import Application
     from pyargus.project_gui import open_project
-    app=Application(root); w=open_project(app); w.window.withdraw()
+    app=Application(root); w=open_project(app); w.window.update_idletasks()
     w.add_paths([t.path for t in scene.trajectories],True)
     with pytest.raises(ValueError,match='need a time base'): w.check_time_settings()
     assert len(w.track_box.curselection())==len(w.tracks)

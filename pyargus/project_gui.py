@@ -11,12 +11,14 @@ from pyargus import project
 
 
 class ProjectWindow:
-    def __init__(self, app):
+    def __init__(self, app, parent=None):
         self.app = app
-        self.window = tk.Toplevel(app.root)
-        self.window.title('pyArgus — Multi-file project')
-        self.window.geometry('1040x720')
-        self.window.minsize(800,600)
+        self.window = ttk.Frame(parent) if parent is not None else tk.Toplevel(app.root)
+        if parent is not None: self.window.pack(fill='both',expand=True)
+        else:
+            self.window.title('pyArgus — Multi-file project')
+            self.window.geometry('1040x720')
+            self.window.minsize(800,600)
         self.clouds, self.tracks, self.bindings = [], [], {}
         self.inventory = None
         self.actions = []
@@ -50,7 +52,7 @@ class ProjectWindow:
         ttk.Button(file_actions,text='Load project…',command=self.load_project).pack(side='left')
         ttk.Button(file_actions,text='Save project…',command=self.save_project).pack(side='left',padx=4)
         from pyargus.viewer3d import Viewer
-        ttk.Button(file_actions,text="3D viewer…",command=lambda: Viewer(app.root,list(self.clouds))).pack(side="left",padx=4)
+        ttk.Button(file_actions,text="3D viewer…",command=lambda: app.workspace.load_project_clouds() if hasattr(app,"workspace") else Viewer(app.root,list(self.clouds))).pack(side="left",padx=4)
         self.counts = tk.StringVar(); ttk.Label(file_actions,textvariable=self.counts).pack(side='right')
         self.crs = tk.StringVar()
         self.vertical = tk.StringVar(value='EPSG:6360')
@@ -279,6 +281,7 @@ class ProjectWindow:
         runner.stage_name = f'Project {mode}'
         self.app.run_button.configure(state='disabled'); self.app.stop_button.configure(state='normal')
         for b in self.actions: b.configure(state='disabled')
+        if hasattr(self.app,'workspace'): self.app.workspace.begin_project(mode,spec,out)
         runner.start(work); self.app._stage_open=True; self.app._update_job_status()
         def finish():
             if not self.window.winfo_exists(): return
@@ -305,6 +308,9 @@ class ProjectWindow:
 
 
 def open_project(app):
+    if hasattr(app,'workspace'):
+        app.workspace.tabs.select(app.workspace.project_tab)
+        return app.workspace.project_panel
     previous = getattr(app,'project_window',None)
     if previous is not None and previous.window.winfo_exists():
         previous.window.lift(); return previous
