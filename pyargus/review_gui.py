@@ -88,12 +88,16 @@ class Plot:
 
 
 class ReviewWorkspace:
-    def __init__(self, root):
+    def __init__(self, root, parent=None, viewer=None):
         import tkinter as tk
         from tkinter import ttk
         self.tk = tk
-        self.window = tk.Toplevel(root); self.window.title("pyArgus — QA review and sections")
-        self.window.geometry("1250x860"); self.window.protocol("WM_DELETE_WINDOW",self.close)
+        self.external_viewer=viewer
+        self.window=ttk.Frame(parent) if parent is not None else tk.Toplevel(root)
+        if parent is not None: self.window.pack(fill='both',expand=True)
+        else:
+            self.window.title("pyArgus — QA review and sections")
+            self.window.geometry("1250x860"); self.window.protocol("WM_DELETE_WINDOW",self.close)
         self.messages=queue.Queue(); self.cancel=threading.Event(); self.busy=False
         self.record=None; self.layers=[]; self.scene=None; self.section=None; self.loaded_paths=(); self.loaded_identities=[]
         self.endpoint=None; self.closed=False
@@ -151,11 +155,19 @@ class ReviewWorkspace:
         ttk.Button(controls,text="Apply display",command=self.redraw).pack(side="left")
         self.legend=tk.StringVar(value="Dataset colors: original cyan; corrected orange. Manual layers alternate.")
         ttk.Label(inspect,textvariable=self.legend,wraplength=1180).pack(anchor="w")
-        ttk.Label(inspect,text="Plan: click A then B to define a cut. Wheel: zoom; right drag: pan. Sections scan full files; display is bounded. Units follow LAS CRS.").pack(anchor="w")
+        ttk.Label(inspect,text="Section: in the main 3D Top view Ctrl-click A then B (standalone: click plan). Units follow LAS CRS.").pack(anchor="w")
         panes=ttk.Panedwindow(inspect,orient="vertical"); panes.pack(fill="both",expand=True)
         top=ttk.Frame(panes); bottom=ttk.Frame(panes); panes.add(top,weight=1); panes.add(bottom,weight=1)
-        self.plan=Plot(top,"Easting","Northing",self.pick)
+        if viewer is None:
+            self.plan=Plot(top,"Easting","Northing",self.pick)
+        else:
+            panes.forget(top)
+            self.plan=ViewerPlan(viewer)
+            viewer.on_section=self.pick
         self.profile=Plot(bottom,"Station from A (map units)","Elevation (map units)")
+        if viewer is not None:
+            files.pack_forget()
+            self.buttons[1].pack_forget(); self.buttons[2].pack_forget()
         self.poll_id=self.window.after(100,self.poll)
 
     def error(self, exc):
@@ -210,6 +222,9 @@ class ReviewWorkspace:
         if paths: self.clear_scene(); self.refresh_files(); self.tabs.select(self.inspect_tab)
 
     def launch(self, work):
+        # Finalize abandoned Tk objects on their owning UI thread.
+        import gc
+        gc.collect()
         if self.busy: return
         self.busy=True; self.cancel.clear(); self.started=time.monotonic(); self.progress="Working"
         for button in self.buttons: button.configure(state="disabled")
@@ -246,6 +261,7 @@ class ReviewWorkspace:
 
     def pick(self,xy):
         if self.busy: return
+        self.tabs.select(self.inspect_tab)
         if self.endpoint is None:
             self.endpoint=xy
             self.coords[0].set(f"{xy[0]:.6f}"); self.coords[1].set(f"{xy[1]:.6f}")
@@ -346,6 +362,8 @@ class ReviewWorkspace:
                 if self.cancel.is_set(): self.status.set("Stopped"); continue
                 if value[0]=="cloud":
                     _,self.loaded_paths,self.loaded_layers,self.scene,self.loaded_identities=value
+                    if self.external_viewer is not None:
+                        self.external_viewer.load(self.loaded_paths)
                     self.section=None; self.plan.corridor=None; self.endpoint=None
                     self.profile.set(np.empty((0,2)),np.empty((0,3)))
                     self.redraw()
@@ -363,4 +381,19 @@ class ReviewWorkspace:
 
 
 def open_review(app):
+    if hasattr(app,"workspace"):
+        app.workspace.tabs.select(app.workspace.review_tab)
+        return app.workspace.review
     return ReviewWorkspace(app.root)
+
+
+class ViewerPlan:
+    """Section plan operations delegated to the single embedded 3D camera."""
+    def __init__(self,viewer): self.viewer=viewer
+    @property
+    def corridor(self): return self.viewer.corridor
+    @corridor.setter
+    def corridor(self,value): self.viewer.corridor=value
+    def set(self,*args): self.viewer.draw()
+    def draw(self): self.viewer.draw()
+    def fit(self): self.viewer.fit()

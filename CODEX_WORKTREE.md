@@ -97,3 +97,13 @@ sections for original/corrected comparisons. Section geometry, counts,
 sampling, cancellation, input mutation and GUI rendering have synthetic tests.
 See docs/QA_REVIEW.md for workflow and limits. Z: was unavailable during this
 implementation, so no new Summerville/SH151 field-data validation is claimed.
+
+
+## Unified workspace and progress tracker
+
+Embedded the project controls and 3D viewer in the main desktop; QA and
+cross-sections are docked, with no main raster/2D cloud preview. Added workflow
+history, review decisions, conservative staleness, workspace persistence,
+point picking, filters, viewport refinement, and asset/deliverable controls.
+See docs/UNIFIED_WORKSPACE.md. Existing numerical pipelines and source datasets
+are unchanged; single-cloud processing stages remain explicit.

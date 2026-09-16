@@ -78,9 +78,17 @@ def self_test():
     assert any(isinstance(stage, AboveStage) for stage in app.stages)
     assert any(type(stage).__name__ == "ColorizeStage"
                for stage in app.stages)
+    from pyargus.workspace_state import Tracker
+    with tempfile.TemporaryDirectory(prefix="pyargus-workspace-") as temp:
+        state=Tracker(); job=state.begin("Inspect", {}, [])
+        state.finish(job,"Needs review"); state.decide("Inspect","Accepted","Packaging smoke test")
+        saved=Path(temp)/"workspace.json";state.save(saved)
+        assert Tracker.load(saved).status("Inspect")=="Accepted"
+    assert app.canvas is app.workspace.viewer.canvas
+    assert not isinstance(app.workspace.viewer.window,tk.Toplevel)
     from pyargus.project_gui import open_project
     project_window = open_project(app)
-    project_window.window.withdraw()
+    project_window.window.update_idletasks()
     assert project_window.counts.get() == "0 clouds; 0 trajectories"
     from pyargus.viewer3d import Viewer
     viewer = Viewer(window)
