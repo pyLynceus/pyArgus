@@ -107,3 +107,18 @@ history, review decisions, conservative staleness, workspace persistence,
 point picking, filters, viewport refinement, and asset/deliverable controls.
 See docs/UNIFIED_WORKSPACE.md. Existing numerical pipelines and source datasets
 are unchanged; single-cloud processing stages remain explicit.
+
+
+## GUI consolidation — September 16, 2026
+
+- One Project files sidebar and mixed-file import; source clouds display
+  automatically. Trajectory registration is shared with the viewer and survives
+  a cancelled display confirmation. Clock prerequisites select the sidebar rows.
+- Task selector with explicit entire-project / selected-cloud scope; project
+  output folder and single-cloud trajectory selection stay visible in context.
+- Hidden duplicate legacy input panels, compact camera presets, sidebar
+  visibility/actions, Log dock, readable job history and saved task selection.
+- Regression coverage includes import deduplication, missing clocks, routing,
+  selected trajectory configuration and removal without phantom re-import.
+- Standalone viewer/project adapters remain supported. Core QA, classification
+  and alignment algorithms are unchanged; see docs/UNIFIED_WORKSPACE.md.

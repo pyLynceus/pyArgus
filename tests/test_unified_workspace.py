@@ -105,3 +105,71 @@ def test_point_pick_and_top_section_coordinates(application,tmp_path):
     assert picked and picked[0]['classification']==2
     coords=[];v.on_section=coords.append;v.pick_section(SimpleNamespace(x=max(2,v.canvas.winfo_width())/2,y=max(2,v.canvas.winfo_height())/2))
     np.testing.assert_allclose(coords[0],v.center[:2])
+
+
+def test_mixed_import_registers_trajectories_before_display(application,tmp_path,monkeypatch):
+    app=application;w=app.workspace
+    las=tmp_path/'input.las';track=tmp_path/'flight.trj';cloud(las)
+    w.add_files([str(las),str(track),str(track)])
+    wait(app.root,w.viewer);w.poll()
+    assert w.project_panel.clouds==[str(las)]
+    assert [t.path for t in w.project_panel.tracks]==[str(track)]
+    assert w.project_panel.tracks[0].time_mode==''
+    assert 'NEED TIME BASE' in w.file_summary.get()
+    assert 'time base' in w.task_hint.get()
+    assert len(w.tracker.data['layers'])==2
+    w.persist();saved=json.loads(w.path.read_text())
+    assert saved['project']['trajectories'][0]['path']==str(track)
+    # Cancelling a coordinate confirmation must not orphan a viewer import.
+    another=tmp_path/'another.trj'
+    monkeypatch.setattr('tkinter.messagebox.askyesno',lambda *a,**k:False)
+    w.viewer.track([str(another)])
+    assert str(another) in [t.path for t in w.project_panel.tracks]
+    assert not w.viewer.busy
+
+
+def test_task_scope_routes_project_and_single_cloud(application,tmp_path,monkeypatch):
+    app=application;w=app.workspace;called=[]
+    monkeypatch.setattr(w.project_panel,'start',called.append)
+    monkeypatch.setattr(app,'run',lambda:called.append('single'))
+    app.task_name.set('Strip QA');w.select_task();w.run_task()
+    assert called==['qa'] and app.task_scope.get()=='Entire project'
+    app.task_name.set('Classify');w.select_task()
+    assert app.task_scope.get()=='Selected cloud'
+    w.set_active_cloud(str(tmp_path/'cloud.las'));w.run_task()
+    assert called==['qa','single'] and app.notebook.index(app.notebook.select())==1
+
+
+def test_remove_cloud_does_not_reimport_on_poll(application,tmp_path):
+    w=application.workspace;las=tmp_path/'cloud.las';cloud(las)
+    w.add_files([str(las)]);wait(application.root,w.viewer);w.poll()
+    w.layer_tree.selection_set('0');w.remove_layers();w.poll()
+    assert not w.project_panel.clouds and not w.tracker.data['layers']
+    assert not application.cloud_path.get() and w.viewer.scene is None
+    assert not w.review.loaded_paths
+
+
+def test_sidebar_trajectory_selection_drives_settings(application,tmp_path):
+    w=application.workspace;track=tmp_path/'flight.trj'
+    w.add_files([str(track)]);w.layer_tree.selection_set('0');w.select_layer()
+    assert w.project_panel.track_box.curselection()==(0,)
+    w.project_panel.track_time.set('same');w.project_panel.apply_track_settings()
+    assert w.project_panel.tracks[0].time_mode=='same'
+    assert 'NEED TIME BASE' not in w.file_summary.get()
+
+
+def test_missing_clock_opens_settings_and_selects_sidebar(application,tmp_path):
+    w=application.workspace;w.add_files([str(tmp_path/'flight.trj')])
+    with pytest.raises(ValueError,match='time base'):w.project_panel.check_time_settings()
+    assert w.tabs.select()==str(w.project_tab)
+    assert w.layer_tree.selection()==('0',)
+
+
+def test_single_cloud_trajectory_uses_configured_clock(application,tmp_path):
+    app=application;w=app.workspace;path=str(tmp_path/'flight.trj')
+    w.add_files([path]);w.layer_tree.selection_set('0');w.select_layer()
+    w.project_panel.track_time.set('week');w.project_panel.apply_track_settings()
+    app.task_name.set('Align');w.select_task();app.task_scope.set('Selected cloud');w.select_task(reset_scope=False)
+    app.sbet_path.set(path);w.sync_single_trajectory()
+    assert app.trj_time.get()=='week'
+    assert w.single_trajectory.winfo_manager()=='pack'

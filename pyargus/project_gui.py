@@ -100,6 +100,14 @@ class ProjectWindow:
         ttk.Button(actions,text='Stop',command=app.runner.cancel).pack(side='left',padx=3)
         ttk.Label(body,textvariable=app.job_status).pack(anchor='w')
         ttk.Label(body,text='Progress and output paths appear in the main window job log. Classification and surface tabs remain single-cloud tools.').pack(anchor='w')
+        if parent is not None:
+            lists.pack_forget()
+            file_actions.pack_forget()
+            actions.pack_forget()
+            output.pack_forget()
+            self.tabs.tab(inputs, text='Trajectory settings')
+            for widget in body.winfo_children():
+                if isinstance(widget, ttk.Label): widget.pack_forget()
         self.refresh()
 
     def _files_panel(self,parent,title,is_track):
@@ -127,6 +135,9 @@ class ProjectWindow:
         for i in track_selection: self.track_box.select_set(i)
         unset = sum(t.time_mode not in ('same','week') for t in self.tracks)
         self.counts.set(f'{len(self.clouds)} clouds; {len(self.tracks)} trajectories' + (f' — {unset} NEED TIME BASE' if unset else ''))
+        workspace=getattr(self.app, 'workspace', None)
+        if workspace is not None and workspace.project_panel is self:
+            workspace.sync_project_layers()
 
     def add_paths(self,paths,is_track):
         existing = {t.path for t in self.tracks} if is_track else set(self.clouds)
@@ -187,6 +198,12 @@ class ProjectWindow:
         self.track_box.selection_clear(0,'end')
         for i in missing: self.track_box.selection_set(i)
         self.track_box.see(missing[0])
+        workspace=getattr(self.app,'workspace',None)
+        if workspace is not None:
+            wanted={self.tracks[i].path for i in missing}
+            rows=[str(i) for i,l in enumerate(workspace.tracker.data['layers']) if l['path'] in wanted]
+            workspace.layer_tree.selection_set(rows)
+            workspace.tabs.select(workspace.project_tab)
         raise ValueError(f'{len(missing)} trajectories need a time base. They are now selected. '
                          'Choose same or week, then click Apply to selected, or Apply time base to ALL trajectories. '
                          'Each file must show [same; ...] or [week; ...] instead of [set time; ...].')
