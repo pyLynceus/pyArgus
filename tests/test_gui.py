@@ -17,11 +17,16 @@ from pyargus.gui import (Application, StageRunner, find_pylynceus,
                          preview_image, pylynceus_command)
 
 
-@pytest.fixture()
-def root():
-    # Creating several Tk roots back to back occasionally fails on the
-    # first try while the previous one is still tearing down; one
-    # retry settles it, and a machine with no display still skips.
+def make_root():
+    """A withdrawn Tk root, or a skip where no display will give one.
+
+    Creating several Tk roots back to back occasionally fails on the
+    first try while the previous one is still tearing down; one retry
+    settles it, and a machine with no display still skips. Tests
+    outside this module reach it through an in-test import, so that
+    importing it is itself the Tk availability check and a module of
+    format tests is not skipped wholesale for want of a window.
+    """
     import time
 
     window = None
@@ -34,6 +39,12 @@ def root():
     if window is None:
         pytest.skip("no display for Tk")
     window.withdraw()
+    return window
+
+
+@pytest.fixture()
+def root():
+    window = make_root()
     yield window
     window.destroy()
 

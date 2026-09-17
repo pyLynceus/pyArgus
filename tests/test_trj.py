@@ -92,9 +92,12 @@ def test_cli_inspection_and_alias(tmp_path,capsys):
     assert args.sbet == str(p) and args.trj_confirmed
 
 def test_gui_inspection(tmp_path, monkeypatch):
-    import tkinter as tk
+    # Imported inside the test on purpose: test_gui skips itself where
+    # Tk is missing, so this import skips this test alone and leaves
+    # the native-format tests above to run on a machine without it.
+    from tests.test_gui import make_root
     from pyargus import gui
-    root = tk.Tk(); root.withdraw()
+    root = make_root()
     try:
         app = gui.Application(root)
         app.sbet_path.set(str(make_file(tmp_path/'native.trj')))

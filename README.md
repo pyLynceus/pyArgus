@@ -350,3 +350,15 @@ Stop remains active during file scans, SQL reduction, and report writing.
 This release was tested on the full 15.28M-point Summerville reference and
 synthetic multi-file cases; the complete 402M-point Connector block has not yet
 been run through this release.
+
+
+## License
+
+Apache-2.0; the full text is in `LICENSE`. The patent grant is the
+reason for choosing it over MIT: this repository's reason to exist is
+a least-squares strip adjustment, and an explicit grant is worth more
+around an algorithm than around glue code.
+
+The copyright line in the LICENSE appendix reads "the pyArgus
+authors". Replace it with the legal entity that should hold the
+copyright before the project is promoted anywhere.
