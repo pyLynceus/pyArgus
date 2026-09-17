@@ -234,10 +234,10 @@ def test_changed_trajectory_during_alignment_refuses(scene,tmp_path,monkeypatch)
 
 
 def test_project_window_bulk_selection_and_snapshot(scene,monkeypatch):
-    import tkinter as tk
+    from tests.test_gui import make_root
     from pyargus.gui import Application
     from pyargus.project_gui import open_project
-    root=tk.Tk(); root.withdraw()
+    root=make_root()
     try:
         app=Application(root); w=open_project(app)
         w.window.update_idletasks()
