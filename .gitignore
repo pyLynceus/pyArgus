@@ -52,3 +52,5 @@ usability-reference.log
 dist-large-qa/
 build-large-qa/
 large-qa-build.log
+
+pyargus-job-records/

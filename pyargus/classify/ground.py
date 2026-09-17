@@ -105,6 +105,43 @@ def smrf(x, y, z, *, cell=1.0, slope=0.15, window=18.0, threshold=0.5,
         raise ValueError("window must be at least one cell")
 
     x_edges, y_edges = gridding.grid_edges(x, y, cell)
+    surface = ground_surface(x, y, z, x_edges, y_edges, cell=cell,
+                             slope=slope, window=window, low_cut=low_cut)
+    ground = classify_against(surface, x, y, z, threshold=threshold,
+                              scalar=scalar)
+    return GroundResult(ground=ground, dem=surface.dem,
+                        dem_slope=surface.dem_slope,
+                        object_cells=surface.object_cells,
+                        low_cells=surface.low_cells,
+                        x_edges=x_edges, y_edges=y_edges)
+
+
+@dataclass
+class GroundSurface:
+    """The DEM half of SMRF, separable from the point classification.
+
+    Splitting the two is what lets a cloud larger than memory be
+    classified: the surface is a RASTER, small enough to hold for a
+    whole project (a 10,569 ft SH 151 strip at 3 ft cells is about
+    24 MB for all four grids), so it can be built tile by tile and
+    then applied to the points in one streaming pass.
+    """
+    dem: np.ndarray
+    dem_slope: np.ndarray
+    object_cells: np.ndarray
+    low_cells: np.ndarray
+    x_edges: np.ndarray
+    y_edges: np.ndarray
+
+
+def ground_surface(x, y, z, x_edges, y_edges, *, cell=1.0, slope=0.15,
+                   window=18.0, low_cut=None):
+    """Build the SMRF ground surface on the GIVEN grid.
+
+    Taking the edges rather than deriving them is the whole point: two
+    tiles handed the same lattice produce cells that line up exactly,
+    which is what makes a tiled DEM assemblable.
+    """
     zmin = gridding.min_grid(x, y, z, x_edges, y_edges)
     surface = gridding.inpaint_nearest(zmin)
     max_radius = max(1, int(np.ceil(window / cell)))
@@ -125,16 +162,24 @@ def smrf(x, y, z, *, cell=1.0, slope=0.15, window=18.0, threshold=0.5,
                          "entire surface")
     dem = gridding.inpaint_nearest(np.where(keep, zmin, np.nan))
     gx, gy = np.gradient(dem, cell)
-    dem_slope = np.hypot(gx, gy)
+    return GroundSurface(dem=dem, dem_slope=np.hypot(gx, gy),
+                         object_cells=object_cells, low_cells=low_cells,
+                         x_edges=x_edges, y_edges=y_edges)
 
-    dem_at = gridding.bilinear_sample(dem, x, y, x_edges, y_edges)
-    slope_at = gridding.bilinear_sample(dem_slope, x, y, x_edges, y_edges)
-    allowance = threshold + scalar * slope_at
-    ground = np.abs(z - dem_at) <= allowance
 
-    return GroundResult(ground=ground, dem=dem, dem_slope=dem_slope,
-                        object_cells=object_cells, low_cells=low_cells,
-                        x_edges=x_edges, y_edges=y_edges)
+def classify_against(surface, x, y, z, *, threshold=0.5, scalar=1.25):
+    """Ground mask for points, judged against a prebuilt surface.
+
+    The allowance loosens on steep ground exactly as PDAL's
+    implementation does. Points outside the surface's grid sample its
+    edge, so a caller must only hand over points the grid covers.
+    """
+    dem_at = gridding.bilinear_sample(surface.dem, x, y,
+                                      surface.x_edges, surface.y_edges)
+    slope_at = gridding.bilinear_sample(surface.dem_slope, x, y,
+                                        surface.x_edges, surface.y_edges)
+    return np.abs(np.asarray(z, dtype=float) - dem_at) <= (
+        threshold + scalar * slope_at)
 
 
 def confusion(predicted, reference):
