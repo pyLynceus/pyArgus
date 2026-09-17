@@ -22,9 +22,13 @@
 
 name: tests
 
+# A pull request is covered by the pull_request trigger, so pushing to
+# every branch as well ran the whole matrix TWICE per push -- six jobs
+# where three answer the question. Push covers the default branch (and
+# anything merged into it without a PR); pull_request covers the rest.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 permissions:
