@@ -11,12 +11,14 @@ from pyargus import project
 
 
 class ProjectWindow:
-    def __init__(self, app):
+    def __init__(self, app, parent=None):
         self.app = app
-        self.window = tk.Toplevel(app.root)
-        self.window.title('pyArgus — Multi-file project')
-        self.window.geometry('1040x720')
-        self.window.minsize(800,600)
+        self.window = ttk.Frame(parent) if parent is not None else tk.Toplevel(app.root)
+        if parent is not None: self.window.pack(fill='both',expand=True)
+        else:
+            self.window.title('pyArgus — Multi-file project')
+            self.window.geometry('1040x720')
+            self.window.minsize(800,600)
         self.clouds, self.tracks, self.bindings = [], [], {}
         self.inventory = None
         self.actions = []
@@ -50,7 +52,7 @@ class ProjectWindow:
         ttk.Button(file_actions,text='Load project…',command=self.load_project).pack(side='left')
         ttk.Button(file_actions,text='Save project…',command=self.save_project).pack(side='left',padx=4)
         from pyargus.viewer3d import Viewer
-        ttk.Button(file_actions,text="3D viewer…",command=lambda: Viewer(app.root,list(self.clouds))).pack(side="left",padx=4)
+        ttk.Button(file_actions,text="3D viewer…",command=lambda: app.workspace.load_project_clouds() if hasattr(app,"workspace") else Viewer(app.root,list(self.clouds))).pack(side="left",padx=4)
         self.counts = tk.StringVar(); ttk.Label(file_actions,textvariable=self.counts).pack(side='right')
         self.crs = tk.StringVar()
         self.vertical = tk.StringVar(value='EPSG:6360')
@@ -98,6 +100,14 @@ class ProjectWindow:
         ttk.Button(actions,text='Stop',command=app.runner.cancel).pack(side='left',padx=3)
         ttk.Label(body,textvariable=app.job_status).pack(anchor='w')
         ttk.Label(body,text='Progress and output paths appear in the main window job log. Classification and surface tabs remain single-cloud tools.').pack(anchor='w')
+        if parent is not None:
+            lists.pack_forget()
+            file_actions.pack_forget()
+            actions.pack_forget()
+            output.pack_forget()
+            self.tabs.tab(inputs, text='Trajectory settings')
+            for widget in body.winfo_children():
+                if isinstance(widget, ttk.Label): widget.pack_forget()
         self.refresh()
 
     def _files_panel(self,parent,title,is_track):
@@ -125,6 +135,9 @@ class ProjectWindow:
         for i in track_selection: self.track_box.select_set(i)
         unset = sum(t.time_mode not in ('same','week') for t in self.tracks)
         self.counts.set(f'{len(self.clouds)} clouds; {len(self.tracks)} trajectories' + (f' — {unset} NEED TIME BASE' if unset else ''))
+        workspace=getattr(self.app, 'workspace', None)
+        if workspace is not None and workspace.project_panel is self:
+            workspace.sync_project_layers()
 
     def add_paths(self,paths,is_track):
         existing = {t.path for t in self.tracks} if is_track else set(self.clouds)
@@ -185,6 +198,12 @@ class ProjectWindow:
         self.track_box.selection_clear(0,'end')
         for i in missing: self.track_box.selection_set(i)
         self.track_box.see(missing[0])
+        workspace=getattr(self.app,'workspace',None)
+        if workspace is not None:
+            wanted={self.tracks[i].path for i in missing}
+            rows=[str(i) for i,l in enumerate(workspace.tracker.data['layers']) if l['path'] in wanted]
+            workspace.layer_tree.selection_set(rows)
+            workspace.tabs.select(workspace.project_tab)
         raise ValueError(f'{len(missing)} trajectories need a time base. They are now selected. '
                          'Choose same or week, then click Apply to selected, or Apply time base to ALL trajectories. '
                          'Each file must show [same; ...] or [week; ...] instead of [set time; ...].')
@@ -279,6 +298,7 @@ class ProjectWindow:
         runner.stage_name = f'Project {mode}'
         self.app.run_button.configure(state='disabled'); self.app.stop_button.configure(state='normal')
         for b in self.actions: b.configure(state='disabled')
+        if hasattr(self.app,'workspace'): self.app.workspace.begin_project(mode,spec,out)
         runner.start(work); self.app._stage_open=True; self.app._update_job_status()
         def finish():
             if not self.window.winfo_exists(): return
@@ -305,6 +325,9 @@ class ProjectWindow:
 
 
 def open_project(app):
+    if hasattr(app,'workspace'):
+        app.workspace.tabs.select(app.workspace.project_tab)
+        return app.workspace.project_panel
     previous = getattr(app,'project_window',None)
     if previous is not None and previous.window.winfo_exists():
         previous.window.lift(); return previous

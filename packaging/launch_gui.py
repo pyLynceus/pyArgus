@@ -61,13 +61,34 @@ def self_test():
         spec.max_points = 1
         report = project.qa(spec, Path(temp) / "large-qa")
         assert report["mode"] == "disk-backed" and report["points"] == 6
+        from pyargus.sections import extract_section, export_section
+        from pyargus.review import load_review, review_rows
+        section = extract_section(paths, [0., 0.], [2., 0.], 1., limit=10)
+        assert section.matched == 6 and len(section.points) == 6
+        export_section(section, Path(temp) / "section.csv")
+        job_path = next(Path(temp).glob("large-qa.job-*.json"))
+        review = load_review(job_path)
+        assert review_rows(review)[0]["after"] == "completed"
     window = tk.Tk()
     window.withdraw()
     app = Application(window)
-    assert isinstance(app.stages[-1], AboveStage)
+    # by TYPE, not position: appending a stage broke this assert and
+    # the two test files that shared the habit, and pytest does not
+    # collect this file so the suite stayed green while it was broken
+    assert any(isinstance(stage, AboveStage) for stage in app.stages)
+    assert any(type(stage).__name__ == "ColorizeStage"
+               for stage in app.stages)
+    from pyargus.workspace_state import Tracker
+    with tempfile.TemporaryDirectory(prefix="pyargus-workspace-") as temp:
+        state=Tracker(); job=state.begin("Inspect", {}, [])
+        state.finish(job,"Needs review"); state.decide("Inspect","Accepted","Packaging smoke test")
+        saved=Path(temp)/"workspace.json";state.save(saved)
+        assert Tracker.load(saved).status("Inspect")=="Accepted"
+    assert app.canvas is app.workspace.viewer.canvas
+    assert not isinstance(app.workspace.viewer.window,tk.Toplevel)
     from pyargus.project_gui import open_project
     project_window = open_project(app)
-    project_window.window.withdraw()
+    project_window.window.update_idletasks()
     assert project_window.counts.get() == "0 clouds; 0 trajectories"
     from pyargus.viewer3d import Viewer
     viewer = Viewer(window)
@@ -79,6 +100,16 @@ def self_test():
     viewer.draw(); viewer.view(40,30)
     assert viewer.photo.width() > 0
     viewer.close()
+    from pyargus.review_gui import ReviewWorkspace
+    workspace = ReviewWorkspace(window)
+    workspace.window.withdraw()
+    workspace.record = review
+    workspace.refresh()
+    assert workspace.tree.get_children()
+    workspace.profile.set(section.points[:, [3, 2]],
+                          np.tile([58, 190, 255], (len(section.points), 1)), 5.)
+    assert workspace.profile.photo.width() > 0
+    workspace.close()
     window.update_idletasks()
     window.destroy()
     return 0
