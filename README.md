@@ -359,6 +359,4 @@ reason for choosing it over MIT: this repository's reason to exist is
 a least-squares strip adjustment, and an explicit grant is worth more
 around an algorithm than around glue code.
 
-The copyright line in the LICENSE appendix reads "the pyArgus
-authors". Replace it with the legal entity that should hold the
-copyright before the project is promoted anywhere.
+Copyright is held by Mapworks, LLC.
