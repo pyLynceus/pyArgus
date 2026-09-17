@@ -1,0 +1,62 @@
+# The unit suite on every push and pull request.
+#
+# What this gate IS: proof that the suite still passes on a clean
+# machine that has never seen this project -- no OneDrive checkout, no
+# .venv built by hand, no Windows, and nothing cached from a previous
+# run. It catches the failure a single-machine workflow cannot see: a
+# dependency that was only ever installed locally, an import that only
+# resolves from the developer's path, a test that passes because of a
+# file left behind by the last run.
+#
+# What this gate is NOT: the acceptance battery. `reference/run_all.py`
+# needs the read-only Z: reference drive and the cached geoid grid,
+# neither of which exists here, and CLAUDE.md still requires it by hand
+# after any substantive change to qa/, align/, classify/, surfaces/ or
+# formats/. A green check here says the code imports and the synthetic
+# truth still holds. It says nothing about survey accuracy.
+#
+# Tk and pdal are absent on these runners, so the desktop and COPC-write
+# tests SKIP rather than fail; `-ra` prints every skip so a silently
+# shrinking suite is visible in the log rather than hidden behind a
+# green tick.
+
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor named in pyproject.toml, and the version the
+        # project is actually developed and packaged on.
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the project and its dev extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Record what was actually installed
+        run: python -m pip freeze
+
+      - name: Run the unit suite
+        run: python -m pytest tests/ -q -ra
