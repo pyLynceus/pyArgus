@@ -80,6 +80,16 @@ def write_copc(src, dst, *, pdal=None, timeout=None):
     """
     from pyargus.formats import las as las_mod
 
+    # The caller's own arguments are judged FIRST: a bad output name is
+    # knowable without any external tool, and probing for pdal ahead of
+    # it answered "install pdal" to someone whose real mistake was the
+    # filename -- and left the naming rule unreachable, and untested, on
+    # every machine without pdal.
+    src, dst = Path(src), Path(dst)
+    if not str(dst).endswith(".copc.laz"):
+        raise ValueError(
+            f"a COPC file is conventionally named *.copc.laz so readers "
+            f"can tell; got {dst.name}")
     exe = find_pdal(pdal)
     if exe is None:
         raise ValueError(
@@ -87,11 +97,6 @@ def write_copc(src, dst, *, pdal=None, timeout=None):
             "or in a QGIS/OSGeo4W install. laspy reads COPC but cannot "
             "write it. Install pdal (conda-forge, or the QGIS bundle) or "
             "pass its path.")
-    src, dst = Path(src), Path(dst)
-    if not str(dst).endswith(".copc.laz"):
-        raise ValueError(
-            f"a COPC file is conventionally named *.copc.laz so readers "
-            f"can tell; got {dst.name}")
     before = las_mod.cloud_info(src)
 
     command = [exe, "translate", str(src), str(dst),
