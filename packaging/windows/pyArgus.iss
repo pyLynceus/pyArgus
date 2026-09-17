@@ -14,7 +14,7 @@
 AppId={{9DBB96F0-9015-4808-83F1-8255C8306485}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=Platinum Geomatics
+AppPublisher=Mapworks, LLC
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 PrivilegesRequired=lowest
