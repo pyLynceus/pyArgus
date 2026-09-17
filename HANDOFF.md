@@ -521,6 +521,48 @@ pick by type now; and a second `_FakeRunner` defined at the bottom of
 `test_gui.py` silently shadowed the real one. Reuse the fixture that
 is already there.
 
+## Tiled ground classification
+
+`pyargus classify-ground --tiled` builds the SMRF surface tile by
+tile, so a cloud larger than memory can be classified. `classify/
+tiles.py` holds the geometry; `classify/job.py` holds BOTH drivers --
+`classify_ground_whole` (the plain command and the desktop Classify
+stage) and `classify_ground_tiled` -- and the lattice, candidate
+policy (`candidates`: last returns unless `--any-return`) and
+labeling rule (`labels`) they share. Keep it that way: the first
+tiled driver re-implemented the rule, labeled every non-last return
+near the DEM as ground, and disagreed with the plain command on 9-19%
+of a multi-return cloud while every test stayed green.
+
+Why it works: SMRF's expensive half makes a RASTER (24 MB for a
+10,569 ft SH 151 strip of 41.4M points) and its cheap half is one
+bilinear sample per point. Build the surface tiled, apply it streamed.
+
+* **The halo is the whole problem.** The progressive opening is
+  ITERATIVE, so influence accumulates as R(R+1) cells, not R -- 1,260
+  ft at cell 3 / window 60. That bound is the default. Measured: no
+  halo puts a 30 ft error in the DEM where a building straddles a
+  seam; 2 * window was exact on that scene; under 2 * window REFUSES.
+* **Verified against the plain command, with real seams**: 0 of
+  15,284,332 differ on Summerville (window 30, 12 tiles, every box
+  short of the project) and 0 of 41,366,226 on an SH 151 strip at the
+  DEFAULT halo (8 tiles). A seam is real only if the tile's halo box
+  stops short of the project -- `plan_summary` counts them, and both
+  acceptances refuse otherwise. Compare against the COMMAND, never a
+  mask built for the purpose: the first acceptance did the latter and
+  its 0 answered a different question.
+* **Memory is set by the largest halo box**, not the raster: the box
+  can never be much under 2 * halo across, and at the default tile
+  size a strip plans as 2 tiles, one holding 83% of it. `--tile-size`
+  trades memory for overlap; the job logs the plan's cost before it
+  runs and the most points one tile held after.
+* **No COPC index means one full pass per tile, plus one to write**,
+  and the job counts them. An index removes passes, not overlap.
+* **The grid comes from the LAS header** in both commands; a stale
+  header refuses, `--rescan` takes the extent from the points.
+* **COPC reorders points**: row i of a copy is not row i of the
+  source. Do not pair them by index.
+
 ## Next step, with reasoning
 
 **The roadmap is complete.** What remains open, by value: (1) THE
@@ -528,11 +570,7 @@ REAL PROJECT (SH 151, set aside pending the vendor's LCP2 list): the
 lidar block is internally rigid and the misses are position-locked;
 when the vendor responds, re-occupy the worst marks and decide
 between control-net vs lidar-datum error -- reference/sh151_* holds
-the case. (2) A GUI stage for colorize; it is CLI-only. (3)
-Tiling with a halo for SMRF ground classification -- the last
-genuinely whole-cloud consumer besides the TIN and the solve, and the
-thing standing between streaming and classifying a 900M-point block.
-(4) Archive any vendor-stated miscalibrated flight as the final
+the case. (2) Archive any vendor-stated miscalibrated flight as the final
 alignment acceptance.
 
 ## Findings so far

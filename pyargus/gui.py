@@ -399,40 +399,48 @@ class QaStage:
         trj_time = app.trj_time.get()
 
         def work(runner):
-            from pyargus.formats import las
+            from pyargus.analysis_records import analysis_job, finish, defaults
             from pyargus.qa import report
+            settings = dict(defaults(report.generate), control_order=order, trj_time=trj_time)
+            with analysis_job("qa", out_dir, settings, inputs=[cloud, sbet_path], controls=[control_csv] if control_csv else [], log=runner.log) as record:
+                from pyargus.formats import las
+                from pyargus.qa import report
 
-            runner.log(f"reading {cloud}")
-            fields = ["x", "y", "z", "classification", "point_source_id"]
-            if sbet_path:
-                fields.append("gps_time")
-            points = las.read_points(cloud, fields=tuple(fields))
-            control = None
-            if control_csv:
-                from pyargus.formats import control as control_mod
-                control = control_mod.read_control_csvs([control_csv], order)
-            traj_time, time_mode = None, "week"
-            if sbet_path:
-                from pyargus.formats.trajectory import read_times
-                traj_time, time_mode = read_times(sbet_path, trj_time=trj_time)
-            if cancelled_before(runner, "the report"):
-                return
-            summary = report.generate(points, out_dir,
-                                      title=Path(cloud).name,
-                                      control=control, traj_time=traj_time, time_mode=time_mode)
-            for pair in summary["strip_dz"]:
-                runner.log(f"dz {pair['a']}-{pair['b']}: "
-                           f"median {pair['median']:+.3f}  "
-                           f"rmse {pair['rmse']:.3f}")
-            if "control" in summary and "median" in summary["control"]:
-                c = summary["control"]
-                runner.log(f"control: n {c['n']}  median {c['median']:+.3f}"
-                           f"  nmad {c['nmad']:.3f}")
-            runner.log(f"report: {summary['report']}")
-            from pyargus.qa import density, raster
-            dens, _, _ = density.density_grid(points["x"], points["y"],
-                                              cell=3.0)
-            runner.report = raster.sequential_rgba(dens)
+                runner.log(f"reading {cloud}")
+                fields = ["x", "y", "z", "classification", "point_source_id"]
+                if sbet_path:
+                    fields.append("gps_time")
+                points = las.read_points(cloud, fields=tuple(fields))
+                control = None
+                if control_csv:
+                    from pyargus.formats import control as control_mod
+                    control = control_mod.read_control_csvs([control_csv], order)
+                traj_time, time_mode = None, "week"
+                if sbet_path:
+                    from pyargus.formats.trajectory import read_times
+                    traj_time, time_mode = read_times(sbet_path, trj_time=trj_time)
+                if cancelled_before(runner, "the report"):
+                    finish(record, {}, status="cancelled")
+                    return
+                record.data["settings"].update(title=Path(cloud).name, time_mode=time_mode)
+                summary = report.generate(points, out_dir,
+                                          title=Path(cloud).name,
+                                          control=control, traj_time=traj_time, time_mode=time_mode)
+                for pair in summary["strip_dz"]:
+                    runner.log(f"dz {pair['a']}-{pair['b']}: "
+                               f"median {pair['median']:+.3f}  "
+                               f"rmse {pair['rmse']:.3f}")
+                if "control" in summary and "median" in summary["control"]:
+                    c = summary["control"]
+                    runner.log(f"control: n {c['n']}  median {c['median']:+.3f}"
+                               f"  nmad {c['nmad']:.3f}")
+                runner.log(f"report: {summary['report']}")
+                from pyargus.qa import density, raster
+                dens, _, _ = density.density_grid(points["x"], points["y"],
+                                                  cell=3.0)
+                runner.report = raster.sequential_rgba(dens)
+
+                finish(record, summary, outputs=[Path(out_dir)/"report.html"])
 
         return work
 
@@ -472,34 +480,21 @@ class ClassifyStage:
         threshold = _float(self.threshold.get(), "Threshold")
 
         def work(runner):
-            import laspy
-
-            from pyargus.classify import ground
+            # the same job as `pyargus classify-ground`: one lattice, one
+            # candidate policy, one labeling rule, so the two cannot drift
+            from pyargus.classify import job as ground_job
 
             runner.log(f"reading {cloud}")
-            las = laspy.read(cloud)
-            x, y, z = (np.asarray(las.x), np.asarray(las.y),
-                       np.asarray(las.z))
-            try:
-                eligible = (np.asarray(las.return_number)
-                            == np.asarray(las.number_of_returns))
-            except AttributeError:
-                eligible = np.ones(x.size, dtype=bool)
-            result = ground.smrf(x[eligible], y[eligible], z[eligible],
-                                 cell=cell, slope=slope, window=window,
-                                 threshold=threshold)
-            if cancelled_before(runner, "writing"):
+            result = ground_job.classify_ground_whole(
+                cloud, out, cell=cell, slope=slope, window=window,
+                threshold=threshold, log=runner.log, keep_points=True,
+                should_stop=lambda: cancelled_before(runner, "writing"))
+            if result.get("cancelled"):
                 return
-            classification = np.ones(x.size, dtype=np.uint8)
-            classification[np.flatnonzero(eligible)[result.ground]] = 2
-            las.classification = classification
-            las.write(out)
-            n = int(result.ground.sum())
-            runner.log(f"ground: {n:,} ({100.0 * n / x.size:.1f}% of cloud)")
-            runner.log(f"wrote: {out}")
             runner.products.append(("classified", Path(out)))
             from pyargus import stage_preview
-            stage_preview.publish(runner, stage_preview.classification, x, y, z, classification)
+            stage_preview.publish(runner, stage_preview.classification,
+                                  *result["points"])
 
         return work
 
@@ -816,66 +811,82 @@ class AlignStage:
             _refuse_existing(write, "the corrected cloud")
 
         def work(runner):
-            import laspy
+            from pyargus.analysis_records import analysis_job, finish, alignment_result, defaults
+            from pyargus.align import solve_alignment
+            settings = dict(defaults(solve_alignment), cell=ALIGN_CELL, min_points=ALIGN_MIN_POINTS,
+                            vertical=vertical, allow_network=network, trj_time=trj_time,
+                            trj_confirmed=trj_confirmed, ground_class=2)
+            with analysis_job("align", write, settings, inputs=[cloud, sbet_path], log=runner.log) as record:
+                import laspy
 
-            from pyargus.align import attach, solve_alignment
-            from pyargus.formats import las as las_mod
+                from pyargus.align import attach, solve_alignment
+                from pyargus.formats import las as las_mod
 
-            runner.log(f"reading {cloud}")
-            points = las_mod.read_points(
-                cloud, fields=("x", "y", "z", "gps_time",
-                               "point_source_id", "classification"))
-            from pyargus.formats.trajectory import load_alignment, is_trj
-            with laspy.open(cloud) as reader:
-                map_crs = reader.header.parse_crs()
-            if map_crs is None and not is_trj(sbet_path):
-                raise ValueError(f"{cloud} declares no CRS")
-            trajectory, (map_e, map_n, map_z), time_mode = load_alignment(
-                sbet_path, map_crs, vertical=vertical, allow_network=network,
-                trj_time=trj_time, trj_confirmed=trj_confirmed)
-            mask = points["classification"] == 2
-            if not mask.any():
-                raise ValueError("no class-2 points to solve on; "
-                                 "classify first")
-            sub = {k: points[k][mask] for k in
-                   ("x", "y", "z", "gps_time", "point_source_id")}
-            attached = attach.bundles_from_cloud(sub, trajectory,
-                                                 map_e, map_n, map_z, time_mode=time_mode)
-            clock_label = f"week {attached.gps_week}" if attached.gps_week is not None else "same stored timestamps"
-            runner.log(f"{clock_label}, heading "
-                       f"{attached.heading_source!r}, "
-                       f"AGL {attached.agl_median:.0f}")
-            if cancelled_before(runner, "the solve"):
-                return
-            result = solve_alignment(attached.bundles, cell=ALIGN_CELL,
-                                     min_points=ALIGN_MIN_POINTS)
-            runner.log(f"boresight {result.boresight}")
-            for i, sid in enumerate(attached.strip_ids):
-                runner.log(f"offset strip {sid}: "
-                           f"{result.offsets[i, 2]:+.4f}")
-            runner.log(f"patch rms {result.rms_before:.3f} -> "
-                       f"{result.rms_after:.3f}")
-            if write and cancelled_before(runner, "writing"):
-                return
-            if write:
-                offsets = {sid: result.offsets[i]
-                           for i, sid in enumerate(attached.strip_ids)}
-                xyz, skipped = attach.apply_corrections(
-                    points, trajectory, map_e, map_n, map_z,
-                    attached.heading_source, result.boresight, offsets, time_mode=time_mode)
+                runner.log(f"reading {cloud}")
+                points = las_mod.read_points(
+                    cloud, fields=("x", "y", "z", "gps_time",
+                                   "point_source_id", "classification"))
+                from pyargus.formats.trajectory import load_alignment, is_trj
+                with laspy.open(cloud) as reader:
+                    map_crs = reader.header.parse_crs()
+                if map_crs is None and not is_trj(sbet_path):
+                    raise ValueError(f"{cloud} declares no CRS")
+                trajectory, (map_e, map_n, map_z), time_mode = load_alignment(
+                    sbet_path, map_crs, vertical=vertical, allow_network=network,
+                    trj_time=trj_time, trj_confirmed=trj_confirmed)
+                record.data["resolved_frame"] = dict(map_crs=str(map_crs) if map_crs is not None else None, vertical=vertical, time_mode=time_mode)
+                mask = points["classification"] == 2
+                if not mask.any():
+                    raise ValueError("no class-2 points to solve on; "
+                                     "classify first")
+                sub = {k: points[k][mask] for k in
+                       ("x", "y", "z", "gps_time", "point_source_id")}
+                attached = attach.bundles_from_cloud(sub, trajectory,
+                                                     map_e, map_n, map_z, time_mode=time_mode)
+                clock_label = f"week {attached.gps_week}" if attached.gps_week is not None else "same stored timestamps"
+                runner.log(f"{clock_label}, heading "
+                           f"{attached.heading_source!r}, "
+                           f"AGL {attached.agl_median:.0f}")
+                if cancelled_before(runner, "the solve"):
+                    finish(record, {}, status="cancelled")
+                    return
+                result = solve_alignment(attached.bundles, cell=ALIGN_CELL,
+                                         min_points=ALIGN_MIN_POINTS)
+                metrics = alignment_result(result, attached.strip_ids)
+                metrics["corrections_written"] = False
+                record.data["results"] = metrics
+                record.save()
+                runner.log(f"boresight {result.boresight}")
+                for i, sid in enumerate(attached.strip_ids):
+                    runner.log(f"offset strip {sid}: "
+                               f"{result.offsets[i, 2]:+.4f}")
+                runner.log(f"patch rms {result.rms_before:.3f} -> "
+                           f"{result.rms_after:.3f}")
+                if write and cancelled_before(runner, "writing"):
+                    finish(record, metrics, status="cancelled")
+                    return
+                if write:
+                    offsets = {sid: result.offsets[i]
+                               for i, sid in enumerate(attached.strip_ids)}
+                    xyz, skipped = attach.apply_corrections(
+                        points, trajectory, map_e, map_n, map_z,
+                        attached.heading_source, result.boresight, offsets, time_mode=time_mode)
 
-                def place(chunk, start):
-                    block = xyz[start:start + chunk["x"].size]
-                    return {"x": block[:, 0], "y": block[:, 1],
-                            "z": block[:, 2]}
+                    def place(chunk, start):
+                        block = xyz[start:start + chunk["x"].size]
+                        return {"x": block[:, 0], "y": block[:, 1],
+                                "z": block[:, 2]}
 
-                # stream the copy: reading the whole record a second
-                # time is what put a ceiling on the cloud size here
-                las_mod.stream_update(cloud, write, place, fields=("x",))
-                runner.log(f"wrote: {write}"
-                           + (f" ({skipped:,} outside trajectory "
-                              f"unchanged)" if skipped else ""))
-                runner.products.append(("classified", Path(write)))
+                    # stream the copy: reading the whole record a second
+                    # time is what put a ceiling on the cloud size here
+                    las_mod.stream_update(cloud, write, place, fields=("x",))
+                    runner.log(f"wrote: {write}"
+                               + (f" ({skipped:,} outside trajectory "
+                                  f"unchanged)" if skipped else ""))
+                    metrics.update(corrections_written=True, points_outside_trajectory_unchanged=int(skipped))
+                    runner.products.append(("classified", Path(write)))
+
+                finish(record, metrics, outputs=[write] if write else [])
 
         return work
 
@@ -981,7 +992,7 @@ class Application:
     def __init__(self, root):
         self.root = root
         root.title("pyArgus")
-        root.geometry("1100x720")
+        root.geometry("1530x1000")
         root.protocol("WM_DELETE_WINDOW", self._confirm_close)
 
         self.runner = StageRunner()
@@ -996,12 +1007,26 @@ class Application:
         self._drawn = None      # the report array last put on the canvas
 
         left = ttk.Frame(root, padding=8)
-        left.pack(side="left", fill="y")
+        left.pack(side="right", fill="y")
+        self.task_panel = left
+        ttk.Label(left, text="Task", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self.task_name = tk.StringVar(value="Inspect / match")
+        task_choice = ttk.Combobox(left, textvariable=self.task_name, state="readonly",
+            values=("Inspect / match", "Strip QA", "Classify", "DTM / DSM", "Contours", "Align", "Above ground", "Colorize"))
+        task_choice.pack(fill="x", pady=5)
+        task_choice.bind("<<ComboboxSelected>>", lambda e: self.workspace.select_task())
+        self.task_scope = tk.StringVar(value="Entire project")
+        self.scope_choice = ttk.Combobox(left, textvariable=self.task_scope, state="readonly",
+            values=("Entire project", "Selected cloud"))
+        self.scope_choice.pack(fill="x")
+        self.scope_choice.bind("<<ComboboxSelected>>", lambda e: self.workspace.select_task(reset_scope=False))
+        self.scope_summary = tk.StringVar(value="Add project files to begin.")
+        ttk.Label(left, textvariable=self.scope_summary, wraplength=360).pack(fill="x", pady=6)
         right = ttk.Frame(root, padding=8)
         right.pack(side="right", fill="both", expand=True)
 
         data = ttk.LabelFrame(left, text="Data", padding=6)
-        data.pack(fill="x")
+        # Legacy input variables remain available to stage adapters; the sidebar owns inputs.
         data.columnconfigure(1, weight=1)
         self.cloud_path = tk.StringVar()
         self.sbet_path = tk.StringVar()
@@ -1015,13 +1040,18 @@ class Application:
         ttk.Button(data, text="Inspect trajectory", command=self.inspect_trajectory).grid(row=4, column=1, sticky="w")
 
         from pyargus.project_gui import open_project
-        ttk.Button(data, text="Multi-file project…", command=lambda: open_project(self)).grid(
+        ttk.Button(data, text="Project inputs / matching", command=lambda: open_project(self)).grid(
             row=5, column=0, columnspan=3, sticky="we", pady=(5, 0))
 
         from pyargus.viewer3d import open_viewer
-        ttk.Button(data, text="3D viewer…", command=lambda: open_viewer(self)).grid(row=6, column=0, columnspan=3, sticky="we", pady=5)
+        ttk.Button(data, text="View active cloud in 3D", command=lambda: open_viewer(self)).grid(row=6, column=0, columnspan=3, sticky="we", pady=5)
 
-        self.notebook = ttk.Notebook(left)
+        from pyargus.review_gui import open_review
+        ttk.Button(data, text="QA review / cross-sections…", command=lambda: open_review(self)).grid(
+            row=7, column=0, columnspan=3, sticky="we", pady=(0, 5))
+
+        ttk.Style(root).layout("Task.TNotebook.Tab", [])
+        self.notebook = ttk.Notebook(left, style="Task.TNotebook")
         self.notebook.pack(fill="x", pady=(8, 0))
         self.stages = []
         for stage_class in (QaStage, ClassifyStage, DtmStage, ContourStage,
@@ -1031,55 +1061,38 @@ class Application:
             self.stages.append(stage_class(tab, self))
 
         self._build_run_panel(left)
-        controls = ttk.Frame(right)
-        controls.pack(fill="x", pady=(0, 4))
-        for label, action in (
-                ("Zoom +", lambda: self._zoom_view(1.25)),
-                ("Zoom −", lambda: self._zoom_view(0.8)),
-                ("Rotate ↶", lambda: self._rotate_view(-15)),
-                ("Rotate ↷", lambda: self._rotate_view(15)),
-                ("Reset / Fit", self._reset_view)):
-            ttk.Button(controls, text=label, command=action).pack(side="left", padx=2)
-        self.view_label = tk.StringVar(value="Fit | 0°")
-        ttk.Label(controls, textvariable=self.view_label).pack(side="left", padx=8)
-        ttk.Label(right, text="Wheel: zoom   •   Drag: pan   •   Rotation affects preview only").pack(fill="x")
-        self.canvas = tk.Canvas(right, background=PALETTE["ink"],
-                                highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<MouseWheel>", lambda e: self._zoom_view(1.25 if e.delta > 0 else .8))
-        self.canvas.bind("<Button-4>", lambda e: self._zoom_view(1.25))
-        self.canvas.bind("<Button-5>", lambda e: self._zoom_view(.8))
-        self.canvas.bind("<ButtonPress-1>", self._begin_pan)
-        self.canvas.bind("<B1-Motion>", self._pan_view)
-        self.canvas.bind("<Configure>", lambda e: self._schedule_view())
+        from pyargus.workspace_gui import Workspace
+        self.workspace = Workspace(self, right)
+        self.workspace.select_task()
+        self.canvas = self.workspace.viewer.canvas
+        self.view_label = tk.StringVar(value="3D workspace")
 
         self.root.after(PREVIEW_MS, self._tick)
 
     def _build_run_panel(self, parent):
         box = ttk.Frame(parent)
         box.pack(fill="x", pady=(8, 0))
-        self.run_button = ttk.Button(box, text="Run", command=self.run)
+        self.run_button = ttk.Button(box, text="Run task", command=lambda: self.workspace.run_task())
         self.run_button.pack(side="left")
         self.stop_button = ttk.Button(box, text="Stop", state="disabled",
                                       command=self.runner.cancel)
         self.stop_button.pack(side="left", padx=4)
         self.progress = ttk.Progressbar(box, length=110, mode="determinate")
         self.progress.pack(side="left", padx=6)
-        ttk.Button(box, text="pyLynceus",
-                   command=self.open_pylynceus).pack(side="right")
+        # External application launch remains available through the application API.
 
         self.job_status = tk.StringVar(value="Ready | Elapsed 00:00:00")
         ttk.Label(parent, textvariable=self.job_status, wraplength=420,
                   font=("Segoe UI", 10, "bold")).pack(fill="x", pady=(6, 0))
         self._busy_animation = False
 
-        self.log = tk.Text(parent, height=11, width=46, state="disabled",
+        self.log = tk.Text(self.root, height=8, width=46, state="disabled",
                            font=("Consolas", 8),
                            background=PALETTE["ink"],
                            foreground=PALETTE["ground"],
                            insertbackground=PALETTE["ground"],
                            highlightthickness=0)
-        self.log.pack(fill="both", expand=True, pady=(6, 0))
+        # Packed into the workspace Log dock after workspace construction.
 
     def inspect_trajectory(self):
         if self.runner.running:
@@ -1118,6 +1131,7 @@ class Application:
         self.run_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.runner.stage_name = stage.title
+        self.workspace.begin_stage(stage)
         self.runner.start(work)
         self._update_job_status()
         self._stage_open = True
@@ -1175,6 +1189,7 @@ class Application:
             if not messagebox.askyesno(
                     "pyArgus", "a stage is still running; close anyway?"):
                 return
+        self.workspace.close()
         self.root.destroy()
 
     def _adopt_products(self, runner):
@@ -1224,6 +1239,7 @@ class Application:
                 line = runner.lines.get_nowait()
             except queue.Empty:
                 break
+            self.workspace.observe_log(line)
             self.log.configure(state="normal")
             self.log.insert("end", line + "\n")
             self.log.see("end")
@@ -1246,6 +1262,7 @@ class Application:
         if self._stage_open and not runner.running \
                 and runner.thread is not None:
             self._stage_open = False
+            self.workspace.complete(runner)
             self.run_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
             if runner.error is None and not runner.cancelled():
@@ -1253,8 +1270,8 @@ class Application:
         self.root.after(PREVIEW_MS, self._tick)
 
     def _draw_preview(self, rgba):
+        # Raster reports remain artifacts; the main cloud viewer is exclusively 3D.
         self._view_source = rgba
-        self._reset_view()
 
     def _reset_view(self):
         self._view_zoom, self._view_angle = 1.0, 0.0
