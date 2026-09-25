@@ -111,6 +111,7 @@ class Viewer:
             self.window.geometry('1100x760')
             self.window.protocol('WM_DELETE_WINDOW', self.close)
         self.on_import_tracks=None; self.track_paths=[]
+        self.on_feature_draw=None
         self.paths=(); self.on_point=None; self.on_section=None; self.corridor=None
         self.class_filter=None; self.line_filter=None; self.extra_layers=[]; self.extra_points=[]
         self.cancel = threading.Event()
@@ -331,6 +332,7 @@ class Viewer:
                 t=project_points(xyz,self.center,self.yaw,self.pitch)
                 coords=t[:,:2]*[scale,-scale]+[w/2,h/2]+self.pan
                 self.canvas.create_line(*coords.ravel(),fill='#ffd15b',width=2)
+        if self.on_feature_draw:self.on_feature_draw(scale,w,h)
         self.canvas.create_text(12,12,anchor='nw',fill='white',text=f'Yaw {self.yaw%360:.0f}°  Tilt {self.pitch:.0f}°  Zoom {self.zoom:.1f}×\nTracks shown on top; line colors repeat every 8 IDs')
 
     def refine(self):

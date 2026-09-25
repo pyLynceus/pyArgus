@@ -123,6 +123,16 @@ def self_test():
         np.testing.assert_array_equal(cached.points,edit_section.points)
         np.testing.assert_array_equal(cached.point_indices,edit_section.point_indices)
         cache_store.clear()
+        from pyargus.features import Features, export_dxf
+        from pyargus.job_manifest import identity
+        features=Features();fid=features.new('Smoke wall','Wall top')
+        for xyz in ([0.,0.,1.],[2.,0.,1.]):
+            features.vertex(fid,xyz,identity(source),'EPSG:6447')
+        features.metadata(fid,'Smoke wall','Wall top','Accepted')
+        export_dxf(features.items,Path(temp)/'features.dxf')
+        app.workspace.features.restore(features)
+        assert app.workspace.features.model.get(fid)['status']=='Accepted'
+
 
         editor = SectionEditor(window, edit_section)
         editor.window.withdraw()

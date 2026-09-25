@@ -48,7 +48,7 @@ class Workspace:
         choice.pack(side='left',before=self.viewer.buttons[2])
         choice.bind('<<ComboboxSelected>>',lambda e:self.viewer.view(*views[preset.get()]))
         self.viewer.buttons[-1].configure(text='Reset detail')
-        self.viewer.on_point=lambda value:self.here.set('Picked sample: '+str(value))
+        self.viewer.on_point=self.picked_point
         filters=ttk.Frame(top); filters.pack(fill='x',before=self.viewer.window)
         self.class_filter=tk.StringVar(value='All'); self.line_filter=tk.StringVar(value='All')
         for name,var in [('Class',self.class_filter),('LAS line',self.line_filter)]:
@@ -85,9 +85,17 @@ class Workspace:
         self.task_hint=tk.StringVar()
         ttk.Label(self.project_task,textvariable=self.task_hint,wraplength=340).pack(fill='x',pady=8)
         self.review=ReviewWorkspace(self.root,parent=self.review_tab,viewer=self.viewer)
+        from pyargus.features_gui import FeaturePanel
+        self.features_tab=ttk.Frame(self.tabs);self.tabs.insert(self.log_tab,self.features_tab,text='Features')
+        self.features=FeaturePanel(self,self.features_tab)
+        self.viewer.on_feature_draw=self.features.draw
         self._build_progress(); self._build_layers()
         self.overlay_vars={}
         self.poll_id=self.root.after(500,self.poll)
+
+    def picked_point(self,value):
+        self.here.set('Picked sample: '+str(value))
+        self.features.pick(value)
 
     def _build_progress(self):
         bar=ttk.Frame(self.progress_tab);bar.pack(fill='x')
@@ -678,6 +686,8 @@ class Workspace:
         except ValueError:messagebox.showerror('Filter','Enter All or a numeric class/line ID.',parent=self.root)
 
     def capture(self):
+        from copy import deepcopy
+        self.tracker.data['features']=deepcopy(self.features.model.items)
         p=self.project_panel
         try:self.tracker.data['project']=asdict(p.snapshot())
         except ValueError:pass
@@ -723,7 +733,11 @@ class Workspace:
     def restore(self,path):
         from pyargus.project import TrajectoryInput
         try:
-            tracker=Tracker.load(path);self.tracker=tracker;self.refresh_key=None;self.path=Path(path);data=tracker.data;p=self.project_panel
+            from pyargus.features import Features
+            tracker=Tracker.load(path)
+            features=Features(tracker.data.get('features',[]))
+            self.tracker=tracker;self.refresh_key=None;self.path=Path(path);data=tracker.data;p=self.project_panel
+            self.features.restore(features)
             proj=data['project'];p.clouds=proj.get('clouds',[]);p.tracks=[TrajectoryInput(**t) for t in proj.get('trajectories',[])];p.bindings=proj.get('bindings',{})
             for key,var in [('map_crs',p.crs),('vertical',p.vertical),('gps_week',p.week),('max_gap',p.gap),('max_points',p.limit)]:
                 value=proj.get(key);var.set('' if value is None else str(value))

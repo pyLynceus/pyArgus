@@ -18,6 +18,7 @@ The old Desktop/pyArgus/dist-dialogs executable does not contain this work.
 | Source/result versions | Successful classifications become active processing inputs; original retained; explicit switch-back | Extend the model consistently to other processing stages |
 | Progress | Elapsed time, completion/failure/cancellation, per-file attempts and review decisions, stale reasons | Stronger next-action guidance and batch resume |
 | Cross-sections | Explicit source selection or all-loaded comparison; complete/sample counts; classification editing; left/right section stepping with automatic extraction | Saved review presets and simpler profile navigation |
+| Features | Manual 3D point-snapped line tracing; vertex XYZ edits; split/join/reverse; undo/redo; review status; workspace persistence; DXF plus provenance | Assisted extraction, section-profile snapping, surface integration |
 | Classification | Single-cloud or sequential whole-project batch, unique output names and records; noise preservation/screening | Spatial noise detection; automatic memory-aware tiled GUI dispatch |
 | Build identity | Current executable path and adjacent build-info.json | In-app About/build identity |
 
@@ -46,3 +47,5 @@ The selective section-cache experiment passed exact-result tests and showed
 measured gains on a real two-file client delivery. Optional section caching is now integrated into the GUI. See
 [experiment results](SECTION_CACHE_EXPERIMENT.md); the [GUI workflow](SECTION_CACHE_GUI.md) describes build, cancellation,
 manual cleanup and full-scan fallback. Viewer caching remains pending.
+
+See [Features workspace](FEATURES_WORKSPACE.md) for tracing, review and export.
