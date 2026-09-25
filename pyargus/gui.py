@@ -24,6 +24,8 @@ from pathlib import Path
 
 import numpy as np
 
+from pyargus.workspace_state import NOISE_MAX_FRACTION_TEXT
+
 try:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -455,6 +457,12 @@ class ClassifyStage:
         self.slope = tk.StringVar(value="0.15")
         self.window = tk.StringVar(value="60.0")
         self.threshold = tk.StringVar(value="1.5")
+        self.noise_min = tk.StringVar()
+        self.noise_max = tk.StringVar()
+        # the screen's guard, as noise-cut's --max-fraction: a window that
+        # would flag more than this share of the cloud is the site, not noise
+        self.noise_max_fraction = tk.StringVar(value=NOISE_MAX_FRACTION_TEXT)
+        self.batch_dir = tk.StringVar()
         box = ttk.Frame(parent)
         box.pack(fill="x")
         box.columnconfigure(1, weight=1)
@@ -462,10 +470,22 @@ class ClassifyStage:
         for i, (label, var) in enumerate((("Cell", self.cell),
                                           ("Slope", self.slope),
                                           ("Window", self.window),
-                                          ("Threshold", self.threshold))):
+                                          ("Threshold", self.threshold),
+                                          ("Noise min Z (optional)", self.noise_min),
+                                          ("Noise max Z (optional)", self.noise_max),
+                                          ("Noise max fraction", self.noise_max_fraction))):
             ttk.Label(box, text=label).grid(row=1 + i, column=0, sticky="w")
             ttk.Entry(box, textvariable=var, width=8).grid(
                 row=1 + i, column=1, sticky="w", padx=2)
+
+        ttk.Label(box,text="Limits use LAS elevation units; blank = preserve existing noise only. "
+                  "A window that would flag more than the max fraction of the cloud is refused.",wraplength=350).grid(row=8,column=0,columnspan=3,sticky="w")
+        ttk.Label(box,text="Batch output parent").grid(row=9,column=0,sticky="w")
+        ttk.Entry(box,textvariable=self.batch_dir).grid(row=9,column=1,sticky="ew")
+        def choose_batch():
+            folder=filedialog.askdirectory(parent=box,title="Batch output parent")
+            if folder:self.batch_dir.set(folder)
+        ttk.Button(box,text="…",command=choose_batch).grid(row=9,column=2)
 
     def prepare(self):
         cloud = _require_cloud(self.app)
@@ -478,6 +498,11 @@ class ClassifyStage:
         slope = _float(self.slope.get(), "Slope")
         window = _float(self.window.get(), "Window")
         threshold = _float(self.threshold.get(), "Threshold")
+        noise_min = _float(self.noise_min.get(),"Noise min") if self.noise_min.get().strip() else None
+        noise_max = _float(self.noise_max.get(),"Noise max") if self.noise_max.get().strip() else None
+        noise_max_fraction = _float(self.noise_max_fraction.get(), "Noise max fraction")
+        from pyargus.classify.job import validate_noise_bounds
+        validate_noise_bounds(noise_min, noise_max, noise_max_fraction)
 
         def work(runner):
             # the same job as `pyargus classify-ground`: one lattice, one
@@ -487,7 +512,8 @@ class ClassifyStage:
             runner.log(f"reading {cloud}")
             result = ground_job.classify_ground_whole(
                 cloud, out, cell=cell, slope=slope, window=window,
-                threshold=threshold, log=runner.log, keep_points=True,
+                threshold=threshold, noise_min=noise_min, noise_max=noise_max,
+                noise_max_fraction=noise_max_fraction, log=runner.log, keep_points=True,
                 should_stop=lambda: cancelled_before(runner, "writing"))
             if result.get("cancelled"):
                 return
@@ -573,9 +599,11 @@ class AboveStage:
             data = laspy.read(cloud)
             points = {name: np.asarray(data[name]) for name in (
                 "x", "y", "z", "classification", "return_number", "number_of_returns")}
+            from pyargus.classify.job import NOISE_CLASSES
+
             labels = points["classification"]
             ground = labels == 2
-            noise = np.isin(labels, (7, 18))
+            noise = np.isin(labels, NOISE_CLASSES)
             if not ground.any():
                 raise ValueError("No class-2 ground. Classify ground first.")
             if training:
@@ -602,6 +630,10 @@ class AboveStage:
                     return
                 _refuse_existing(out, "output")
                 data.classification = classification
+                # a COPC input is written back as a plain cloud
+                from pyargus.formats.las import drop_copc_records
+
+                drop_copc_records(data.header)
                 data.write(out)
                 runner.log(f"Without ground coverage: {missing:,} points left class 1")
                 runner.products.append(("classified", Path(out)))
@@ -1185,9 +1217,15 @@ class Application:
             + f" -- full output in {log_path}")
 
     def _confirm_close(self):
+        # A cancelled application exit must leave the editor session intact.
         if self.runner.running:
             if not messagebox.askyesno(
                     "pyArgus", "a stage is still running; close anyway?"):
+                return
+        review = getattr(self.workspace, 'review', None)
+        editor = getattr(review, 'editor', None)
+        if editor is not None and editor.window.winfo_exists():
+            if not editor.close():
                 return
         self.workspace.close()
         self.root.destroy()

@@ -37,3 +37,17 @@ def test_sign_convention_is_b_minus_a():
     b = planar_strip(10000, (0, 10), (0, 10), plane=(0, 0, 101.0), seed=8)
     stats = overlap.strip_dz(a, b, cell=2.0).summary()
     assert stats["median"] > 0
+
+
+def test_an_empty_strip_reports_no_overlap_rather_than_dying():
+    """Selecting ground returns on an UNCLASSIFIED cloud yields empty
+    strips. That used to reach grid_edges and raise 'zero-size array to
+    reduction operation minimum', naming neither the strip nor the
+    cause -- it surfaced as a failed QA job on a real project. An empty
+    strip cannot overlap anything; say so."""
+    a = planar_strip(5000, (0, 50), (0, 30), plane=(0, 0, 100.0), seed=1)
+    empty = {k: np.zeros(0) for k in ("x", "y", "z")}
+
+    for pair in ((a, empty), (empty, a), (empty, empty)):
+        result = overlap.strip_dz(*pair, cell=2.0, min_points=3)
+        assert result.overlap_cells == 0

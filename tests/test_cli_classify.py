@@ -47,6 +47,61 @@ def test_classify_ground_refuses_in_place_and_existing(scene_las, tmp_path):
         cli.main(["classify-ground", str(src), "--out", str(out)])
 
 
+@pytest.mark.parametrize("tiled", [False, True])
+def test_classify_ground_force_replaces_the_output(scene_las, tmp_path,
+                                                   tiled):
+    """--force did what its help says in neither driver: the CLI let an
+    existing --out past its own check, and the publishing wrapper then
+    raised FileExistsError, which the CLI did not catch -- a traceback,
+    and the old file still there."""
+    import json
+
+    src, _ = scene_las
+    out = tmp_path / "exists.las"
+    out.write_bytes(b"already here")
+    rc = cli.main(["classify-ground", str(src), "--out", str(out),
+                   "--force"] + (["--tiled"] if tiled else []))
+    assert rc == 0
+    result = laspy.read(str(out))       # a cloud now, not the old bytes
+    assert np.any(np.asarray(result.classification) == 2)
+    # nothing staged is left behind beside it
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if not p.name.startswith("exists.las.job-")) == ["exists.las"]
+    # and the record says a file was replaced, not created
+    records = sorted(tmp_path.glob("exists.las.job-*.json"))
+    assert len(records) == 1
+    record = json.loads(records[0].read_text(encoding="utf-8"))
+    assert record["status"] == "completed", record["status"]
+    assert record["replaced_existing"] is True
+
+
+def test_a_forced_run_that_fails_leaves_the_old_output(scene_las, tmp_path):
+    """Replacing happens only after the new cloud is written and
+    verified: a run that fails on the way must not have removed the
+    file it was asked to replace."""
+    src, _ = scene_las
+    out = tmp_path / "exists.las"
+    out.write_bytes(b"already here")
+    with pytest.raises(SystemExit, match="below maximum"):
+        cli.main(["classify-ground", str(src), "--out", str(out), "--force",
+                  "--noise-min", "500", "--noise-max", "100"])
+    assert out.read_bytes() == b"already here"
+
+
+def test_classify_ground_library_still_refuses_an_existing_output(
+        scene_las, tmp_path):
+    """Replacing is opt-in at every entry point: the desktop stage and
+    batch call the drivers directly and never pass force."""
+    from pyargus.classify import job
+
+    src, _ = scene_las
+    out = tmp_path / "exists.las"
+    out.write_bytes(b"already here")
+    with pytest.raises(FileExistsError):
+        job.classify_ground_whole(src, out, log=lambda _: None)
+    assert out.read_bytes() == b"already here"
+
+
 def test_dtm_command(scene_las, tmp_path):
     src, _ = scene_las
     classified = tmp_path / "classified.las"

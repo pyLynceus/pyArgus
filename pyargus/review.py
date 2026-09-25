@@ -9,8 +9,8 @@ def load_review(path):
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or data.get("schema_version") != 1:
         raise ValueError("Select a schema-1 pyArgus .job-*.json record.")
-    if data.get("operation") not in {"qa", "align", "project-qa", "project-align"}:
-        raise ValueError("This record is not a QA or alignment job.")
+    if data.get("operation") not in {"qa", "align", "project-qa", "project-align", "classify-ground-whole", "classify-ground-tiled"}:
+        raise ValueError("This record is not a supported QA, alignment or ground-classification job.")
     if not isinstance(data.get("results"), dict):
         raise ValueError("Job record has no results object.")
     data["record_path"] = str(path)
@@ -38,6 +38,11 @@ def review_rows(record, limit=0.25):
         return isinstance(value, (int, float)) and (not math.isfinite(value) or abs(value)>limit)
     row("Job status", after=record.get("status"), note="Execution status, not accuracy acceptance",
         flag=record.get("status") != "completed")
+    if record.get("operation", "").startswith("classify-ground-"):
+        row("Total points", after=result.get("total"))
+        row("Ground points", after=result.get("ground"))
+        row("Ground fraction", after=result.get("ground_fraction"),
+            note="Classification proportion, not accuracy; visual and independent QA still required")
     if record.get("inventory_note"):
         row("Inventory source", note=record["inventory_note"], flag="unavailable" in record["inventory_note"])
     if record.get("error"):

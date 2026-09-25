@@ -50,6 +50,16 @@ def strip_dz(a, b, cell=1.0, min_points=3):
     map, and the patch-based measure in the alignment core is the
     refined one.
     """
+    if a["x"].size == 0 or b["x"].size == 0:
+        # An empty strip cannot overlap anything, and empty is exactly
+        # what selecting ground returns yields on an unclassified cloud.
+        # Report no overlap: callers already treat overlap_cells == 0 as
+        # "nothing to compare". The alternative was a numpy reduction
+        # error from deep inside grid_edges that named neither the strip
+        # nor the cause.
+        return StripDz(dz=np.zeros((0, 0)), x_edges=np.zeros(0),
+                       y_edges=np.zeros(0))
+
     all_x = np.concatenate([a["x"], b["x"]])
     all_y = np.concatenate([a["y"], b["y"]])
     x_edges, y_edges = grid_edges(all_x, all_y, cell)

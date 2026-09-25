@@ -106,7 +106,7 @@ class ReviewWorkspace:
         for label,command in (("Open QA/alignment job…",self.choose_record),("Add LAS/LAZ…",self.add_clouds),
                               ("Load selected clouds",self.load_clouds),("Fit views",self.fit)):
             b=ttk.Button(bar,text=label,command=command); b.pack(side="left",padx=2); self.buttons.append(b)
-        ttk.Button(bar,text="Stop loading",command=self.cancel.set).pack(side="left")
+        ttk.Button(bar,text="Stop",command=self.cancel.set).pack(side="left")
         self.status=tk.StringVar(value="Open a QA/alignment job record, or add clouds for standalone sections.")
         ttk.Label(self.window,textvariable=self.status,wraplength=1200).pack(fill="x",padx=8)
         self.tabs=ttk.Notebook(self.window); self.tabs.pack(fill="both",expand=True,padx=8,pady=5)
@@ -133,6 +133,14 @@ class ReviewWorkspace:
         self.filelist.bind("<<ListboxSelect>>", lambda e: self.redraw() if not self.busy else None)
         self.confirm=tk.BooleanVar(value=False)
         ttk.Checkbutton(files,text="I confirm selected clouds share XYZ units and vertical datum (CRS alone may not establish heights)",variable=self.confirm).pack(anchor="w")
+        sourcebar=ttk.Frame(inspect); sourcebar.pack(fill="x",pady=3)
+        ttk.Label(sourcebar,text="Section source:").pack(side="left")
+        self.section_source=tk.StringVar()
+        self.source_choice=ttk.Combobox(sourcebar,textvariable=self.section_source,state="readonly",width=85)
+        self.source_choice.pack(side="left",fill="x",expand=True)
+        self.source_choice.bind("<<ComboboxSelected>>",lambda e:self.clear_section())
+        self.source_paths=()
+        ttk.Label(inspect,text="Choose one cloud or an explicit comparison. Viewer visibility does not select section inputs.").pack(anchor="w")
         controls=ttk.Frame(inspect); controls.pack(fill="x",pady=3)
         self.coords=[tk.StringVar() for _ in range(4)]
         for label,var in zip(("A east","A north","B east","B north"),self.coords):
@@ -141,6 +149,26 @@ class ReviewWorkspace:
         ttk.Label(controls,text="Full width").pack(side="left"); ttk.Entry(controls,textvariable=self.width,width=7).pack(side="left")
         button=ttk.Button(controls,text="Extract section",command=self.extract); button.pack(side="left"); self.buttons.append(button)
         button=ttk.Button(controls,text="Export sample CSV…",command=self.export); button.pack(side="left"); self.buttons.append(button)
+        stepbar=ttk.Frame(inspect); stepbar.pack(fill="x",pady=3)
+        self.step_distance=tk.StringVar(value="10.0")
+        ttk.Label(stepbar,text="Step distance (map units):").pack(side="left")
+        ttk.Entry(stepbar,textvariable=self.step_distance,width=8).pack(side="left")
+        for label,direction in (("Step left",1),("Step right",-1)):
+            button=ttk.Button(stepbar,text=label,command=lambda d=direction:self.step_section(d))
+            button.pack(side="left",padx=2); self.buttons.append(button)
+        ttk.Label(stepbar,text="Looking A to B; shifts sideways and extracts automatically.").pack(side="left",padx=6)
+        from pyargus.section_cache_store import CacheStore
+        self.cache_store=CacheStore()
+        cachebar=ttk.Frame(inspect);cachebar.pack(fill='x',pady=3)
+        self.use_cache=tk.BooleanVar(value=True)
+        ttk.Checkbutton(cachebar,text='Use cache when available',variable=self.use_cache).pack(side='left')
+        for text,command in (('Build section cache',self.build_section_cache),('Clear all section caches',self.clear_section_caches)):
+            button=ttk.Button(cachebar,text=text,command=command);button.pack(side='left',padx=3);self.buttons.append(button)
+        self.cache_status=tk.StringVar(value='Optional local cache; missing/stale caches use a full scan. Build uses Section source; Clear removes all local section caches.')
+        ttk.Label(inspect,textvariable=self.cache_status,wraplength=1100).pack(anchor='w')
+        editbar=ttk.Frame(inspect); editbar.pack(fill='x',pady=3)
+        button=ttk.Button(editbar,text='Edit classifications…',command=self.edit_section); button.pack(side='left'); self.buttons.append(button)
+        ttk.Label(editbar,text='Complete single-cloud sections only; source remains unchanged.').pack(side='left',padx=6)
         controls=ttk.Frame(inspect); controls.pack(fill="x")
         self.mode=tk.StringVar(value="Dataset")
         ttk.Label(controls,text="Color:").pack(side="left")
@@ -206,7 +234,29 @@ class ReviewWorkspace:
         self.profile.set(np.empty((0,2)),np.empty((0,3)))
         self.confirm.set(False)
 
+    def clear_section(self):
+        self.section=None
+        self.profile.set(np.empty((0,2)),np.empty((0,3)))
+
+    def refresh_section_sources(self):
+        paths=tuple(self.loaded_paths)
+        if paths == self.source_paths: return
+        self.source_paths=paths
+        self.source_choice.configure(values=[*paths, "Compare all loaded clouds"] if paths else [])
+        self.section_source.set(paths[0] if len(paths)==1 else "")
+        self.clear_section()
+
+    def section_paths(self):
+        self.refresh_section_sources()
+        selected=self.section_source.get()
+        if selected == "Compare all loaded clouds" and self.loaded_paths:
+            return list(self.loaded_paths)
+        if selected in self.loaded_paths:
+            return [selected]
+        raise ValueError("Choose a Section source: one cloud or Compare all loaded clouds.")
+
     def refresh_files(self):
+        self.refresh_section_sources()
         self.filelist.delete(0,"end")
         for layer in self.layers:
             self.filelist.insert("end",f"{layer['role']} | {layer['state']} | {layer['path']}")
@@ -227,6 +277,7 @@ class ReviewWorkspace:
         gc.collect()
         if self.busy: return
         self.busy=True; self.cancel.clear(); self.started=time.monotonic(); self.progress="Working"
+        self.source_choice.configure(state="disabled")
         for button in self.buttons: button.configure(state="disabled")
         def run():
             try: self.messages.put(("done",work()))
@@ -282,20 +333,60 @@ class ReviewWorkspace:
         self.plan.corridor=(a,b,width); self.plan.draw()
         return a,b,width
 
+    def step_section(self, direction):
+        """Translate the corridor left/right of A->B, then use normal extraction."""
+        if self.busy: return
+        try:
+            from pyargus.section_navigation import stepped_corridor
+            if not self.loaded_paths:
+                raise ValueError("Load clouds and choose a Section source before stepping.")
+            self.section_paths()  # Refuse an ambiguous source before changing the corridor.
+            values=[float(v.get()) for v in self.coords]
+            a,b=stepped_corridor(values[:2],values[2:],float(self.width.get()),
+                                float(self.step_distance.get()),direction)
+            for var,value in zip(self.coords,[*a,*b]): var.set(repr(float(value)))
+            self.endpoint=None
+            self.extract()
+        except Exception as exc: self.error(exc)
+
+    def build_section_cache(self):
+        try:
+            if self.busy:return
+            if not self.loaded_paths:raise ValueError('Load clouds and choose a Section source before building its cache.')
+            paths=self.section_paths()
+            signatures=[self.loaded_identities[list(self.loaded_paths).index(p)] for p in paths]
+            def work():
+                from pyargus.job_manifest import identity
+                if [identity(p) for p in paths]!=signatures:raise ValueError('Cloud changed since loading; reload before building its cache.')
+                text=self.cache_store.build(paths,cancel=self.cancel,progress=lambda s:self.messages.put(('progress',s)))
+                return ('cache',text)
+            self.launch(work)
+        except Exception as exc:self.error(exc)
+
+    def clear_section_caches(self):
+        if self.busy:return
+        self.launch(lambda:('cache',self.cache_store.clear(cancel=self.cancel,progress=lambda s:self.messages.put(('progress',s)))))
+
     def extract(self):
+        if self.busy: return
         from pyargus.sections import extract_section
         try:
             if not self.loaded_paths: raise ValueError("Load selected clouds before extracting a section.")
-            a,b,width=self.set_corridor(); paths=self.loaded_paths
-            signatures=self.loaded_identities
+            a,b,width=self.set_corridor(); paths=self.section_paths(); use_cache=self.use_cache.get()
+            signatures=[self.loaded_identities[list(self.loaded_paths).index(p)] for p in paths]
             self.section=None; self.profile.set(np.empty((0,2)),np.empty((0,3)))
             def work():
                 from pyargus.job_manifest import identity
                 if [identity(p) for p in paths] != signatures:
                     raise ValueError("A cloud changed since loading the plan; reload before extracting.")
-                section=extract_section(paths,a,b,width,limit=max(1,100000//len(paths)),cancel=self.cancel,
-                    progress=lambda s:self.messages.put(("progress",s)))
-                return ("section",section)
+                progress=lambda s:self.messages.put(('progress',s))
+                if use_cache:
+                    section,method=self.cache_store.extract(paths,a,b,width,limit=max(1,100000//len(paths)),cancel=self.cancel,progress=progress)
+                else:
+                    section=extract_section(paths,a,b,width,limit=max(1,100000//len(paths)),cancel=self.cancel,progress=progress)
+                    method='Full scan — cache disabled'
+                if [identity(p) for p in paths]!=signatures:raise ValueError('Cloud changed during section extraction; reload before extracting.')
+                return ("section",section,method)
             self.launch(work)
         except Exception as exc: self.error(exc)
 
@@ -317,6 +408,7 @@ class ReviewWorkspace:
         return colors(xyz,classes,lines,mode)
 
     def redraw(self):
+        self.refresh_section_sources()
         if self.scene is None: return
         try:
             requested=self.line.get().strip()
@@ -331,8 +423,11 @@ class ReviewWorkspace:
             self.plan.set(pts[mask,:2],self.color(pts,cls,lines,files)[mask])
             if self.section is not None:
                 sec=self.section; mask=np.ones(len(sec.points),dtype=bool) if line_id is None else sec.lines==line_id
-                mask &= visible[sec.files]
-                rgb=self.color(sec.points[:,:3],sec.classes,sec.lines,sec.files)
+                # Section file IDs belong to the selected subset, not the plan's file order.
+                mapping=np.array([list(self.loaded_paths).index(item['path']) for item in sec.inputs])
+                global_files=mapping[sec.files]
+                mask &= visible[global_files]
+                rgb=self.color(sec.points[:,:3],sec.classes,sec.lines,global_files)
                 self.profile.set(sec.points[mask][:,[3,2]],rgb[mask],ex)
                 self.profile.ylabel=f"Elevation; vertical exaggeration {ex:g}×"
                 self.profile.draw()
@@ -351,15 +446,28 @@ class ReviewWorkspace:
                 self.status.set(f"Exported section sample and definition: {path} (all sampled lines, regardless of display filter)")
             except Exception as exc: self.error(exc)
 
+    def edit_section(self):
+        if self.busy: return
+        try:
+            if self.section is None: raise ValueError('Extract a complete single-cloud section first.')
+            if getattr(self,'editor',None) is not None and self.editor.window.winfo_exists():
+                self.editor.window.lift(); return
+            from pyargus.editing_gui import SectionEditor
+            self.editor=SectionEditor(self.window,self.section)
+        except Exception as exc: self.error(exc)
+
     def poll(self):
         try:
             while True:
                 kind,value=self.messages.get_nowait()
                 if kind=="progress": self.progress=value; continue
                 self.busy=False
+                self.source_choice.configure(state="readonly")
                 for button in self.buttons: button.configure(state="normal")
                 if kind=="error": self.status.set("Stopped" if self.cancel.is_set() else "Failed: "+value); continue
                 if self.cancel.is_set(): self.status.set("Stopped"); continue
+                if value[0]=="cache":
+                    self.cache_status.set(value[1]);self.status.set(value[1]);continue
                 if value[0]=="cloud":
                     _,self.loaded_paths,self.loaded_layers,self.scene,self.loaded_identities=value
                     if self.external_viewer is not None:
@@ -370,13 +478,17 @@ class ReviewWorkspace:
                     self.status.set(f"Loaded {len(self.scene[0]):,} preview points of {self.scene[4]:,}. Pick A and B on plan. Units: {self.scene[5].axis_info[0].unit_name}.")
                 else:
                     self.section=value[1]; self.redraw()
-                    counts=", ".join(f"file {i+1}: {n:,}" for i,n in enumerate(self.section.matched_by_file))
+                    if len(value)>2:self.cache_status.set(value[2])
+                    counts=", ".join(f"{Path(self.section.inputs[i]['path']).name}: {n:,}" for i,n in enumerate(self.section.matched_by_file))
                     self.status.set(f"Section finished in {time.monotonic()-self.started:.1f}s: {self.section.matched:,} corridor returns; {len(self.section.points):,} sampled for display/export ({counts}); counts precede display filters.")
         except queue.Empty: pass
         if self.busy: self.status.set(f"{self.progress} — elapsed {time.monotonic()-self.started:.0f}s")
         if not self.closed: self.poll_id=self.window.after(100,self.poll)
 
     def close(self):
+        editor=getattr(self,'editor',None)
+        if editor is not None and editor.window.winfo_exists():
+            if not editor.close(): return False
         self.closed=True; self.cancel.set(); self.window.after_cancel(self.poll_id); self.window.destroy()
 
 

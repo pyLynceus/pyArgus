@@ -403,6 +403,7 @@ def _qa_impl(project, out, *, control=None, log=lambda text: None, cancel=lambda
 def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
           control=None, log=lambda text: None, cancel=lambda: False):
     from pyargus.align import attach, solve_alignment
+    from pyargus.formats.las import drop_copc_records
     import laspy
     out = _target(out)
     if not project.trajectories:
@@ -475,6 +476,9 @@ def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
             log(f'Writing {name}')
             cloud = laspy.read(source)
             cloud.x,cloud.y,cloud.z = corrected[rows].T
+            # a COPC source is written as a plain cloud: laspy cannot write
+            # its octree records, and moved points would falsify them anyway
+            drop_copc_records(cloud.header)
             cloud.write(dest)
             # Evaluate the actual quantized exported coordinates, not solver predictions.
             written = laspy.read(dest)

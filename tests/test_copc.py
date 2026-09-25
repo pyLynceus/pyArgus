@@ -183,3 +183,74 @@ def test_a_box_that_misses_the_cloud_refuses(tmp_path):
                            bounds=((0.0, 0.0), (10.0, 10.0)))
     with pytest.raises(ValueError, match="resolution must be positive"):
         las_mod.copc_query(dst, fields=("x",), resolution=0.0)
+
+
+@pytest.mark.parametrize("suffix", [".las", ".laz"])
+def test_dropping_copc_records_leaves_a_plain_cloud_byte_identical(
+        tmp_path, suffix):
+    """Every whole-cloud write now passes through drop_copc_records, so
+    on a cloud with no COPC records it must change NOTHING. The first
+    version reassigned the VLR list unconditionally, and laspy's setter
+    moves the extra-bytes VLR to the end on any reassignment: same
+    records, different bytes, on every classification ever written."""
+    pyproj = pytest.importorskip("pyproj")
+    from laspy.vlrs.vlrlist import VLRList
+
+    header = laspy.LasHeader(version="1.4", point_format=7)
+    header.scales = np.array([0.001, 0.001, 0.001])
+    header.offsets = np.zeros(3)
+    header.add_extra_dim(laspy.ExtraBytesParams(name="Reflectance",
+                                                type=np.float32))
+    header.add_crs(pyproj.CRS.from_epsg(6447))
+    las = laspy.LasData(header)
+    rng = np.random.default_rng(3)
+    las.x, las.y, las.z = rng.uniform(0.0, 100.0, (3, 2_000))
+    las.Reflectance = rng.uniform(0.0, 1.0, 2_000).astype(np.float32)
+    las.evlrs = VLRList([laspy.VLR(user_id="pyargus_test", record_id=7,
+                                   description="kept",
+                                   record_data=b"x" * 300)])
+    src = tmp_path / "src.las"
+    las.write(str(src))
+
+    plain = laspy.read(str(src))
+    plain.write(str(tmp_path / f"plain{suffix}"))
+    dropped = laspy.read(str(src))
+    las_mod.drop_copc_records(dropped.header)
+    dropped.write(str(tmp_path / f"dropped{suffix}"))
+    assert ((tmp_path / f"plain{suffix}").read_bytes()
+            == (tmp_path / f"dropped{suffix}").read_bytes())
+
+
+@needs_pdal
+@pytest.mark.parametrize("suffix", [".las", ".laz"])
+def test_whole_ground_classify_takes_a_copc_input(tmp_path, suffix):
+    """The whole-cloud driver read a .copc.laz like any cloud, then kept
+    its octree records on the header it wrote, and laspy refuses to
+    write COPC: a NotImplementedError after all the work, whatever the
+    output was named. Only the tiled driver's streamed copy dropped
+    them. The desktop stage and batch classification use the whole
+    driver for every cloud, so one COPC in a project stopped the batch.
+    """
+    from pyargus.classify import job
+
+    src = tmp_path / "src.las"
+    n = make_cloud(src, n=40_000, seed=12)
+    copc = tmp_path / "src.copc.laz"
+    copc_mod.write_copc(src, copc)
+    params = dict(cell=10.0, window=30.0, threshold=1.0,
+                  log=lambda _: None)
+
+    whole_out = tmp_path / f"whole{suffix}"
+    tiled_out = tmp_path / f"tiled{suffix}"
+    whole = job.classify_ground_whole(copc, whole_out, **params)
+    job.classify_ground_tiled(copc, tiled_out, **params)
+    # same input, same point order: the two drivers must agree exactly
+    a = np.asarray(laspy.read(str(whole_out)).classification)
+    b = np.asarray(laspy.read(str(tiled_out)).classification)
+    assert a.size == b.size == whole["total"] == n
+    assert np.array_equal(a, b), int((a != b).sum())
+    # a plain cloud, honestly: no octree claimed, every point, the
+    # extra dimension carried
+    info = las_mod.cloud_info(whole_out)
+    assert not info["is_copc"] and info["point_count"] == n
+    assert "Amplitude" in laspy.read(str(whole_out)).point_format.extra_dimension_names

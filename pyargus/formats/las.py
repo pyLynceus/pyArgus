@@ -156,6 +156,32 @@ def read_points(path, fields=FIELDS):
         return _extract(las, fields, path)
 
 
+def drop_copc_records(header):
+    """Strip COPC's records from a header read off a .copc.laz, in place.
+
+    COPC keeps its octree in two records -- an info VLR and a hierarchy
+    EVLR -- that describe the file's own byte layout. laspy reads them
+    and cannot write them ("Writing COPC is not supported"), and a
+    cloud rewritten from memory is a plain LAS/LAZ whatever it is named,
+    so a header that still claimed the octree would be wrong even if it
+    could be written. ``stream_update`` does the same for its copies.
+
+    A header with no COPC record is left exactly as it was. That is not
+    tidiness: laspy's ``vlrs`` setter re-syncs the extra-bytes VLR and
+    moves it to the end, so even an unchanged list, reassigned, writes
+    different bytes -- and this runs on every whole-cloud write.
+    """
+    laspy = _laspy()
+    if any(v.user_id == "copc" for v in header.vlrs):
+        header.vlrs = laspy.vlrs.vlrlist.VLRList(
+            [v for v in header.vlrs if v.user_id != "copc"])
+    if header.evlrs is not None and any(v.user_id == "copc"
+                                        for v in header.evlrs):
+        header.evlrs = laspy.vlrs.vlrlist.VLRList(
+            [v for v in header.evlrs if v.user_id != "copc"])
+    return header
+
+
 def _output_header(laspy, src_header, point_format):
     """The header a chunked copy should be written with.
 
@@ -231,7 +257,15 @@ def stream_update(src, dst, update, *, fields=("x", "y", "z"),
             header = _output_header(laspy, reader.header, point_format)
             converting = header.point_format.id != reader.header.point_format.id
             evlrs = [v for v in (reader.evlrs or []) if v.user_id != "copc"]
-            with laspy.open(partial, mode="w", header=header) as writer:
+            # laspy infers compression from the EXTENSION, and the temp
+            # file's is ".partial" -- so without this a .laz output is
+            # written as plain LAS bytes and renamed to the .laz name:
+            # readable, but several times the size and not what the name
+            # says. Say what is meant rather than letting a temporary
+            # name decide the delivery's format.
+            with laspy.open(partial, mode="w", header=header,
+                            do_compress=dst_path.suffix.lower() == ".laz"
+                            ) as writer:
                 for chunk in reader.chunk_iterator(chunk_size):
                     size = len(chunk)
                     if converting:

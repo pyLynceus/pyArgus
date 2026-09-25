@@ -173,3 +173,152 @@ def test_single_cloud_trajectory_uses_configured_clock(application,tmp_path):
     app.sbet_path.set(path);w.sync_single_trajectory()
     assert app.trj_time.get()=='week'
     assert w.single_trajectory.winfo_manager()=='pack'
+
+
+def test_classification_review_is_per_input_and_ignores_routing(tmp_path):
+    a,b=tmp_path/'a.las',tmp_path/'b.las'
+    a.write_text('a');b.write_text('b')
+    t=Tracker()
+    def settings(p,out,slope='0.15'):
+        return dict(cloud=str(p),trajectory='',trj_time='same',stage=dict(out_path=out,slope=slope))
+    first=t.begin('Classification',settings(a,'a_out'),[a]);t.finish(first,'Needs review')
+    second=t.begin('Classification',settings(b,'b_out'),[b]);t.finish(second,'Needs review')
+    t.decide('Classification','Accepted','First flight checked',settings(b,'different'),job_id=first['id'])
+    assert first['status']=='Accepted' and second['status']=='Needs review'
+    assert t.status('Classification')=='Needs review'
+    t.decide('Classification','Accepted','Second flight checked',settings(b,'different'),job_id=second['id'])
+    assert t.status('Classification')=='Accepted'
+    assert t.job_status(first,settings(b,'different','0.2'))=='Outdated'
+    rerun=t.begin('Classification',settings(a,'a_new'),[a]);t.finish(rerun,'Needs review')
+    assert t.job_status(first)=='Outdated'
+    assert t.job_status(second)=='Accepted'
+    with pytest.raises(ValueError):
+        t.decide('Classification','Accepted','Old run',job_id=first['id'])
+
+
+def test_downstream_detects_rerun_of_either_classified_input(tmp_path):
+    t=Tracker()
+    for name in ('a','b'):
+        path=tmp_path/name;path.write_text(name)
+        job=t.begin('Classification',dict(cloud=str(path)),[path]);t.finish(job,'Needs review')
+    downstream=t.begin('Surface',{},[]);t.finish(downstream,'Needs review')
+    assert t.status('Surface')=='Needs review'
+    job=t.begin('Classification',dict(cloud=str(tmp_path/'a')),[tmp_path/'a'])
+    t.finish(job,'Needs review')
+    assert t.status('Surface')=='Outdated'
+
+
+def test_gui_review_targets_selected_flight_and_keeps_selection(application,tmp_path,monkeypatch):
+    from pyargus import workspace_gui
+    w=application.workspace
+    stage=next(s for s in application.stages if type(s).__name__=='ClassifyStage')
+    jobs=[]
+    for name in ('first','second'):
+        path=tmp_path/(name+'.las');cloud(path)
+        application.cloud_path.set(str(path))
+        stage.out_path.set(str(tmp_path/(name+'_ground.las')))
+        w.begin_stage(stage)
+        job=w.active
+        application.runner.error=None
+        w.complete(application.runner)
+        jobs.append(job)
+    w.stage_tree.selection_set('Classification');w.history()
+    w.history_tree.selection_set(jobs[0]['id'])
+    monkeypatch.setattr(workspace_gui.simpledialog,'askstring',lambda *a,**k:'Reviewed first flight')
+    w.decide('Accepted')
+    assert jobs[0]['status']=='Accepted'
+    assert jobs[1]['status']=='Needs review'
+    assert w.history_tree.selection()==(jobs[0]['id'],)
+    assert '1/2 recorded inputs accepted' in w.stage_tree.item('Classification','values')[1]
+
+
+def test_successful_classification_promotes_one_flight_and_preserves_binding(application,tmp_path):
+    app=application;w=app.workspace;p=w.project_panel
+    a,b,out=[tmp_path/name for name in ('a.las','b.las','a_ground.las')]
+    for path in (a,b,out):cloud(path)
+    p.clouds=[str(a),str(b)];p.bindings={str(a):'flight.trj'}
+    w.sync_project_layers();app.cloud_path.set(str(a))
+    stage=next(s for s in app.stages if type(s).__name__=='ClassifyStage')
+    stage.out_path.set(str(out));w.begin_stage(stage)
+    job=w.active
+    app.runner.products=[('classified',out)];app.runner.error=None
+    w.complete(app.runner);wait(app.root,w.viewer);w.poll()
+    assert p.clouds==[str(out),str(b)]
+    assert p.bindings=={str(out):'flight.trj'}
+    assert app.cloud_path.get()==str(out)
+    assert w.tracker.cloud_root(out)==str(a)
+    assert any(layer['path']==str(a) for layer in w.tracker.data['layers'])
+    assert w.tracker.job_status(job)=='Needs review'
+    w.activate_cloud_version(a);wait(app.root,w.viewer);w.poll()
+    assert p.clouds==[str(a),str(b)]
+    assert p.bindings=={str(a):'flight.trj'}
+    w.activate_cloud_version(out);wait(app.root,w.viewer);w.poll()
+    # Showing the source for comparison must not re-add it as a project input.
+    w.viewer.load([str(a),str(out)]);wait(app.root,w.viewer);w.poll()
+    assert p.clouds==[str(out),str(b)]
+    saved=tmp_path/'versions.json';w.tracker.save(saved)
+    assert Tracker.load(saved).cloud_root(out)==str(a)
+
+
+def test_failed_classification_does_not_promote_existing_output(application,tmp_path):
+    app=application;w=app.workspace
+    src,out=tmp_path/'a.las',tmp_path/'a_ground.las'
+    cloud(src);cloud(out);w.project_panel.clouds=[str(src)];app.cloud_path.set(str(src))
+    stage=next(s for s in app.stages if type(s).__name__=='ClassifyStage')
+    stage.out_path.set(str(out));w.begin_stage(stage)
+    app.runner.error=RuntimeError('failed');app.runner.products=[('classified',out)]
+    w.complete(app.runner)
+    assert w.project_panel.clouds==[str(src)]
+    assert not w.tracker.data.get('cloud_versions')
+
+
+def test_classification_of_derived_version_supersedes_same_flight(tmp_path):
+    source,first,second=[tmp_path/name for name in ('a','a1','a2')]
+    for p in (source,first,second):p.write_text('cloud')
+    t=Tracker();j=t.begin('Classification',dict(cloud=str(source)),[source]);t.finish(j,'Needs review',[first])
+    t.register_cloud_result(source,first,j['id'])
+    k=t.begin('Classification',dict(cloud=str(first)),[first]);t.finish(k,'Needs review',[second])
+    t.register_cloud_result(first,second,k['id'])
+    assert t.cloud_root(second)==str(source)
+    assert t.current_jobs('Classification')==[k]
+    assert t.job_status(j)=='Outdated'
+
+
+def test_reinspect_promoted_output_does_not_invalidate_unchanged_classification(tmp_path):
+    src,out=tmp_path/'src',tmp_path/'out';src.write_text('original');out.write_text('classified')
+    t=Tracker();inspect=t.begin('Inspect',{},[src]);t.finish(inspect,'Needs review')
+    job=t.begin('Classification',dict(cloud=str(src)),[src]);t.finish(job,'Needs review',[out])
+    t.register_cloud_result(src,out,job['id'])
+    inspect=t.begin('Inspect',{},[out]);t.finish(inspect,'Needs review')
+    assert t.job_status(job)=='Needs review'
+    src.write_text('changed original')
+    assert t.job_status(job)=='Outdated'
+
+
+def test_old_workspace_recovers_only_verified_classification_lineage(tmp_path):
+    src,out=tmp_path/'src.las',tmp_path/'result.las'
+    src.write_text('original');out.write_text('classified')
+    t=Tracker();job=t.begin('Classification',dict(cloud=str(src)),[src])
+    job['stage_class']='ClassifyStage';t.finish(job,'Needs review',[out])
+    t.data['project']={'clouds':[str(src)]}
+    saved=tmp_path/'old.json';t.save(saved)
+    recovered=Tracker.load(saved)
+    assert recovered.cloud_root(out)==str(src)
+    assert recovered.data['project']['clouds']==[str(src)]
+    out.write_text('modified result')
+    assert not Tracker.load(saved).data.get('cloud_versions')
+    t.finish(job,'Failed',[out]);t.save(saved)
+    assert not Tracker.load(saved).data.get('cloud_versions')
+
+
+def test_version_promotion_queues_busy_viewer(application,tmp_path):
+    w=application.workspace;src,out=tmp_path/'a.las',tmp_path/'out.las'
+    cloud(src);cloud(out);w.project_panel.clouds=[str(src)]
+    w.tracker.register_cloud_result(src,out,'job')
+    w.viewer.busy=True
+    w.activate_cloud_version(out)
+    assert w.pending_version_view
+    assert w.project_panel.clouds==[str(out)]
+    w.viewer.busy=False;w.poll();wait(application.root,w.viewer);w.poll()
+    assert not w.pending_version_view
+    assert list(w.viewer.paths)==[str(out)]

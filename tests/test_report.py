@@ -101,3 +101,28 @@ def test_cli_qa_report(tmp_path):
     with pytest.raises(SystemExit, match="control-order"):
         cli.main(["qa-report", str(cloud), "--out", str(out),
                   "--control", str(ctrl)])
+
+
+def test_unclassified_cloud_reports_why_strip_dz_is_missing(tmp_path):
+    """A QA report that silently omits strip dZ reads as 'no
+    disagreement found', which is the opposite of the truth when the
+    measure never ran. The report must say it did not run, and why."""
+    rng = np.random.default_rng(0)
+    n = 20000
+    points = {"x": rng.uniform(1000, 1400, n), "y": rng.uniform(2000, 2100, n),
+              "z": rng.uniform(100, 110, n),
+              "point_source_id": np.where(rng.random(n) < 0.5, 1, 2).astype(np.uint16),
+              "classification": np.ones(n, dtype=np.uint8)}
+
+    summary = report.generate(points, tmp_path, title="unclassified",
+                              units="US survey foot")
+
+    assert summary["ground_points"] == 0
+    assert summary["strip_dz"] == []
+    # the rest of QA still works on an unclassified delivery
+    assert (tmp_path / "density.png").is_file()
+    assert summary["extent"]["x"][0] < summary["extent"]["x"][1]
+
+    page = (tmp_path / "report.html").read_text(encoding="utf-8")
+    assert "NOT COMPUTED" in page
+    assert "no ground-classified returns" in page

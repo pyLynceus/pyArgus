@@ -194,3 +194,68 @@ def labeled_scene(seed=0, n_ground=20000):
     points = {"x": x, "y": y, "z": z, "return_number": return_number,
               "number_of_returns": number_of_returns}
     return points, labels
+
+
+def lagged_strip(yaw, origin, length, *, lag=0.0, terrain=rolling_terrain,
+                 agl=100.0, swath=60.0, n=6000, t0=0.0, speed=25.0,
+                 roll_amp=0.02, roll_period=8.0, noise=0.02, seed=0):
+    """One flight line georeferenced with a NAVIGATION TIME LAG.
+
+    The error this builds is deliberately OUTSIDE the solver's span, to
+    test what it does with a misalignment it cannot represent.
+
+    Reality's order of events: the scanner truly measured the terrain
+    from the navigation state at time t, so the ranging vector satisfies
+    G = P(t) + R(t) b. Processing pairs that same b with the state at
+    t + lag, and the delivered cloud becomes X = P(t+lag) + R(t+lag) b.
+    There is no boresight in that and no constant offset either.
+
+    The aircraft rolls, as a real one always does, so the attitude part
+    of the lag error varies along the line and the whole thing is not a
+    rigid shift. Were attitude constant, a steady-speed lag WOULD
+    collapse to a horizontal offset -- which the solver can represent,
+    and which would make this a much weaker test.
+
+    Returns (StripBundle, true_ground). The bundle carries the nav
+    state that processing BELIEVED -- the lagged one -- because that is
+    what a misprocessed delivery hands the solver. ``true_ground`` is
+    where the points actually belong, and is the only referee here that
+    does not come out of the solver's own model. With ``lag=0`` the
+    cloud lands exactly on it.
+    """
+    from pyargus.align import StripBundle
+    from pyargus.core import rotation
+
+    rng = np.random.default_rng(seed)
+    direction = np.array([np.cos(yaw), np.sin(yaw), 0.0])
+    perp = np.array([-direction[1], direction[0], 0.0])
+
+    along = rng.uniform(0.0, length, n)
+    across = rng.uniform(-swath / 2.0, swath / 2.0, n)
+    origin3 = np.array([origin[0], origin[1], 0.0])
+    ground = (origin3 + along[:, None] * direction + across[:, None] * perp)
+    ground[:, 2] = terrain(ground[:, 0], ground[:, 1]) + rng.normal(0, noise, n)
+
+    times = t0 + along / speed
+
+    def nav_at(t):
+        """Position and attitude of the aircraft at time t."""
+        travelled = (t - t0) * speed
+        pos = origin3 + travelled[:, None] * direction
+        pos[:, 2] = 100.0 + agl
+        phase = 2.0 * np.pi * t / roll_period
+        return pos, np.column_stack([
+            roll_amp * np.sin(phase),
+            0.5 * roll_amp * np.cos(phase),
+            np.full(t.shape, yaw)])
+
+    pos_true, rpy_true = nav_at(times)
+    r_true = rotation.matrices(rpy_true[:, 0], rpy_true[:, 1], rpy_true[:, 2])
+    body = np.einsum("nji,nj->ni", r_true, ground - pos_true)
+
+    pos_used, rpy_used = nav_at(times + lag)
+    r_used = rotation.matrices(rpy_used[:, 0], rpy_used[:, 1], rpy_used[:, 2])
+    xyz = pos_used + np.einsum("nij,nj->ni", r_used, body)
+
+    return (StripBundle(xyz=xyz, nav_xyz=pos_used, rpy=rpy_used, times=times),
+            ground)

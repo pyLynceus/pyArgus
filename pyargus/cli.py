@@ -5,7 +5,9 @@
     pyargus copc cloud.las --out cloud.copc.laz
     pyargus density cloud.las --cell 2.0
     pyargus qa-report cloud.las --out qa/ --control pts.csv --control-order pnez
-    pyargus classify-ground cloud.las --out classified.las --cell 3
+    pyargus noise-cut cloud.las --out flagged.las --z-min 100 --z-max 500
+    pyargus merge line1.las line2.las --out site.las
+    pyargus classify-ground flagged.las --out classified.las --cell 3
     pyargus train-above labeled.las --out forest.joblib
     pyargus classify-above classified.las --model forest.joblib --out full.las
     pyargus dtm classified.las --out dtm.asc --cell 3
@@ -146,6 +148,43 @@ def _cmd_qa_report(args):
         return 0
 
 
+def _cmd_merge(args):
+    from pathlib import Path
+
+    from pyargus.formats import merge
+
+    dst = Path(args.out)
+    if dst.exists() and not args.force:
+        raise SystemExit(f"{dst} exists; pass --force to replace it")
+    try:
+        merge.merge_clouds(args.paths, dst,
+                           psid_from_file=args.psid_from_file,
+                           reframe=args.reframe,
+                           force=args.force,
+                           chunk_size=args.chunk_size)
+    except (ValueError, FileExistsError) as exc:
+        raise SystemExit(str(exc)) from None
+    return 0
+
+
+def _cmd_noise_cut(args):
+    from pathlib import Path
+
+    from pyargus.classify import noise
+
+    src, dst = Path(args.path), Path(args.out)
+    if src.resolve() == dst.resolve():
+        raise SystemExit("refusing to overwrite the input cloud; --out must "
+                         "be a new file")
+    try:
+        noise.noise_cut(src, dst, z_min=args.z_min, z_max=args.z_max,
+                        max_fraction=args.max_fraction, force=args.force,
+                        chunk_size=args.chunk_size)
+    except (ValueError, FileExistsError) as exc:
+        raise SystemExit(str(exc)) from None
+    return 0
+
+
 def _cmd_classify_ground(args):
     from pathlib import Path
 
@@ -165,7 +204,9 @@ def _cmd_classify_ground(args):
     common = dict(cell=args.cell, slope=args.slope, window=args.window,
                   threshold=args.threshold, scalar=args.scalar,
                   low_cut=args.low_cut, any_return=args.any_return,
-                  rescan=args.rescan)
+                  noise_min=args.noise_min, noise_max=args.noise_max,
+                  noise_max_fraction=args.noise_max_fraction,
+                  rescan=args.rescan, force=args.force)
     try:
         if args.tiled:
             ground_job.classify_ground_tiled(
@@ -173,7 +214,7 @@ def _cmd_classify_ground(args):
                 **common)
         else:
             ground_job.classify_ground_whole(src, dst, **common)
-    except ValueError as exc:
+    except (ValueError, FileExistsError) as exc:
         raise SystemExit(str(exc)) from None
     return 0
 
@@ -182,6 +223,12 @@ def _cmd_dtm(args):
     from pyargus.formats import las
     from pyargus.surfaces import dtm
 
+    # cost order: this costs nothing and the read costs a cloud
+    if args.add_points and not args.points_order:
+        raise SystemExit("--points-order is required with --add-points; the "
+                         "column order is never guessed (pnez or penz), "
+                         "because a file read the wrong way round produces a "
+                         "site that looks plausible and is transposed")
     points = las.read_points(args.path, fields=("x", "y", "z", "classification"))
     if args.dsm:
         m = np.ones(points["x"].size, dtype=bool)
@@ -196,6 +243,15 @@ def _cmd_dtm(args):
         grid, x_edges, y_edges = dtm.dtm_grid(
             points["x"][m], points["y"][m], points["z"][m], args.cell,
             max_fill=args.max_fill)
+    if args.add_points:
+        from pyargus.surfaces import supplement
+        try:
+            sx, sy, sz = supplement.read_points(args.add_points,
+                                                args.points_order)
+            grid, _ = supplement.apply_points(grid, x_edges, y_edges,
+                                              sx, sy, sz)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
     dtm.write_esri_ascii(args.out, grid, x_edges, y_edges)
     finite = grid[np.isfinite(grid)]
     label = "points" if args.dsm else "ground"
@@ -219,8 +275,10 @@ def _cmd_train_above(args):
     points = las.read_points(
         args.path, fields=("x", "y", "z", "classification",
                            "return_number", "number_of_returns"))
+    from pyargus.classify.job import NOISE_CLASSES
+
     ground = points["classification"] == 2
-    noise = points["classification"] == 7
+    noise = np.isin(points["classification"], NOISE_CLASSES)
     matrix, above_index, valid = features.point_features(
         points, ground, ignore_mask=noise, cell=args.cell)
     labels = points["classification"][above_index]
@@ -273,12 +331,21 @@ def _cmd_classify_above(args):
         raise SystemExit("no class-2 ground in the cloud; run "
                          "classify-ground first")
     # noise is EXCLUDED from the features (it poisons its neighbors'
-    # cell statistics), not merely relabeled after prediction
-    noise = points["classification"] == 7
+    # cell statistics), not merely relabeled after prediction -- and
+    # every noise class, not just 7: noise-cut writes 18 as well, and a
+    # point a thousand feet up must not come back as vegetation
+    from pyargus.classify.job import NOISE_CLASSES
+
+    noise = np.isin(points["classification"], NOISE_CLASSES)
     classification, unclassifiable = above.classify_above(
         points, ground, model, ignore_mask=noise, cell=args.cell)
-    classification[noise] = 7
+    classification[noise] = points["classification"][noise]
     las_data.classification = classification
+    # a COPC input comes back as a plain cloud: laspy cannot write its
+    # octree records, and they would be false on a rewrite anyway
+    from pyargus.formats.las import drop_copc_records
+
+    drop_copc_records(las_data.header)
     las_data.write(str(dst))
     u, c = np.unique(classification, return_counts=True)
     print(f"classes: { {int(k): int(v) for k, v in zip(u, c)} }")
@@ -730,7 +797,10 @@ def build_parser():
     p_cls.add_argument("--out", required=True,
                        help="output LAS/LAZ (never the input)")
     p_cls.add_argument("--force", action="store_true",
-                       help="replace --out if it exists")
+                       help="replace --out if it exists -- only after the "
+                            "new cloud is written and verified, so a failed "
+                            "run leaves the old file; the job record says "
+                            "it replaced one")
     p_cls.add_argument("--cell", type=float, default=1.0)
     p_cls.add_argument("--slope", type=float, default=0.15)
     p_cls.add_argument("--window", type=float, default=18.0,
@@ -762,10 +832,78 @@ def build_parser():
                             "the LAS header -- for a header a crop or "
                             "merge left stale (with --tiled, one extra "
                             "pass)")
+    p_cls.add_argument("--noise-min", type=float, default=None,
+                       help="screen on the fly: returns below this elevation "
+                            "become class 7 (low noise) and never enter the "
+                            "surface, map units. Refused when it would flag "
+                            "more than --noise-max-fraction of the cloud. "
+                            "noise-cut does the same as a separate recorded "
+                            "step with a list of every point it flagged")
+    p_cls.add_argument("--noise-max", type=float, default=None,
+                       help="returns above this elevation become class 18 "
+                            "(high noise), map units")
+    p_cls.add_argument("--noise-max-fraction", type=float,
+                       default=0.001,
+                       help="refuse a noise screen that would flag more "
+                            "than this share of the cloud -- that is the "
+                            "site, not its noise (default 0.001, as "
+                            "noise-cut's --max-fraction); raise it on "
+                            "purpose")
     p_cls.add_argument("--low-cut", type=float, default=None,
                        help="discard low-outlier cells deeper than this below "
                             "the opened inverted surface (map units)")
     p_cls.set_defaults(func=_cmd_classify_ground)
+
+    p_mg = sub.add_parser("merge",
+                          help="concatenate clouds into one NEW file, in the "
+                               "order given: what dtm, contours and qa-report "
+                               "need when a delivery arrives one file per "
+                               "flight line")
+    p_mg.add_argument("paths", nargs="+", help="the clouds to join, in order")
+    p_mg.add_argument("--out", required=True,
+                      help="output LAS/LAZ (never an input)")
+    p_mg.add_argument("--force", action="store_true",
+                      help="replace --out if it exists")
+    p_mg.add_argument("--reframe", action="store_true",
+                      help="restate every point in one scale/offset frame "
+                           "when the inputs disagree -- the vendor gives "
+                           "each flight line its own offset. Keeps every "
+                           "coordinate to within half a scale unit and "
+                           "reports the largest change")
+    p_mg.add_argument("--psid-from-file", action="store_true",
+                      help="number point_source_id 1..N by file order, for "
+                           "clouds whose strip ids collide (the originals "
+                           "are recorded in the sidecar)")
+    p_mg.add_argument("--chunk-size", type=int, default=1_000_000,
+                      help="points per streamed chunk")
+    p_mg.set_defaults(func=_cmd_merge)
+
+    p_nc = sub.add_parser("noise-cut",
+                          help="flag gross outliers by elevation window to "
+                               "a NEW file: class 7 below --z-min, class 18 "
+                               "above --z-max; nothing else in the cloud "
+                               "changes, and classify-ground keeps flagged "
+                               "points out of its surface")
+    p_nc.add_argument("path")
+    p_nc.add_argument("--out", required=True,
+                      help="output LAS/LAZ (never the input)")
+    p_nc.add_argument("--force", action="store_true",
+                      help="replace --out if it exists")
+    p_nc.add_argument("--z-min", type=float, default=None,
+                      help="points below this elevation become class 7 "
+                           "(low noise), map units")
+    p_nc.add_argument("--z-max", type=float, default=None,
+                      help="points above this elevation become class 18 "
+                           "(high noise), map units")
+    p_nc.add_argument("--max-fraction", type=float, default=0.001,
+                      help="refuse, before writing, if the window would "
+                           "flag more than this fraction of the cloud "
+                           "(default 0.001): gross noise is rare by "
+                           "definition, and a window that catches more is "
+                           "catching the site")
+    p_nc.add_argument("--chunk-size", type=int, default=1_000_000,
+                      help="points per streamed chunk")
+    p_nc.set_defaults(func=_cmd_noise_cut)
 
     p_dtm = sub.add_parser("dtm", help="mean-ground DTM as ESRI ASCII")
     p_dtm.add_argument("path")
@@ -777,6 +915,14 @@ def build_parser():
     p_dtm.add_argument("--dsm", action="store_true",
                        help="highest surface from ALL returns instead of "
                             "mean ground")
+    p_dtm.add_argument("--add-points", nargs="+", metavar="CSV",
+                       help="surveyed points that OWN the cells they fall "
+                            "in: field shots from under canopy, or stereo "
+                            "measurements. They replace the lidar in their "
+                            "own cell rather than being averaged into it")
+    p_dtm.add_argument("--points-order", choices=("pnez", "penz"),
+                       help="column order of --add-points; required with it "
+                            "and never guessed")
     p_dtm.set_defaults(func=_cmd_dtm)
 
     p_ta = sub.add_parser("train-above",

@@ -104,6 +104,15 @@ as ground (they anchor min-cells; a point-level low filter at this
 density is the fix if it matters); the FP tail to +1.31 ft is
 near-ground vegetation inherent to a one-surface filter.
 
+  *2026-09-23:* that 1,622 is the bare SMRF core, which this script
+  calls directly with every last return. The COMMANDS no longer do
+  that: `classify-ground` keeps points already flagged 7 or 18 out of
+  the surface and carries their class through, so on the same cloud
+  both commands now label **0** of the 4,951 (measured in the tiled
+  acceptance below). The core's own behaviour is unchanged and so is
+  this number; it measures what SMRF does when noise is handed to it,
+  which is why `noise-cut` exists.
+
 **low_cut must stay OFF under canopy**: cell-level low cutting flagged
 144k cells -- the under-canopy ground penetrations themselves -- and
 pushed the DEM into the canopy (FP p90 +39 ft). Measured twice with
@@ -690,9 +699,9 @@ tile's box stops short of the project.
 * **Summerville, in the gate** (cell 3, window 30: halo 330 ft, SMRF's
   own reach; 600 ft cores). 12 tiles, every one with a real seam, the
   largest box 51% of the project area. **0 of 15,284,332
-  classifications differ** from the plain command; 4,519,046 ground
+  classifications differ** from the plain command; 4,517,490 ground
   either way, and 0 of the 2,504,042 non-last returns labeled ground
-  by either. 13 s whole, 22 s tiled. Window 30 rather than 60 because
+  by either. 16 s whole, 20 s tiled. Window 30 rather than 60 because
   at 60 the halo is 1,260 ft and swallows most of a 1,841 ft project:
   no tile there can have a seam.
 * **An SH 151 strip, at the survey-feet defaults, by hand** (cell 3,
@@ -702,6 +711,36 @@ tile's box stops short of the project.
   strip. **0 of 41,366,226 classifications differ**; 17,612,866 ground
   either way. 51 s whole, 109 s tiled (9 passes, no index). Not in the
   gate: it reads client data and holds the whole strip to compare.
+
+### Noise classes, and what they changed here (2026-09-23)
+
+Summerville's delivery carries 4,951 class-7 points, so this acceptance
+also measures the noise policy on real data. `candidates()` no longer
+admits a point flagged 7 or 18 and `labels()` carries its class
+through, in both drivers:
+
+* **0 of the 4,951 are labeled ground** by either command, and all
+  4,951 come out carrying their own class. Before the change the two
+  commands labeled **1,556** of them ground -- the whole-cloud ground
+  count moved 4,519,046 -> 4,517,490 (fraction 0.29566 -> 0.29556),
+  which is the entire recorded difference.
+* `max_tile_points` moved 11,054,341 -> **11,050,836**: the 3,505
+  class-7 last returns inside the largest halo box are no longer read
+  into that tile's surface. The equality claim is untouched (0
+  mismatches), and so is every other recorded number in the battery.
+* Five checks were added to the gate (`delivered_noise`,
+  `noise_as_ground`, `noise_kept`, `whole_noise`, `tiled_noise`), so
+  the policy is pinned on a real delivery rather than on synthetic
+  clouds alone: 78 checks.
+
+What made this necessary was measured on a real two-line client
+delivery (the script that re-runs that measurement is kept with the
+job's private records): its lines, classified straight from the vendor
+export, carry **over a hundred gross outliers**, nearly all of them
+low, **more than half of them labeled ground**, and at more than a
+dozen pits the classified cloud puts ground **up to tens of feet above** the
+vendor's own class-2 surface within one 6-ft cell -- canopy and roofs
+pulled into class 2 by the pit the opening cannot remove.
 
 This section was rewritten after its adversarial review (below): the
 first version's "0 of 15,284,332" compared the tiled run with a mask it
@@ -741,8 +780,9 @@ decoration.
   box is the core grown by the halo on every side, and the halo is
   fixed by SMRF's reach, so it can never be much smaller than 2 * halo
   across: 2,520 ft at the survey-feet defaults. Measured: the largest
-  Summerville tile held 11,054,341 points (51% of the AREA, 86% of the
-  last returns -- density is not even), and the largest strip tile
+  Summerville tile held 11,050,836 points (11,054,341 before class-7
+  points were kept out of the surface on 2026-09-23; 51% of the AREA,
+  86% of the last returns either way -- density is not even), and the largest strip tile
   8,610,889. At the DEFAULT tile size (six halos) the strip plans as 2
   tiles, the larger box 83% of the strip, and Summerville as one tile
   holding everything. Tiling bounds memory only when `--tile-size` is
@@ -808,3 +848,17 @@ test kills (six mutants, six killed).
   transposed lattice survived too. The new scene is a 2,400 x 600
   multi-return corridor, run at the default halo.
 * `--tile-size` and `--halo` without `--tiled` now refuse by name.
+
+## September 24, 2026: exclude known noise before ground fitting
+
+Both production classification drivers now exclude and preserve classes 7/18.
+Summerville's 4,951 noise returns remain noise. The maximum eligible tile
+count changes from 11,054,341 to 11,050,836 (3,505 fewer); this is an intentional
+candidate-mask change, not relaxed numerical tolerance. Whole and tiled
+outputs still agree at all 15,284,332 points; both label 4,517,490 ground.
+The full battery passed 72 checks and failed only the old exact tile count.
+The pure SMRF diagnostic in summerville_ground still bypasses production
+noise filtering; its historical noise_as_ground value is not a production
+classifier result and its expectation is unchanged.
+
+Independent repeat: all 13 tiled reference checks passed with the updated exact count; zero whole/tiled classification mismatches.

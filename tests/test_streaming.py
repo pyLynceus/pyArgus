@@ -350,3 +350,24 @@ def test_update_length_mismatch_is_named_not_broadcast(tmp_path):
         las_mod.stream_update(src, tmp_path / "dst.las",
                               lambda p, _s: {"z": np.zeros(1)},
                               fields=("z",))
+
+
+@pytest.mark.parametrize("suffix, compressed", [(".laz", True), (".las", False)])
+def test_the_output_format_follows_the_name_it_was_given(tmp_path, suffix,
+                                                         compressed):
+    """laspy reads a compression flag from the header, so an
+    uncompressed file under a .laz name round-trips perfectly and no
+    equality test can see it -- while the delivery is several times the
+    size it should be and its name misstates its format. The temporary
+    file this writes through is named `<out>.partial`, whose suffix is
+    not `.laz`, so the intent has to be stated rather than inferred."""
+    src = tmp_path / "src.las"
+    make_cloud(src, n=4000, seed=31)
+    dst = tmp_path / ("out" + suffix)
+    las_mod.stream_update(src, dst, lambda p, _s: None, fields=("z",))
+    with laspy.open(dst) as reader:
+        assert reader.header.are_points_compressed is compressed
+    before = las_mod.read_points(src)
+    after = las_mod.read_points(dst)
+    for name, values in before.items():
+        assert np.array_equal(after[name], values), name

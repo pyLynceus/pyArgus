@@ -246,3 +246,46 @@ def test_load_refuses_files_that_are_not_models(tmp_path):
     joblib.dump({"just": "a dict"}, bare)
     with pytest.raises(ValueError, match="not a pyArgus model"):
         above.load(bare)
+
+
+def test_cli_classify_above_takes_a_copc_input(tmp_path):
+    """classify-above read a .copc.laz whole and wrote it back with its
+    octree records still on the header, which laspy cannot write: a
+    NotImplementedError after the forest had run. The output is a plain
+    cloud, so the records go."""
+    laspy = pytest.importorskip("laspy")
+    from pyargus import cli
+    from pyargus.formats import copc as copc_mod
+    from pyargus.formats import las as las_mod
+
+    if copc_mod.find_pdal() is None:
+        pytest.skip("no pdal executable found")
+    points, labels = labeled_scene(seed=2)
+    header = laspy.LasHeader(point_format=6, version="1.4")
+    header.scales = (0.001, 0.001, 0.001)
+    data = laspy.LasData(header)
+    data.x, data.y, data.z = points["x"], points["y"], points["z"]
+    data.return_number = points["return_number"]
+    data.number_of_returns = points["number_of_returns"]
+    data.classification = labels
+    labeled = tmp_path / "labeled.las"
+    data.write(str(labeled))
+    model_path = tmp_path / "forest.joblib"
+    assert cli.main(["train-above", str(labeled), "--out",
+                     str(model_path)]) == 0
+
+    data.classification = np.where(labels == 2, 2, 1).astype(np.uint8)
+    bare = tmp_path / "bare.las"
+    data.write(str(bare))
+    copc = tmp_path / "bare.copc.laz"
+    copc_mod.write_copc(bare, copc)
+    out = tmp_path / "full.las"
+    assert cli.main(["classify-above", str(copc), "--model", str(model_path),
+                     "--out", str(out)]) == 0
+    info = las_mod.cloud_info(out)
+    assert not info["is_copc"] and info["point_count"] == labels.size
+    result = np.asarray(laspy.read(str(out)).classification)
+    # pdal reorders points, so compare what order cannot change: ground
+    # is untouched and the forest restored above-ground classes
+    assert int((result == 2).sum()) == int((labels == 2).sum())
+    assert np.isin(result, (3, 4, 5, 6)).sum() > 0.9 * (labels != 2).sum()

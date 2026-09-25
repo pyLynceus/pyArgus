@@ -137,6 +137,82 @@ class Camera:
             return -a, -b
         return b, -a
 
+    def _rotate_from_stored(self, a, b):
+        """The inverse of ``_rotate_to_stored``: the same integer
+        quarter turn the other way, which is the same table read
+        backwards."""
+        turns = (4 - self.quarter_turns % 4) % 4
+        if turns == 0:
+            return a, b
+        if turns == 1:
+            return -b, a
+        if turns == 2:
+            return -a, -b
+        return b, -a
+
+    def undistort(self, xd, yd, *, tol=1e-12, max_iter=30):
+        """Distorted normalised coordinates -> ideal ones.
+
+        The forward model has no closed form inverse, so this is a
+        fixed-point iteration on the SAME expression, in the SAME units
+        -- normalised by focal length, about the stored image centre,
+        with the principal point already removed. Writing it any other
+        way is how a lens model gets transplanted, and this project has
+        paid for that once already at ~27 px on the production path.
+
+        Returns (x, y, settled). A pixel outside the calibrated field
+        can iterate away rather than settle, so the caller is told
+        rather than handed a plausible answer: past the barrel's fold
+        radius two object directions produce the same pixel and there
+        is no way to choose between them.
+        """
+        xd = np.asarray(xd, dtype=float)
+        yd = np.asarray(yd, dtype=float)
+        x, y = xd.copy(), yd.copy()
+        step = np.full(np.broadcast(xd, yd).shape, np.inf, dtype=float)
+        for _ in range(max_iter):
+            r2 = x * x + y * y
+            radial = 1.0 + self.k1 * r2 + self.k2 * r2 * r2 \
+                + self.k3 * r2 * r2 * r2
+            tx = self.p1 * (r2 + 2.0 * x * x) + 2.0 * self.p2 * x * y
+            ty = self.p2 * (r2 + 2.0 * y * y) + 2.0 * self.p1 * x * y
+            with np.errstate(invalid="ignore", divide="ignore"):
+                nx = (xd - tx) / radial
+                ny = (yd - ty) / radial
+            step = np.maximum(np.abs(nx - x), np.abs(ny - y))
+            x, y = nx, ny
+            if np.all(np.isfinite(step) & (step < tol)):
+                break
+        r2 = x * x + y * y
+        settled = (np.isfinite(x) & np.isfinite(y) & (step < 1e-9)
+                   & (r2 <= self._r_valid * self._r_valid))
+        return x, y, settled
+
+    def ray(self, r_cam, col, row):
+        """Stored pixels -> unit directions in GROUND space.
+
+        The exact inverse of :meth:`project`, up to the one thing a
+        single photograph cannot know, which is how far away the point
+        is. Returns ``(direction, usable)``: (N, 3) unit vectors from
+        the camera's own origin, and a mask that is False where the
+        pixel lies outside the calibrated field or the undistortion did
+        not settle. Directions of masked-out pixels are garbage by the
+        same contract ``project`` uses.
+        """
+        col = np.atleast_1d(np.asarray(col, dtype=float))
+        row = np.atleast_1d(np.asarray(row, dtype=float))
+        xd = (col - (self.width_px - 1) / 2.0 - self.cx_px) / self.focal_px
+        yd = (row - (self.height_px - 1) / 2.0 - self.cy_px) / self.focal_px
+        x, y, settled = self.undistort(xd, yd)
+        a, b = self._rotate_from_stored(x, y)
+        # project() formed (a, b) from (u0, -u1) and divided by -u2, so
+        # a pixel's camera-frame direction is (a, -b, -1).
+        u = np.column_stack([a, -b, -np.ones_like(np.asarray(a, dtype=float))])
+        d = u @ np.asarray(r_cam, dtype=float).T
+        with np.errstate(invalid="ignore", divide="ignore"):
+            d = d / np.linalg.norm(d, axis=1, keepdims=True)
+        return d, settled & np.isfinite(d).all(axis=1)
+
     def project(self, r_cam, origin, xyz):
         """Ground points -> stored pixels through one oriented camera.
 
@@ -176,6 +252,67 @@ class Camera:
                 & (row >= margin) & (row <= self.height_px - 1 - margin))
 
 
+class _NotIniCal(Exception):
+    """Looked like an INI calibration and was not."""
+
+
+def _read_ini_cal(path, text, *, pixel_mm, quarter_turns, name):
+    """The ``[Calibration]`` INI that TopoDOT writes beside a flight.
+
+    Same lens model, different spelling, and one real difference: Cx
+    and Cy are the principal point measured from the image ORIGIN in
+    pixels, while :class:`Camera` wants it as an offset from the image
+    CENTRE. Getting that wrong is not subtle -- it is most of the frame
+    -- but it is exactly the kind of thing that reads as plausible in
+    code and lands the projection in the next county.
+
+    ``dx``/``dy`` are the physical pixel pitch in METRES, which is
+    where ``pixel_mm`` comes from when the file states it; the argument
+    is only the fallback.
+    """
+    import configparser
+
+    parser = configparser.ConfigParser()
+    try:
+        parser.read_string(text)
+    except configparser.Error as exc:
+        raise _NotIniCal(str(exc)) from None
+    if not parser.has_section("Calibration"):
+        raise _NotIniCal("no [Calibration] section")
+    section = parser["Calibration"]
+
+    def number(key, required=False):
+        if key not in section:
+            if required:
+                raise ValueError(f"{path.name} lacks {key}; not a TopoDOT "
+                                 f"calibration")
+            return 0.0
+        try:
+            return float(section[key])
+        except ValueError:
+            raise ValueError(
+                f"{path.name}: {key} is present but unreadable "
+                f"({section[key]!r}). Refusing to silently treat it as "
+                f"zero -- a dropped distortion term is tens of pixels at "
+                f"the frame corner.") from None
+
+    width = int(number("Nx", required=True))
+    height = int(number("Ny", required=True))
+    if width <= 0 or height <= 0:
+        raise ValueError(f"{path.name}: image size {width}x{height}")
+    pitch_m = number("dx")
+    return Camera(
+        focal_px=number("fx", required=True), width_px=width,
+        height_px=height,
+        cx_px=number("Cx") - (width - 1) / 2.0,
+        cy_px=number("Cy") - (height - 1) / 2.0,
+        k1=number("k1"), k2=number("k2"), k3=number("k3"),
+        p1=number("P1"), p2=number("P2"),
+        quarter_turns=quarter_turns,
+        pixel_mm=pitch_m * 1000.0 if pitch_m > 0 else pixel_mm,
+        name=name or path.stem)
+
+
 def read_cal(path, *, pixel_mm=TRUEVIEW_PIXEL_MM, quarter_turns=3,
              name=None):
     """A TrueView/Agisoft ``.cal`` sidecar -> Camera.
@@ -189,7 +326,21 @@ def read_cal(path, *, pixel_mm=TRUEVIEW_PIXEL_MM, quarter_turns=3,
     uncalibrated projection the CLI refuses to make.
     """
     path = Path(path)
-    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    text = path.read_text(encoding="utf-8-sig")
+    if text.lstrip().startswith("["):
+        # Two different files wear the .cal suffix on this hardware.
+        # The JSON one is what Summerville shipped; the INI one is what
+        # TopoDOT writes beside a TrueView flight, and the difference is
+        # not cosmetic -- it names its keys differently and states the
+        # principal point from the image ORIGIN rather than its centre.
+        # Reading the wrong one as the other is a 2,700 px error, so the
+        # first character decides and neither is guessed at.
+        try:
+            return _read_ini_cal(path, text, pixel_mm=pixel_mm,
+                                 quarter_turns=quarter_turns, name=name)
+        except _NotIniCal:
+            pass
+    data = json.loads(text)
     if isinstance(data, list):
         if not data:
             raise ValueError(f"{path.name} holds an empty calibration list")
