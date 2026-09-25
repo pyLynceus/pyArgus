@@ -266,6 +266,37 @@ independent marks a vertical check is a bias estimate, not a compliant
 accuracy assessment (ASPRS asks for twenty checkpoints and more per
 land-cover class), and a constant vertical shift is not an alignment.
 
+## Latest executable — Features workspace, September 25, 2026
+
+C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-25-0c3b239/pyArgus/pyArgus.exe
+
+Source commit 0c3b239. Full suite 463 passed, no skips; packaged self-test
+exit 0, including feature export and GUI restoration. Self-test used isolated
+autosave. Keep the complete pyArgus folder with _internal; build-info.json
+records source SHA and executable hash. Source datasets were not modified.
+
+Features tab: New line arms Shift-click displayed-point snapping while that
+tab is active. Finish tracing stops it. Named types, Candidate/Accepted review,
+vertex replacement or manual XYZ edit, deletion, reverse, split, explicit-order
+join, 100-edit session undo/redo. Geometry edits return to Candidate. Features
+persist in normal workspace JSON with CRS, source metadata identity and edit
+method. Acceptance/export refuse changed or missing sources. Features draw on
+top of the cloud, only for matching CRS. See docs/FEATURES_WORKSPACE.md.
+
+DXF export defaults to accepted lines, uses 3D polylines, type/status layers,
+metre/international-foot/US-survey-foot unit declarations and feature IDs.
+A .features.json sidecar retains full provenance and CRS. Existing output names
+are refused. Two-file publication is not crash-atomic. Snapping uses displayed
+points, not a full-resolution neighborhood; Refine view improves local detail.
+
+This is manual feature tracing, not automatic extraction or independent
+accuracy validation. No surface breakline ingestion was added. Next: validate
+representative wall/barrier linework, then add assisted following and feature-
+aligned section review. Codex committed this on its own branch on
+2026-09-25; on 2026-09-28 it was brought onto the published `main` as
+content (cherry-picked, so none of that branch's older history came with
+it). Earlier entries below are historical.
+
 ## Latest executable — section stepping, September 25, 2026
 
 C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-25-8e36ca5/pyArgus/pyArgus.exe

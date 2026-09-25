@@ -4,7 +4,7 @@ The usability rewrite is partially delivered. This is the current status;
 chronological entries in other documents can describe older behavior.
 
 Current executable:
-`C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-25-8e36ca5/pyArgus/pyArgus.exe`
+`C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-25-0c3b239/pyArgus/pyArgus.exe`
 
 Keep the entire containing folder, including `_internal`. Source checkout:
 `C:/Users/bjordan/OneDrive - Platinum Geomatics/pyArgus-Codex`.
