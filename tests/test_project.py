@@ -294,3 +294,27 @@ def test_unset_time_is_highlighted_and_bulk_apply_preserves_approval(scene,root)
     w.check_time_settings()
     assert len(w.track_box.curselection())==len(w.tracks)
     assert 'NEED TIME' not in w.counts.get()
+
+
+def test_alignment_writes_plain_clouds_from_copc_sources(scene, tmp_path):
+    """Project alignment read each source whole and wrote its corrected
+    copy with the source header -- so a COPC source kept octree records
+    laspy cannot write, and the job failed at its first output."""
+    from pyargus.formats import copc as copc_mod
+    from pyargus.formats import las as las_mod
+
+    if copc_mod.find_pdal() is None:
+        pytest.skip("no pdal executable found")
+    copcs = []
+    for path in scene.clouds:
+        dst = Path(path).with_name(Path(path).stem + ".copc.laz")
+        copc_mod.write_copc(path, dst)
+        copcs.append(str(dst))
+    out = tmp_path / "align"
+    project.align(replace(scene, clouds=copcs), out, solve_boresight=False)
+    written = sorted(out.glob("*_adjusted.laz"))
+    assert len(written) == len(copcs)
+    for path, source in zip(written, copcs):
+        info = las_mod.cloud_info(path)
+        assert not info["is_copc"]
+        assert info["point_count"] == las_mod.cloud_info(source)["point_count"]

@@ -118,7 +118,10 @@ def test_workspace_load_pick_extract_filter_and_transform(root,pair,tmp_path):
         assert len(w.tree.get_children())>=6
         w.confirm.set(True); w.load_clouds(); wait(root,w)
         assert w.scene is not None,w.status.get()
+        with pytest.raises(ValueError,match='Choose a Section source'):
+            w.section_paths()
         w.pick(np.array([1010.,2000.])); w.pick(np.array([1020.,2000.]))
+        w.section_source.set('Compare all loaded clouds')
         w.width.set('2'); w.extract(); wait(root,w)
         assert w.section.matched==66,w.status.get()
         assert w.profile.photo.width()>0
@@ -128,6 +131,13 @@ def test_workspace_load_pick_extract_filter_and_transform(root,pair,tmp_path):
         w.line.set('999'); w.redraw(); assert len(w.profile.xy)==0
         w.line.set('All'); w.redraw(); assert len(w.profile.xy)==66
         w.filelist.selection_clear(0,'end'); w.filelist.selection_set(0); w.redraw()
+        assert len(w.profile.xy)==33
+        w.filelist.selection_set(0,'end')
+        w.section_source.set(str(pair[1].resolve()))
+        w.extract(); wait(root,w)
+        assert w.section.matched==33
+        assert len(w.section.inputs)==1
+        assert w.section.inputs[0]['path']==str(pair[1].resolve())
         assert len(w.profile.xy)==33
         w.width.set('4'); w.set_corridor()
         assert w.section is None and len(w.profile.xy)==0

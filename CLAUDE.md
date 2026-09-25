@@ -7,6 +7,17 @@ workflow. Sibling to pyLynceus and Plumbline, built on the same rules.
 current state, what has and has not been validated against real data,
 and the next step with its reasoning.
 
+## Two checkouts, one repository
+
+`Desktop/pyArgus` (branch `main`) is Claude's working checkout;
+`OneDrive - Platinum Geomatics/pyArgus-Codex` -- one level ABOVE this
+Desktop folder, not beside this checkout -- is a git worktree on
+`codex/isolated-improvements` for Codex. They share `.git`, so a branch
+checked out in one cannot be checked out in the other, and heavy runs
+(pytest, the battery, builds) must not overlap between them. Each has
+its own `.venv`; never build or validate from the other's. Merge
+through `main`; never force-push or rewrite either branch's history.
+
 ## Running anything
 
 The project has its own environment and needs it:

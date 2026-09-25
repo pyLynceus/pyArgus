@@ -69,9 +69,72 @@ def self_test():
         job_path = next(Path(temp).glob("large-qa.job-*.json"))
         review = load_review(job_path)
         assert review_rows(review)[0]["after"] == "completed"
+    from pyargus.section_navigation import stepped_corridor
+    sa,sb=stepped_corridor([0.,0.],[2.,0.],1.,10.,1)
+    np.testing.assert_allclose(sa,[0.,10.])
+    np.testing.assert_allclose(sb,[2.,10.])
+    # Both noise routes, the screen's guard and the COPC-safe writer, in
+    # the frozen bundle: the first build to carry noise-cut, merge and
+    # the screening guard, whose modules only the CLI and Classify reach.
+    from pyargus.classify import job as ground_job, noise as noise_mod
+    from pyargus.formats import merge as merge_mod
+    from pyargus.formats.las import drop_copc_records
+    with tempfile.TemporaryDirectory(prefix="pyargus-noise-") as temp:
+        rng = np.random.default_rng(5)
+        n = 4000
+        noisy = laspy.LasData(laspy.LasHeader(point_format=6, version="1.4"))
+        noisy.x = rng.uniform(0., 60., n); noisy.y = rng.uniform(0., 60., n)
+        z = 100. + rng.normal(0., .05, n); z[:3] = -500.
+        noisy.z = z
+        src = Path(temp) / "noisy.las"; noisy.write(src)
+        quiet = dict(cell=1., window=6., threshold=.5, log=lambda _: None)
+        try:    # a ceiling inside the site is the site, not its noise
+            ground_job.classify_ground_whole(src, Path(temp) / "no.las",
+                                             noise_max=99., **quiet)
+        except ValueError as exc:
+            assert "not gross noise" in str(exc)
+        else:
+            raise AssertionError("a screen that caught the site ran")
+        screened = ground_job.classify_ground_whole(
+            src, Path(temp) / "ground.las", noise_min=0., **quiet)
+        assert screened["noise_screened"] == 3
+        cut = noise_mod.noise_cut(src, Path(temp) / "cut.las", z_min=0.,
+                                  max_fraction=.01, log=lambda _: None)
+        assert cut["flagged_low"] == 3
+        header = laspy.read(src).header
+        assert drop_copc_records(header) is header
+        assert callable(merge_mod.merge_clouds)
     window = tk.Tk()
     window.withdraw()
     app = Application(window)
+    classify = next(s for s in app.stages if type(s).__name__ == "ClassifyStage")
+    assert classify.noise_max_fraction.get() == "0.001"
+    # Exercise the new editor and record-preserving exporter in the frozen app.
+    from pyargus.editing_gui import SectionEditor
+    with tempfile.TemporaryDirectory(prefix="pyargus-edit-") as temp:
+        source = Path(temp) / "input.las"
+        cloud.write(source)
+        edit_section = extract_section([source], [0., 0.], [2., 0.], 1.)
+        from pyargus.section_cache_store import CacheStore
+        from pyargus.section_cache import extract as cached_section
+        cache_store=CacheStore(Path(temp)/'section-cache')
+        cache_store.build([source])
+        cached=cached_section([cache_store.path(source)],[0.,0.],[2.,0.],1.)
+        np.testing.assert_array_equal(cached.points,edit_section.points)
+        np.testing.assert_array_equal(cached.point_indices,edit_section.point_indices)
+        cache_store.clear()
+
+        editor = SectionEditor(window, edit_section)
+        editor.window.withdraw()
+        editor.selected = np.arange(3)
+        editor.target.set("2"); editor.assign()
+        assert editor.session.changed == 3
+        editor.undo(); assert editor.session.changed == 0
+        editor.redo()
+        result = editor.session.export(Path(temp) / "edited.laz")
+        assert result["changed"] == 3 and result["status"] == "verified"
+        editor.saved_classes = editor.session.classes.copy()
+        assert editor.close()
     # by TYPE, not position: appending a stage broke this assert and
     # the two test files that shared the habit, and pytest does not
     # collect this file so the suite stayed green while it was broken

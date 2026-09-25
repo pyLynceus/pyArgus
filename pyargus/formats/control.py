@@ -32,6 +32,16 @@ def read_control_csv(path, order):
             try:
                 c1, c2, elev = float(row[1]), float(row[2]), float(row[3])
             except (IndexError, ValueError) as exc:
+                # A header row is unambiguous: a data row always has
+                # numbers in its coordinate columns, so a FIRST row that
+                # does not is a header and nothing else. Only the first
+                # one -- an unparseable row later in the file is damaged
+                # and still refuses, because skipping it would drop a
+                # control point without saying so. A real client GCP
+                # file arrived with a header row, and before this it had
+                # to be hand-stripped.
+                if lineno == 1 and not ids:
+                    continue
                 raise ValueError(
                     f"{path}: line {lineno} is not id,coord,coord,elev[,desc]: "
                     f"{row!r}") from exc

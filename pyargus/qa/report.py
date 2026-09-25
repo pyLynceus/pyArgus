@@ -202,6 +202,18 @@ def _write_html(path, summary, sections, *, dz_limit, density_cell, dz_cell,
                 f'p95 {d["p95"]:.2f} over {d["covered_cells"]:,} covered '
                 f"cells. Uncovered cells are transparent.</p>")
 
+    if not summary["strip_dz"]:
+        # Saying nothing here reads as "no disagreement found", which is
+        # the opposite of the truth when the measure never ran.
+        h2("Strip-to-strip dZ (ground returns)")
+        rows.append('<p class="note">NOT COMPUTED. '
+                    + ("This cloud carries no ground-classified returns, and "
+                       "strip dZ is measured on ground only. Classify ground, "
+                       "then re-run QA. Density and extent above are "
+                       "unaffected." if not summary["ground_points"] else
+                       "No strip pair had qualifying overlap at this cell size "
+                       "and minimum point count. This is not a statement that "
+                       "the strips agree.") + "</p>")
     if summary["strip_dz"]:
         h2("Strip-to-strip dZ (ground returns)")
         rows.append(f'<p class="note">Median Z per {dz_cell:g} {u} cell, '

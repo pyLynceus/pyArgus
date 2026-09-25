@@ -537,3 +537,22 @@ def test_colorize_offers_nothing_downstream_when_no_file_appears(
     runner = _FakeRunner()
     stage.prepare()(runner)
     assert runner.products == []
+
+
+def test_cancel_exit_preserves_editor(monkeypatch):
+    from types import SimpleNamespace
+    events = []
+    editor = SimpleNamespace(
+        window=SimpleNamespace(winfo_exists=lambda: True),
+        close=lambda: events.append("editor") or True)
+    fake = SimpleNamespace(
+        runner=SimpleNamespace(running=True),
+        workspace=SimpleNamespace(review=SimpleNamespace(editor=editor),
+                                  close=lambda: events.append("workspace")),
+        root=SimpleNamespace(destroy=lambda: events.append("root")))
+    monkeypatch.setattr(gui_module.messagebox, "askyesno", lambda *a: False)
+    Application._confirm_close(fake)
+    assert events == []
+    monkeypatch.setattr(gui_module.messagebox, "askyesno", lambda *a: True)
+    Application._confirm_close(fake)
+    assert events == ["editor", "workspace", "root"]

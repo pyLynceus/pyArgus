@@ -55,6 +55,20 @@ Loading and extraction run in background workers with elapsed time and Stop.
 Sources are checked for size/time changes during loading and extraction.
 These checks are not cryptographic content identity. LAS/LAZ scans can still
 take time on a network drive; this first version has no spatial index.
-There is no automatic reprojection, registration, point editing, or acceptance
-certification. It is a read-only review tool. Survey accuracy still requires
+There is no automatic reprojection, registration or acceptance certification.
+The review pane itself changes nothing: the classification editor it can open
+(docs/MANUAL_CLASSIFICATION.md) writes a NEW cloud and never modifies its
+input. Survey accuracy still requires
 appropriate independent checks.
+
+## Explicit section sources — September 23
+
+In Clouds and cross-sections, choose **Section source** before extracting.
+One loaded cloud is selected automatically. With multiple loaded clouds,
+choose its full path or **Compare all loaded clouds** explicitly. This choice
+is independent of viewer visibility. Changing the source clears the previous
+profile. Extraction counts identify source filenames; single-cloud selection
+can be edited without removing other clouds from the project.
+
+Ground-classification job records can also be opened in the review panel.
+Their ground fraction is a classification proportion, not an accuracy measure.

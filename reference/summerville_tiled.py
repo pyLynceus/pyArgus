@@ -75,8 +75,12 @@ def main():
                 f"{tiled['tiles']} tiles have one, largest box "
                 f"{100 * tiled['largest_box']:.0f}% of the project")
         a, b = classes(whole_out), classes(tiled_out)
-        returns = las_mod.read_points(
-            CLOUD, fields=("return_number", "number_of_returns"))
+        source = las_mod.read_points(
+            CLOUD, fields=("return_number", "number_of_returns",
+                           "classification"))
+    returns = source
+    delivered_noise = np.isin(source["classification"],
+                              ground_job.NOISE_CLASSES)
     nonlast = returns["return_number"] != returns["number_of_returns"]
     mismatches = int(np.count_nonzero(a != b))
     print(f"whole:   {whole['ground']:,} ground of {whole['total']:,} "
@@ -94,7 +98,20 @@ def main():
           f"{int(np.count_nonzero((a == 2) & nonlast))}, tiled "
           f"{int(np.count_nonzero((b == 2) & nonlast))} "
           f"(of {int(nonlast.sum()):,} non-last returns)")
+    # the delivery carries class 7, so this cloud measures the noise
+    # policy on real data: none of those points may be called ground,
+    # and each must come out of both commands carrying its own class
+    noise_as_ground = int(np.count_nonzero((a == 2) & delivered_noise)
+                          + np.count_nonzero((b == 2) & delivered_noise))
+    kept = int(np.count_nonzero(
+        (a == source["classification"]) & delivered_noise))
+    print(f"noise:   {int(delivered_noise.sum()):,} delivered class-7/18 "
+          f"points; {noise_as_ground} labeled ground by either command; "
+          f"{kept:,} came through with their own class")
     results.update(
+        delivered_noise=int(delivered_noise.sum()),
+        noise_as_ground=noise_as_ground, noise_kept=kept,
+        whole_noise=whole["noise"], tiled_noise=tiled["noise"],
         mismatches=mismatches, tiles=tiled["tiles"], seamed=tiled["seamed"],
         halo=tiled["halo"], largest_box=round(tiled["largest_box"], 4),
         area_read=round(tiled["area_read"], 3),

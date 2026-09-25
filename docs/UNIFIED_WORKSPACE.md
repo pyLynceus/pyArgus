@@ -1,5 +1,7 @@
 # Unified desktop workspace
 
+Current delivered/pending checklist: [GUI status](GUI_STATUS.md).
+
 The main window has one Project files sidebar, a central 3D viewer, and a
 Task panel on the right. The lower dock contains Progress/history, Project
 settings, QA/cross-sections, and Log. Drag the dividers to resize the viewer
@@ -21,7 +23,8 @@ and dock. Processing uses the existing shared stage and project functions.
    vertical datum, point limits and alignment options remain in Settings.
 4. Choose Classify, DTM / DSM, Contours, Above ground or Colorize for a
    **Selected cloud** task. Select that cloud in the sidebar; its name appears
-   above the task settings. These operations remain single-cloud tools.
+   above the task settings. Classify additionally supports Entire project for
+   sequential batches; the other listed operations remain single-cloud tools.
    QA and Align also offer an explicit Selected cloud scope. They never
    silently fall back from project processing to a single input.
 5. Double-click a file to show or hide it. A filled circle means displayed;
@@ -91,3 +94,58 @@ The workspace references source data; it does not copy or edit it. Source
 datasets and the other Claude checkout are unaffected. Validation uses
 independent synthetic fixtures and packaged GUI smoke checks. No new real-data
 accuracy claim follows from the interface changes.
+
+## Per-input classification review — September 23
+
+Classification history retains a current attempt for each input cloud and
+stage implementation. Accept/Needs review acts on the selected history row;
+newer attempts for the same cloud supersede older ones. Choosing another
+input or output filename does not invalidate ground-classification parameters.
+Actual parameter changes, source/output changes and upstream reruns still do.
+Downstream dependencies include every current classification attempt, not just
+the last flight. The stage summary reports accepted/recorded input counts;
+this is not a claim that every project flight has been processed. The history
+shows cloud filenames, source paths and explicit reasons for stale results.
+Successful ground classification now promotes its result as described below;
+other processing stages do not yet share the full version-promotion model.
+
+## Active processing versions — September 23
+
+A successful Classify run now promotes its new cloud into the project's input
+list for that flight and displays the active project inputs. The original
+stays in the sidebar as a Retained version; Active input labels identify what
+project QA/alignment will read. Trajectory bindings move with the active
+version. Failed/cancelled runs do not promote outputs. Activation does not
+accept classification quality or independent accuracy.
+
+Right-click one cloud and choose Use this version for processing to switch
+back. Showing retained files for comparison does not re-add them to project
+inputs. Explicit Section source selection remains separate. Old workspaces
+recover source/result links only from unambiguous completed classification
+records with matching file metadata; their active inputs do not change on
+load. Unrelated imported clouds are not grouped by filename guesses.
+
+Re-inspecting promoted outputs no longer invalidates completed ground
+classification when its original input and parameters remain unchanged.
+Input/output changes still invalidate it. Classification reruns on derived
+versions share the same flight's review history. Busy viewer loads queue the
+new active display until the current load finishes.
+
+Validation: full suite 426 passed, followed by 42 review/workspace/editor
+checks and 23 final workspace checks. Numerical algorithms were unchanged;
+the previous 73/73 reference result remains the numerical baseline.
+
+## Noise screening and sequential classification
+
+Classify now supports Entire project. Choose a Batch output parent; each
+active input gets a unique output and separate review attempt. Existing
+noise classes are preserved and excluded from ground fitting. Optional
+elevation limits are explicit project settings, not automatic detection.
+See [Noise and batch workflow](NOISE_AND_BATCH.md) for steps and limitations.
+
+## Optional section cache
+
+Cross-sections now offer Build section cache, Use cache when available and
+Clear all section caches. Builds are explicit; selective queries reuse valid
+local data and other queries fall back to a full scan. See
+[section cache workflow](SECTION_CACHE_GUI.md).

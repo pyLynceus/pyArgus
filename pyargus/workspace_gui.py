@@ -20,6 +20,9 @@ class Workspace:
         from pyargus.project_gui import ProjectWindow
         from pyargus.review_gui import ReviewWorkspace
         self.app=app; self.root=app.root; self.tracker=Tracker(); self.active=None
+        # each stage's fields as constructed: a workspace saved before a field
+        # existed restores that field to this, not to what the last workspace left
+        self.stage_defaults={type(s).__name__:self.stage_settings(s) for s in app.stages}
         self.path=Path(os.environ.get('PYARGUS_WORKSPACE_AUTOSAVE',str(Path(os.environ.get('LOCALAPPDATA',Path.home()))/'pyArgus-Codex'/'last-workspace.json')))
         self.resume_path=self.path.with_suffix('.last.json')
         self.refresh_key=None; self.last_scene=None; self.last_record=None; self.pending_view=None; self.closed=False; self.last_save=time.monotonic()
@@ -148,6 +151,8 @@ class Workspace:
                 self.add_layer(path,'breaklines','Project input');self.app.stages[3].breaklines.set(path)
             elif suffix=='.asc':self.add_layer(path,'surface','Unverified import')
             else:messagebox.showinfo('Unsupported file',f'Cannot import {Path(path).name}',parent=self.root)
+        active={self.tracker.cloud_root(p):p for p in self.project_panel.clouds}
+        clouds=list(dict.fromkeys(active.get(self.tracker.cloud_root(p),p) for p in clouds))
         self.project_panel.add_paths(clouds,False)
         self.register_tracks(tracks)
         if clouds:
@@ -214,10 +219,43 @@ class Workspace:
         if row and row not in self.layer_tree.selection():self.layer_tree.selection_set(row)
         menu=tk.Menu(self.root,tearoff=False)
         for label,cmd in [('Show / hide',self.toggle_layer),('Fit visible clouds',self.viewer.fit_selected),
+                ('Use this version for processing',self.activate_selected_version),
                 ('Trajectory settings',lambda:self.tabs.select(self.project_tab)),
                 ('Add folder…',self.add_folder),('Load analysis project…',self.load_analysis_project),('Save analysis project…',self.project_panel.save_project),('Import existing output…',self.import_output),('Select as deliverables',self.delivery),('Remove from project',self.remove_layers)]:
             menu.add_command(label=label,command=cmd)
         menu.tk_popup(event.x_root,event.y_root)
+
+    def activate_selected_version(self):
+        if self.app.runner.running or self.viewer.busy or self.review.busy:return
+        selected=self.selected_layers()
+        if len(selected)!=1 or Path(selected[0]['path']).suffix.lower() not in ('.las','.laz'):
+            messagebox.showinfo('Processing version','Select one cloud version.',parent=self.root);return
+        try:self.activate_cloud_version(selected[0]['path'])
+        except (OSError,ValueError) as exc:messagebox.showerror('Processing version',str(exc),parent=self.root)
+
+    def activate_cloud_version(self,path):
+        path=str(Path(path).resolve())
+        if not Path(path).is_file():raise ValueError('Cloud version is missing: '+path)
+        panel=self.project_panel;root=self.tracker.cloud_root(path)
+        previous=[p for p in panel.clouds if self.tracker.cloud_root(p)==root]
+        bindings={panel.bindings[p] for p in previous if p in panel.bindings}
+        if len(bindings)>1:raise ValueError('Conflicting trajectory bindings for this flight')
+        updated=[]
+        for old in panel.clouds:
+            candidate=path if old in previous else old
+            if candidate not in updated:updated.append(candidate)
+        if path not in updated:updated.append(path)
+        panel.clouds=updated
+        for old in previous:panel.bindings.pop(old,None)
+        if bindings:panel.bindings[path]=next(iter(bindings))
+        self.add_layer(path,'cloud','Selected processing version')
+        self.set_active_cloud(path)
+        panel.refresh()
+        if self.viewer.busy:
+            self.pending_version_view=True
+        else:
+            self.viewer.load(list(panel.clouds))
+        self.persist();self.refresh();self.refresh_layers()
 
     def toggle_layer(self):
         if self.viewer.busy:return
@@ -280,13 +318,13 @@ class Workspace:
 
     def select_task(self,reset_scope=True):
         app=self.app;name=app.task_name.get()
-        project_capable=name in ('Inspect / match','Strip QA','Align')
+        project_capable=name in ('Inspect / match','Strip QA','Align','Classify')
         app.scope_choice.configure(values=('Entire project','Selected cloud') if name!='Inspect / match' and project_capable else ('Entire project',) if project_capable else ('Selected cloud',))
-        if reset_scope:app.task_scope.set('Entire project' if project_capable else 'Selected cloud')
+        if reset_scope:app.task_scope.set('Entire project' if project_capable and name!='Classify' else 'Selected cloud')
         for i,stage in enumerate(app.stages):
             if stage.title==name:app.notebook.select(i)
         self.single_trajectory.pack_forget()
-        if name=='Inspect / match' or app.task_scope.get()=='Entire project':
+        if name=='Inspect / match' or (app.task_scope.get()=='Entire project' and name!='Classify'):
             app.notebook.pack_forget()
             self.project_task.pack(fill='x',before=app.run_button.master)
         else:
@@ -299,12 +337,75 @@ class Workspace:
     def run_task(self):
         app=self.app;name=app.task_name.get()
         if app.task_scope.get()=='Entire project':
+            if name=='Classify':
+                self.start_classify_batch();return
             mode={'Inspect / match':'inspect','Strip QA':'qa','Align':'align'}.get(name)
             if mode:self.project_panel.start(mode)
             return
         if not app.cloud_path.get():
             messagebox.showinfo('Select input','Select one cloud in the Project files sidebar.',parent=self.root);return
         app.run()
+
+    def save_classify_batch(self):
+        batch=self.classify_batch
+        path=Path(batch['manifest']);temporary=path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(batch,indent=2),encoding='utf-8')
+        os.replace(temporary,path)
+
+    def start_classify_batch(self):
+        if self.app.runner.running:return
+        stage=next(s for s in self.app.stages if type(s).__name__=='ClassifyStage')
+        try:
+            import uuid
+            paths=list(dict.fromkeys(self.project_panel.clouds))
+            if not paths:raise ValueError('Add project clouds before batch classification')
+            if any(not Path(p).is_file() for p in paths):raise ValueError('A project input is missing')
+            parent=Path(stage.batch_dir.get().strip())
+            if not stage.batch_dir.get().strip() or not parent.is_dir():raise ValueError('Choose an existing Batch output parent')
+            from pyargus.classify.job import validate_noise_bounds
+            try:fraction=float(stage.noise_max_fraction.get())
+            except ValueError:raise ValueError('Noise max fraction must be a number') from None
+            validate_noise_bounds(float(stage.noise_min.get()) if stage.noise_min.get().strip() else None,
+                                  float(stage.noise_max.get()) if stage.noise_max.get().strip() else None,
+                                  fraction)
+            folder=parent/('classification_'+time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8])
+            folder.mkdir()
+            items=[dict(source=p,output=str(folder/f'{i+1:03d}_{Path(p).stem}_ground.las'),status='Waiting') for i,p in enumerate(paths)]
+            self.classify_batch=dict(manifest=str(folder/'batch.json'),status='Running',settings=self.stage_settings(stage),items=items)
+            self.tracker.data['last_classification_batch']=self.classify_batch['manifest']
+            self.save_classify_batch();self.start_next_classify()
+        except (OSError,ValueError) as exc:messagebox.showerror('Batch classification',str(exc),parent=self.root)
+
+    def start_next_classify(self):
+        if self.closed:return
+        batch=getattr(self,'classify_batch',None)
+        if not batch or batch['status']!='Running':return
+        item=next((i for i in batch['items'] if i['status']=='Waiting'),None)
+        if item is None:
+            batch['status']='Completed';self.save_classify_batch()
+            self.app.runner.log('Batch classification complete; review each flight. '+batch['manifest']);return
+        stage=next(s for s in self.app.stages if type(s).__name__=='ClassifyStage')
+        for key,value in batch['settings'].items():
+            if key!='out_path':getattr(stage,key).set(value)
+        self.set_active_cloud(item['source']);stage.out_path.set(item['output'])
+        self.app.notebook.select(self.app.stages.index(stage))
+        item['status']='Running';self.save_classify_batch()
+        index=batch['items'].index(item)+1
+        self.app.runner.log(f'Batch {index}/{len(batch["items"])}: {Path(item["source"]).name}')
+        self.app.run()
+        if self.active is None:
+            item['status']='Failed validation';batch['status']='Stopped';self.save_classify_batch()
+
+    def complete_classify_batch(self,job,status):
+        batch=getattr(self,'classify_batch',None)
+        if not batch or batch['status']!='Running' or job.get('stage_class')!='ClassifyStage':return
+        item=next((i for i in batch['items'] if i['status']=='Running' and i['source']==job['settings'].get('cloud')),None)
+        if item is None:return
+        item.update(status=status,job=job['id'],records=job.get('records',[]))
+        if status!='Needs review':batch['status']='Stopped'
+        self.save_classify_batch()
+        if batch['status']=='Running':self.root.after(0,self.start_next_classify)
+        else:self.app.runner.log('Batch stopped; completed outputs retained; remaining files were not run. '+batch['manifest'])
 
     def stage_settings(self,stage):
         return {k:v.get() for k,v in vars(stage).items() if isinstance(v,tk.Variable)}
@@ -358,23 +459,43 @@ class Workspace:
         status='Failed' if runner.error else 'Cancelled' if runner.cancelled() else 'Needs review'
         self.tracker.finish(self.active,status,paths,str(runner.error) if runner.error else None,runner.elapsed)
         for p in dict.fromkeys(paths):self.add_layer(p,'output',self.active['id'])
-        self.active=None;self.persist();self.refresh();self.refresh_layers();self.history()
+        completed=self.active
+        self.active=None
+        if status=='Needs review' and completed.get('stage_class')=='ClassifyStage':
+            results=[str(p) for kind,p in runner.products if kind=='classified' and Path(p).is_file()]
+            source=completed.get('settings',{}).get('cloud')
+            if source and len(results)==1:
+                self.tracker.register_cloud_result(source,results[0],completed['id'])
+                try:
+                    self.activate_cloud_version(results[0])
+                    self.viewer.mode.set('Classification')
+                    self.app.runner.log('Active processing version: '+results[0])
+                except (OSError,ValueError) as exc:
+                    self.app.runner.log('Result saved; automatic activation failed: '+str(exc))
+        self.persist();self.refresh();self.refresh_layers();self.history()
+        self.complete_classify_batch(completed,status)
 
     def refresh(self):
         from pyargus.workspace_state import DEPENDENCIES
         current=[]
         for stage in STAGES:
             job=self.tracker.latest(stage)
-            current.append((stage,job['id'] if job else None,self.tracker.status(stage,self.current_settings(job) if job else None)))
+            current.append((stage,job['id'] if job else None,self.tracker.status(stage,self.current_settings),tuple((j['id'],self.tracker.job_status(j,self.current_settings(j))) for j in self.tracker.current_jobs(stage))))
         key=repr(current)
         if key==self.refresh_key:return
         self.refresh_key=key
         selected=self.stage_tree.selection();self.stage_tree.delete(*self.stage_tree.get_children())
         first=None
         for stage in STAGES:
-            job=self.tracker.latest(stage);status=self.tracker.status(stage,self.current_settings(job) if job else None)
+            job=self.tracker.latest(stage);status=self.tracker.status(stage,self.current_settings)
             deps=[s for s in DEPENDENCIES.get(stage,[]) if self.tracker.status(s) not in ('Accepted','Skipped')]
             action='Reviewed; continue to next stage' if status in ('Accepted','Skipped') else 'Review results / add note' if status=='Needs review' else 'Rerun with current inputs/settings' if status=='Outdated' else 'Run or explicitly skip'
+            if status=='Outdated':
+                reasons={self.tracker.stale_reason(j,self.current_settings(j)) for j in self.tracker.current_jobs(stage)}
+                action+=': '+', '.join(sorted(r for r in reasons if r))
+            if stage=='Classification':
+                jobs=self.tracker.current_jobs(stage)
+                if jobs:action+=f'; {sum(self.tracker.job_status(j,self.current_settings(j))=="Accepted" for j in jobs)}/{len(jobs)} recorded inputs accepted'
             if deps:action+='; review upstream: '+', '.join(deps)
             self.stage_tree.insert('','end',iid=stage,text=stage,values=(status,action))
             if first is None and status not in ('Accepted','Skipped'):first=(stage,status)
@@ -393,6 +514,7 @@ class Workspace:
         return self.tracker.latest(stage[0]) if stage else None
 
     def history(self):
+        previous=self.history_tree.selection()
         selection=self.stage_tree.selection()
         self.history_tree.delete(*self.history_tree.get_children())
         if not selection:return
@@ -401,15 +523,18 @@ class Workspace:
             self.app.task_name.set(name);self.select_task()
         if selection[0] in ('Initial QA','Final QA'):self.qa_phase.set(selection[0])
         for j in reversed(self.tracker.data['jobs']):
-            if j['stage']==selection[0]:self.history_tree.insert('','end',iid=j['id'],text=j['stage'],values=(j['started'],j['status'],f"{j.get('elapsed',0):.1f}s"))
+            if j['stage']==selection[0]:self.history_tree.insert('','end',iid=j['id'],text=j['stage']+(' — '+Path(j['settings']['cloud']).name if j.get('settings',{}).get('cloud') else ''),values=(j['started'],self.tracker.job_status(j,self.current_settings(j)),f"{j.get('elapsed',0):.1f}s"))
         children=self.history_tree.get_children()
-        if children:self.history_tree.selection_set(children[0]);self.details()
+        if children:self.history_tree.selection_set(previous[0] if previous and previous[0] in children else children[0]);self.details()
 
     def details(self):
         job=self.selected_job();self.detail.delete('1.0','end')
         if job:
             lines=[f"{job['stage']} — {job['status']}",f"Started: {job['started']}",f"Elapsed: {job.get('elapsed',0):.1f} seconds"]
             if job.get('error'):lines.append('Error: '+str(job['error']))
+            lines.extend('Input: '+str(item[0]) for item in job.get('inputs',[]))
+            reason=self.tracker.stale_reason(job,self.current_settings(job))
+            if reason:lines.append('Outdated: '+reason)
             lines.extend('Output: '+str(item[0]) for item in job.get('outputs',[]))
             lines.extend('Job record: '+p for p in job.get('records',[]))
             lines.extend('Note: '+str(n) for n in job.get('notes',[]))
@@ -421,8 +546,8 @@ class Workspace:
         note=simpledialog.askstring('Review note','Why are you accepting, revisiting or skipping this stage?',parent=self.root)
         if note is None:return
         try:
-            job=self.tracker.latest(selected[0])
-            self.tracker.decide(selected[0],decision,note,self.current_settings(job) if job else None)
+            job=self.selected_job()
+            self.tracker.decide(selected[0],decision,note,self.current_settings(job) if job else None,job_id=job['id'] if job else None)
             self.persist();self.refresh();self.history()
         except ValueError as exc:messagebox.showerror('Progress',str(exc),parent=self.root)
 
@@ -437,6 +562,8 @@ class Workspace:
         for i,layer in enumerate(self.tracker.data['layers']):
             var=self.visible_var(layer['path']);mark='●' if var is not None and var.get() else '○'
             state=layer['kind']
+            if layer['path'] in self.project_panel.clouds:state='Active input'
+            elif layer['path'] in self.tracker.data.get('cloud_versions',{}):state='Retained version'
             if layer['path'] in tracks:
                 t=tracks[layer['path']];state='Set time base' if t.time_mode not in ('same','week') else 'Time: '+t.time_mode
             self.layer_tree.insert('','end',iid=str(i),text=mark+' '+Path(layer['path']).name,values=(state,))
@@ -604,7 +731,9 @@ class Workspace:
             for key,value in data.get('project_options',{}).items():getattr(p,key).set(value)
             p.refresh()
             for stage in self.app.stages:
-                for key,value in data['settings'].get(type(stage).__name__,{}).items():
+                saved=data['settings'].get(type(stage).__name__,{})
+                defaults={k:v for k,v in self.stage_defaults.get(type(stage).__name__,{}).items() if k not in saved}
+                for key,value in {**defaults,**saved}.items():
                     var=getattr(stage,key,None)
                     if isinstance(var,tk.Variable):var.set(value)
             self.app.cloud_path.set(data.get('active_cloud',''));self.app.sbet_path.set(data.get('trajectory',''));self.app.trj_time.set(data.get('trj_time','Select TRJ time'))
@@ -624,6 +753,9 @@ class Workspace:
 
     def poll(self):
         if self.closed:return
+        if getattr(self,'pending_version_view',False) and not self.viewer.busy:
+            self.pending_version_view=False
+            self.viewer.load(list(self.project_panel.clouds))
         v=self.viewer
         if not v.busy and v.scene is not None and (v.scene is not self.last_scene or self.review.record is not self.last_record):
             live={str(var) for _,var in v.extra_points}|{str(var) for _,_,var in v.extra_layers}
@@ -644,7 +776,7 @@ class Workspace:
             self.review.redraw();v.draw()
             for p in v.paths:
                 self.add_layer(p,'cloud')
-                if p not in self.project_panel.clouds and not any(layer['path']==p and layer['kind']=='output' for layer in self.tracker.data['layers']):self.project_panel.clouds.append(p)
+                if p not in self.project_panel.clouds and p not in self.tracker.data.get('cloud_versions',{}) and not any(layer['path']==p and layer['kind']=='output' for layer in self.tracker.data['layers']):self.project_panel.clouds.append(p)
             self.project_panel.refresh()
             self.refresh_layers()
         key=tuple((p,var.get()) for p,var in zip(v.paths,v.visible))+tuple((p,item[1].get()) for p,item in zip(v.track_paths,v.tracks))

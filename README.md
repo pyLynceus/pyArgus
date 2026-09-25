@@ -43,9 +43,11 @@ The commands:
 
     pyargus qa-report cloud.las --out qa/ \
       --control marks.csv --control-order pnez --sbet trajectory.out
-    pyargus classify-ground cloud.las --out classified.las --cell 3 \
+    pyargus noise-cut cloud.las --out flagged.las --z-min 500 --z-max 700
+    pyargus classify-ground flagged.las --out classified.las --cell 3 \
       --window 60 --threshold 1.5
-    pyargus dtm classified.las --out dtm.asc --cell 3
+    pyargus merge line1.las line2.las --out site.las
+    pyargus dtm site.las --out dtm.asc --cell 3
     pyargus align cloud.las --sbet trajectory.out \
       --vertical EPSG:6360 --proj-network --write aligned.las
     pyargus contours classified.las --out contours.dxf --interval 1 \
@@ -352,6 +354,57 @@ synthetic multi-file cases; the complete 402M-point Connector block has not yet
 been run through this release.
 
 
+## One cloud from many
+
+`pyargus merge a.las b.las --out site.las` concatenates clouds in the
+order given, carrying the first file's point format, extra bytes,
+scales, offsets and CRS. It is what `dtm`, `contours` and `qa-report`
+need when a delivery arrives one file per flight line. Clouds that
+disagree on any of those terms REFUSE rather than reinterpret each
+other's bytes, and clouds that share a `point_source_id` refuse too:
+strip QA reads that field, so joining them as they are would compare a
+strip with itself. `--psid-from-file` numbers the strips by file order
+instead, and records what each file carried.
+
+Vendors give each flight line its own coordinate offset as a matter of
+course, and LAS stores coordinates as integers counted from it, so that
+refusal fires on real deliveries. `--reframe` is the way through: it
+restates every point against one scale and offset, and reports how far
+the worst coordinate actually moved instead of assuming it did not.
+
+Extended records get the same care. An EVLR is where a vendor puts
+per-file quality statistics, and a record describing one flight line
+does not describe a merge of several -- so the output carries the FIRST
+cloud's, matching the header it also carries, and any input whose
+records differ is named in the log rather than quietly dropped.
+
+A 129-agent review of this command found seven more ways to join two
+clouds wrongly and quietly, all now refusals: a `point_source_id`
+collision between two of three or more lines, which the old check
+missed because it compared the intersection of every input and one
+innocent third line empties that; two different GPS time bases, which
+differ by about a billion seconds; an extra dimension sharing a name
+but not a type, which `--reframe` cast silently, turning 12.75 into
+12; a header claiming more points than the file holds; two different
+projection records that neither could be parsed, which read as
+agreement on an install without `pyproj`; and an empty input, whose
+absent bounds dragged the common frame to the origin and produced a
+refusal blaming the extent. `--force` now replaces an existing output,
+which the flag previously only claimed to do.
+
+## Noise before ground
+
+`pyargus noise-cut` flags gross outliers by an elevation window the
+operator reads off the site: class 7 (low noise) below `--z-min`,
+class 18 (high noise) above `--z-max`. Nothing else in the cloud
+changes, it refuses before writing if the window would catch more than
+`--max-fraction` of the points (default 0.1%), and it writes
+`<out>.noise.json` naming every flagged point. `classify-ground` keeps
+points flagged 7 or 18 out of the SMRF minimum surface and carries the
+flags through -- a single unflagged outlier a thousand feet under grade
+otherwise becomes its cell's ground and pulls its neighbours up into
+class 2.
+
 ## License
 
 Apache-2.0; the full text is in `LICENSE`. The patent grant is the
@@ -360,3 +413,9 @@ a least-squares strip adjustment, and an explicit grant is worth more
 around an algorithm than around glue code.
 
 Copyright is held by Mapworks, LLC.
+
+## Manual point classification
+
+The QA / cross-sections workspace now opens a complete-section classification
+editor with rectangle/polygon selection, class assignment, undo/redo, and
+verified full-cloud LAS/LAZ export. See [the workflow and preservation limits](docs/MANUAL_CLASSIFICATION.md).
