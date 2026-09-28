@@ -1,24 +1,44 @@
-# Current handoff — September 25, 2026 (Claude)
+# Current handoff — September 28, 2026 (Claude)
 
-Two checkouts of one repository, same history, different branches:
+Two checkouts of one repository:
 
 * `C:/Users/bjordan/OneDrive - Platinum Geomatics/Desktop/pyArgus` —
   branch `main`, Claude's working checkout (own `.venv`, has pip).
 * `C:/Users/bjordan/OneDrive - Platinum Geomatics/pyArgus-Codex` — a
-  git worktree on `codex/isolated-improvements`, Codex's checkout.
+  git worktree on `codex/isolated-improvements`, Codex's checkout. That
+  branch still sits on the OLD history (below): never merge it into
+  `main` and never push it. The pre-push hook refuses the push; bring
+  new Codex work over as content (cherry-pick), as was done for the
+  Features workspace on 2026-09-28. Before Codex works again, its
+  branch should be moved onto the published `main` -- in that worktree,
+  by its owner.
 
-On 2026-09-25 `codex/isolated-improvements` at e4b7b0e (noise
-screening and batch classify, section cache, section stepping, the
-profiling baseline; e4b7b0e itself is docs only, after 8e36ca5) was
-merged into `main` through the branch `merge/codex-reconcile`. `main`
-now holds both lines of work. `main` has not been pushed:
-`origin/main` is still 82983da. The Codex branch HAS been pushed, to
-`origin/codex/isolated-improvements` at e4b7b0e, so the Codex release
-entries below that say "not pushed" are superseded on that point. The
-released executable (below, 2026-09-25-8e36ca5) was built from the
-Codex branch BEFORE the merge, so it has none of `noise-cut`, `merge`,
-`dtm --add-points` or the stereo modules; the next build from `main`
-is the first to carry both.
+On 2026-09-25 Codex's branch (noise screening and batch classify,
+section cache, section stepping, the profiling baseline) was merged
+into `main`, and that day's work below was added on top. Then, by
+Bryon's decision, the PUBLIC history was rewritten once (CLAUDE.md,
+"Public repository, private job material"):
+
+* an unsent draft letter that had been public since 2026-09-10 was
+  purged from every commit of `main`; only that file changed, and every
+  other commit, message, author and date is as it was;
+* the work since 82983da was published as ONE commit, `70e59de`,
+  because older versions of its files and its commit messages carried
+  a client job's details. The detailed history is local only: branch
+  `private/full-history-2026-09-25` and a bundle in `pyArgus-jobs`.
+  Commit ids cited below from before that day -- release source
+  commits included -- exist only there;
+* the remote branches `codex/isolated-improvements` and
+  `claude/eager-clarke-vhybtg`, both merged and both carrying the
+  draft, were deleted from GitHub. GitHub still serves pull-request
+  refs 1-3, which reach the draft; only GitHub Support can remove them,
+  and the request is drafted in `pyArgus-jobs/sh151/`.
+
+Client job material lives in the private local repository
+`pyArgus-jobs`, never here. The releases listed below up to and
+including the Features build were built from the Codex branch or
+before the Features port; the first build from the published `main`
+with everything in it is recorded in docs/GUI_STATUS.md.
 
 ## 2026-09-25: two noise routes, reconciled
 
