@@ -16,23 +16,30 @@ Two checkouts of one repository:
 On 2026-09-25 Codex's branch (noise screening and batch classify,
 section cache, section stepping, the profiling baseline) was merged
 into `main`, and that day's work below was added on top. Then, by
-Bryon's decision, the PUBLIC history was rewritten once (CLAUDE.md,
+Bryon's decision, the PUBLIC history was rewritten, twice (CLAUDE.md,
 "Public repository, private job material"):
 
-* an unsent draft letter that had been public since 2026-09-10 was
-  purged from every commit of `main`; only that file changed, and every
-  other commit, message, author and date is as it was;
-* the work since 82983da was published as ONE commit, `70e59de`,
-  because older versions of its files and its commit messages carried
-  a client job's details. The detailed history is local only: branch
-  `private/full-history-2026-09-25` and a bundle in `pyArgus-jobs`.
-  Commit ids cited below from before that day -- release source
-  commits included -- exist only there;
-* the remote branches `codex/isolated-improvements` and
-  `claude/eager-clarke-vhybtg`, both merged and both carrying the
-  draft, were deleted from GitHub. GitHub still serves pull-request
-  refs 1-3, which reach the draft; only GitHub Support can remove them,
-  and the request is drafted in `pyArgus-jobs/sh151/`.
+* 2026-09-25: an unsent draft letter that had been public since
+  2026-09-10 was purged from every commit of `main`, and the work since
+  the last public commit of 2026-09-17 was published as ONE commit (now
+  `a2c31a7`), because older versions of its files and its commit
+  messages carried a client job's details. The remote branches
+  `codex/isolated-improvements` and `claude/eager-clarke-vhybtg`, both
+  merged and both carrying the draft, were deleted from GitHub.
+* 2026-09-28: a second client job, named in the docs and the technical
+  manual since 2026-09-09, was removed from every commit. Its passages
+  are generalised (one line of a real client trajectory, a
+  ~400-million-point client block) and the removed text is kept in
+  `pyArgus-jobs`. Only the eight files that carried it changed in any
+  commit; every other file, message, author and date is as it was.
+* Every commit id changed by these rewrites. The detailed history is
+  local only: branches `private/full-history-2026-09-25` and
+  `private/pre-purge-2026-09-28`, and bundles in
+  `pyArgus-jobs`. Commit ids cited below from before 2026-09-28 --
+  release source commits included -- exist only there.
+* GitHub still serves pull-request refs 1-3, which reach the old
+  commits; only GitHub Support can remove them, and the request is
+  drafted in `pyArgus-jobs/sh151/`.
 
 Client job material lives in the private local repository
 `pyArgus-jobs`, never here. The releases listed below up to and
@@ -288,11 +295,13 @@ land-cover class), and a constant vertical shift is not an alignment.
 
 ## Latest executable — everything on the published main, September 28, 2026
 
-C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-28-e64a336/pyArgus/pyArgus.exe
+C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-28-5a3983b/pyArgus/pyArgus.exe
 
-Built from e64a336, the published `main`: both lines of work, the
-screening guard, the COPC-safe writers and the Features workspace, so
-it supersedes every build below. Full suite 603 passed, no skips;
+Built from 5a3983b, the published `main` after the second purge: both
+lines of work, the screening guard, the COPC-safe writers and the
+Features workspace, so it supersedes every build below. (An earlier
+build the same morning, 2026-09-28-e64a336, has the same code; its
+source commit exists only in the private history now.) Full suite 603 passed, no skips;
 regression gate 78/78 on the tree before the Features port, which
 touched no processing code. Packaged self-test exit 0 (now including
 the noise routes, the screen guard, the COPC-safe writer and Features

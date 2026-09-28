@@ -17,9 +17,9 @@ checked out in one cannot be checked out in the other, and heavy runs
 (pytest, the battery, builds) must not overlap between them. Each has
 its own `.venv`; never build or validate from the other's. Merge
 through `main`; never force-push or rewrite either branch's history.
-The one exception so far was the owner's, on 2026-09-25 (below).
-Since then the Codex branch sits on the old, unpublished history:
-bring its work over by cherry-pick, never by merge.
+The only exceptions were the owner's, on 2026-09-25 and 2026-09-28
+(below). Since then the Codex branch sits on the old, unpublished
+history: bring its work over by cherry-pick, never by merge.
 
 ## Public repository, private job material
 
@@ -31,18 +31,21 @@ checkout, with no remote). Reference code here stays generic
 (`reference/grid_compare.py`, `reference/mark_profile.py`) and the job
 scripts import it; test fixtures use invented values, never real ones
 shifted by a constant. A local pre-push hook (`.git/hooks/pre-push`,
-not versioned) refuses a push that would carry such material. The
-Summerville and SH 151 material predates this rule and stays public by
-the owner's decision.
+not versioned) refuses a push that would carry such material in text
+files or commit messages; it cannot see inside a DOCX or PDF, so check
+binary documents by hand. The Summerville and SH 151 material predates
+this rule and stays public by the owner's decision.
 
-On 2026-09-25, by the owner's decision, the public history was
-rewritten once: an unsent draft letter was purged from it, and the
-unpushed work since 82983da was published as a single commit so that
-no client job detail rode along in older versions of files or in
-commit messages. The detailed history is kept locally only (branch
-`private/full-history-2026-09-25` and a bundle in `pyArgus-jobs`).
-Commit ids cited in documents from before that day, including release
-source commits, exist only there.
+By the owner's decision the public history was rewritten twice. On
+2026-09-25 an unsent draft letter was purged from it, and the unpushed
+work since the last public commit was published as a single commit so
+that no client job detail rode along in older versions of files or in
+commit messages. On 2026-09-28 a second client job, public since
+2026-09-09, was removed from every commit. The detailed history is
+kept locally only (branches `private/full-history-2026-09-25` and
+`private/pre-purge-2026-09-28`, and bundles in
+`pyArgus-jobs`). Commit ids cited in documents from before 2026-09-28,
+including release source commits, exist only there.
 
 ## Running anything
 

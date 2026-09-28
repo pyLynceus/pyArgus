@@ -1,8 +1,8 @@
 # Codex worktree
 
 **Read first (2026-09-28).** The public history of `main` was rewritten
-on 2026-09-25 by the owner's decision (see CLAUDE.md, "Public repository,
-private job material"), and `origin/codex/isolated-improvements` was
+on 2026-09-25 and again on 2026-09-28 by the owner's decision (see
+CLAUDE.md, "Public repository, private job material"), and `origin/codex/isolated-improvements` was
 deleted from GitHub. This worktree's branch still sits on the OLD,
 unpublished history: do not push it (a pre-push hook refuses) and do not
 merge it into `main`. Before new work, move this branch onto the

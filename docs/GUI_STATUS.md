@@ -3,8 +3,8 @@
 The usability rewrite is partially delivered. This is the current status;
 chronological entries in other documents can describe older behavior.
 
-Current executable (built from the published `main`, e64a336):
-`C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-28-e64a336/pyArgus/pyArgus.exe`
+Current executable (built from the published `main`, 5a3983b):
+`C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-28-5a3983b/pyArgus/pyArgus.exe`
 
 Keep the entire containing folder, including `_internal`; its
 build-info.json records the source commit, executable SHA-256 and
