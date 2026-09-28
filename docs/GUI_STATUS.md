@@ -1,14 +1,17 @@
-# GUI usability status — September 25, 2026
+# GUI usability status — September 28, 2026
 
 The usability rewrite is partially delivered. This is the current status;
 chronological entries in other documents can describe older behavior.
 
-Current executable:
-`C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-25-0c3b239/pyArgus/pyArgus.exe`
+Current executable (built from the published `main`, e64a336):
+`C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-28-e64a336/pyArgus/pyArgus.exe`
 
-Keep the entire containing folder, including `_internal`. Source checkout:
-`C:/Users/bjordan/OneDrive - Platinum Geomatics/pyArgus-Codex`.
-The old Desktop/pyArgus/dist-dialogs executable does not contain this work.
+Keep the entire containing folder, including `_internal`; its
+build-info.json records the source commit, executable SHA-256 and
+validation. Source checkout: `C:/Users/bjordan/OneDrive - Platinum
+Geomatics/Desktop/pyArgus` (`main`). Earlier builds -- including the
+2026-09-25 Features build from the Codex branch -- lack part of this
+work. The old Desktop/pyArgus/dist-dialogs executable does not contain it.
 
 | Area | Delivered | Still to do |
 |---|---|---|

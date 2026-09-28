@@ -286,6 +286,22 @@ independent marks a vertical check is a bias estimate, not a compliant
 accuracy assessment (ASPRS asks for twenty checkpoints and more per
 land-cover class), and a constant vertical shift is not an alignment.
 
+## Latest executable — everything on the published main, September 28, 2026
+
+C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-28-e64a336/pyArgus/pyArgus.exe
+
+Built from e64a336, the published `main`: both lines of work, the
+screening guard, the COPC-safe writers and the Features workspace, so
+it supersedes every build below. Full suite 603 passed, no skips;
+regression gate 78/78 on the tree before the Features port, which
+touched no processing code. Packaged self-test exit 0 (now including
+the noise routes, the screen guard, the COPC-safe writer and Features
+export); launched the ordinary way it came up, stayed responsive and
+closed cleanly. Keep the whole pyArgus folder with `_internal`;
+build-info.json records the SHA-256 and which modules are bundled.
+The stereo measurement modules are NOT in it -- no desktop stage uses
+them yet -- and run from the source checkout.
+
 ## Latest executable — Features workspace, September 25, 2026
 
 C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-25-0c3b239/pyArgus/pyArgus.exe
