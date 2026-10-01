@@ -1,4 +1,4 @@
-# Current handoff — September 28, 2026 (Claude)
+# Current handoff — September 30, 2026 (Claude)
 
 Two checkouts of one repository:
 
@@ -293,7 +293,53 @@ independent marks a vertical check is a bias estimate, not a compliant
 accuracy assessment (ASPRS asks for twenty checkpoints and more per
 land-cover class), and a constant vertical shift is not an alignment.
 
-## Latest executable — everything on the published main, September 28, 2026
+## 2026-09-30: five desktop defects fixed first; latest executable
+
+Bryon's decision (2026-09-30): the desktop GUI is Claude's to build, on
+`main`; the Review/Process/Deliver layout proposed on the Codex branch is
+not adopted. Before any layout work, five defects found by reading the
+code against the operator's workflow were fixed (commit a018cdd; the
+detail is in its message and in tests/test_gui_fix_first.py):
+
+* F1 -- after Classify activated its result, the tree rebuild's queued
+  select event put the original back as the task input, so the next DTM
+  ran on the unclassified cloud. The tree now follows the input when code
+  changes it; see docs/UNIFIED_WORKSPACE.md step 4 for the rules.
+* F2 -- outputs open by type (a DTM .asc failed in the breakline
+  reader); the frame question is remembered per file.
+* F3 -- DTM and Contours refuse an existing output; Strip QA refuses a
+  folder holding a report; no save dialog offers "replace?" for a file
+  that will be refused.
+* F4 -- a GUI solve-only Align record goes to the workspace's
+  `.pyargus/records`, never the start folder (the install folder, for
+  the exe). The CLI keeps `pyargus-job-records/` in its working folder.
+* F5 -- DTM/DSM, Contours and Above ground write job records
+  (docs/JOB_RECORDS.md). Their CLI commands do not yet.
+
+Two adversarial review panels (9 and 6 agents) found further defects in
+the first fixes; all were fixed and test-pinned, and 58 mutants of the
+fixes were killed. Pre-existing defects the panels confirmed outside this
+scope are left as separate tasks: single-point contours in the delivered
+contour DXF/GeoJSON, noise classes in the DSM, Import job record failing
+on ground-classification records, and three workspace paths that change
+the task input (right-click Remove, cancelling Load analysis project, a
+restore that fails partway and is then autosaved over the opened file).
+Also open: contour DXF overlays are parsed on the Tk thread (slow for
+large files), and 31 stray solve-only records from earlier CLI test runs
+sit in the checkout's gitignored `pyargus-job-records/` (test leftovers,
+safe to delete; the test that wrote them now runs in its own folder).
+
+C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-30-a018cdd/pyArgus/pyArgus.exe
+
+Built from a018cdd (local `main`; pushed only on Bryon's go-ahead).
+Full suite 640 passed, no skips; regression gate 78/78; packaged
+self-test exit 0; launched the ordinary way it came up responding,
+closed cleanly and wrote nothing into its folder. It supersedes the
+Codex build 2026-09-30-af2ff63 and the build below. build-info.json
+records the SHA-256 and the bundled modules; the stereo measurement
+modules are still not bundled.
+
+## Earlier executable — everything on the published main, September 28, 2026
 
 C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-releases/2026-09-28-5a3983b/pyArgus/pyArgus.exe
 
