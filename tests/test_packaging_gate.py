@@ -19,12 +19,11 @@ GATE = ROOT / "packaging" / "launch_gui.py"
 
 def test_packaging_self_test_passes():
     pytest.importorskip("laspy")
-    tkinter = pytest.importorskip("tkinter")
-    try:
-        window = tkinter.Tk()
-    except tkinter.TclError:
-        pytest.skip("no display for Tk")
-    window.destroy()
+    # the display check retries: a bare Tk() straight after another test's
+    # window sometimes fails, and this gate then skipped without a word
+    from tests.test_gui import make_root
+
+    make_root().destroy()
     result = subprocess.run([sys.executable, str(GATE), "--self-test"],
                             capture_output=True, text=True, cwd=str(ROOT),
                             timeout=900)

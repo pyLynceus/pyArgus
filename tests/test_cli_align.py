@@ -104,8 +104,11 @@ def test_align_cli_refuses_in_place_write(scene_files):
                   "--write", str(cloud)])
 
 
-def test_align_cli_requires_a_vertical_story(scene_files):
+def test_align_cli_requires_a_vertical_story(scene_files, tmp_path, monkeypatch):
     cloud, traj = scene_files
+    # a solve-only run's record goes where the CLI was started: here, not
+    # into the checkout (a stray record per suite run landed there)
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="vertical"):
         cli.main(["align", str(cloud), "--sbet", str(traj),
                   "--map-crs", "EPSG:6447"])

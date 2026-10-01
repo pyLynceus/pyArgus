@@ -44,6 +44,14 @@ def make_root():
 
 @pytest.fixture()
 def root():
+    # collect earlier tests' dead windows HERE, on the main thread (at
+    # teardown pytest still holds the test's arguments): left for later, a
+    # collection triggered on a worker thread (the above-ground forest's)
+    # makes each Tk variable wait a second for a main loop that never
+    # comes -- 4 s of training became 108
+    import gc
+
+    gc.collect()
     window = make_root()
     yield window
     window.destroy()
