@@ -23,7 +23,9 @@ cloud write leaves only the record (and any pre-existing output untouched).
 
 The shared front-end integrations cover colorization, single-cloud QA and
 alignment (CLI and GUI), and project QA/alignment (including automatic
-disk-backed QA). Ground classification now has an adapter (see below); surface jobs still need adapters. Exact build identity and broader source mutation
+disk-backed QA). Ground classification now has an adapter (see below). In the
+GUI, DTM / DSM, Contours and Above ground (train and apply) also write records
+(see below); their CLI commands do not yet. Exact build identity and broader source mutation
 detection are follow-up work. Completed means execution finished, not that
 survey accuracy or calibration authority has been independently established.
 
@@ -32,12 +34,33 @@ survey accuracy or calibration authority has been independently established.
 
 For report folders, the record sits beside the folder as
 `folder.job-<run-id>.json`. Corrected LAS outputs use the same naming rule as
-colorization. Solve-only alignment stores records under
-`pyargus-job-records/` in the process working directory, never beside an input
-on a source drive. The log prints the full path. That working directory must
-be writable. Each attempt is independent, including refused and cancelled runs.
+colorization. Solve-only alignment never stores its record beside an input on
+a source drive. The CLI stores it under `pyargus-job-records/` in the process
+working directory, which must be writable. The GUI stores it under
+`.pyargus/records/` in the workspace's folder -- for a workspace not yet saved,
+the autosave's folder under `%LOCALAPPDATA%` -- and refuses the run at Run when
+that folder cannot be created, never under the folder the program was started
+from (the install folder, for the executable). The log prints the full path.
+Each attempt is independent, including refused and cancelled runs.
 Validation done by GUI preparation or argument parsing before a job starts
 does not create a record.
+
+## Surface, contour and above-ground records (GUI)
+
+DTM / DSM, Contours and Above ground records sit beside their output as
+`<output>.job-<run-id>.json`. They state which points made the result and how
+gaps were filled: classes used (`[2]`, or `all` for a DSM), the cell, and the
+gap-fill limit in cells (`max_fill`, 10 -- for Contours it is the same limit
+on both the gridded and the breakline TIN surface). Contours also records the
+interval, index spacing, surface type and any breakline file as an input.
+Above ground records the XYZ units, the classes learned (training) or
+assigned (the model's classes, on apply), the noise classes left out of the
+features, the model's feature cell and the height-above-ground surface behind
+the features (`hag_dtm_cell`, `hag_max_fill`); an applied model is an input.
+DTM results give `ncols` and `nrows` as the delivered `.asc` header does.
+Cancelled runs finish as cancelled. The QA review panel does not read these
+records: "Load selected result" loads the job's cloud, if any, and leaves the
+review alone.
 
 QA records carry the returned density, overlap and available control summaries.
 Project records also retain the project configuration, trajectory time modes,

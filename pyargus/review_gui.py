@@ -439,7 +439,7 @@ class ReviewWorkspace:
         from tkinter import filedialog
         from pyargus.sections import export_section
         if self.section is None: self.error("Extract a section first."); return
-        path=filedialog.asksaveasfilename(parent=self.window,filetypes=(("Section sample CSV","*.csv"),),defaultextension=".csv")
+        path=filedialog.asksaveasfilename(parent=self.window,filetypes=(("Section sample CSV","*.csv"),),defaultextension=".csv",confirmoverwrite=False)
         if path:
             try:
                 export_section(self.section,path)

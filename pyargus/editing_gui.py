@@ -95,7 +95,7 @@ class SectionEditor:
         from tkinter import filedialog
         if self.busy:return
         if not self.session.changed:self.error('There are no pending classification changes.');return
-        path=filedialog.asksaveasfilename(parent=self.window,defaultextension='.las',filetypes=(('LAS point cloud','*.las'),('Compressed LAZ point cloud','*.laz')))
+        path=filedialog.asksaveasfilename(parent=self.window,defaultextension='.las',filetypes=(('LAS point cloud','*.las'),('Compressed LAZ point cloud','*.laz')),confirmoverwrite=False)
         if not path:return
         self.busy=True;self.cancel.clear();self.started=time.monotonic();self.progress='Preparing export'
         for button in self.controls:button.configure(state='disabled')

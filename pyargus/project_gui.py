@@ -231,7 +231,7 @@ class ProjectWindow:
     def save_project(self):
         try:
             spec = self.snapshot()
-            path = filedialog.asksaveasfilename(parent=self.window,filetypes=(('pyArgus project','*.json'),),defaultextension='.json')
+            path = filedialog.asksaveasfilename(parent=self.window,filetypes=(('pyArgus project','*.json'),),defaultextension='.json',confirmoverwrite=False)
             if path: spec.save(path)
         except (ValueError,OSError) as exc: messagebox.showerror('Project',str(exc),parent=self.window)
 
@@ -257,7 +257,7 @@ class ProjectWindow:
 
     def save_inventory(self):
         if self.inventory is None: return
-        path = filedialog.asksaveasfilename(parent=self.window,filetypes=(('Project inventory','*.json'),),defaultextension='.json')
+        path = filedialog.asksaveasfilename(parent=self.window,filetypes=(('Project inventory','*.json'),),defaultextension='.json',confirmoverwrite=False)
         if path:
             try:
                 with Path(path).open('x',encoding='utf-8') as f: json.dump(self.inventory,f,indent=2)

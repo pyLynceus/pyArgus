@@ -23,12 +23,30 @@ and dock. Processing uses the existing shared stage and project functions.
    vertical datum, point limits and alignment options remain in Settings.
 4. Choose Classify, DTM / DSM, Contours, Above ground or Colorize for a
    **Selected cloud** task. Select that cloud in the sidebar; its name appears
-   above the task settings. Classify additionally supports Entire project for
+   above the task settings. When the input changes otherwise -- Classify making
+   its result the active version, a batch moving on -- and a single cloud row
+   is selected, the selection moves to the new input (or clears, if the input
+   is not in the sidebar). A Classify result takes over the input only if the
+   input is still the cloud it was made from; a cloud chosen during the run
+   stays chosen. A cloud typed into a stage's own cloud field stays until
+   another cloud is selected; selecting the row that is already the input
+   does not reset it -- clear the field to use the input. Classify additionally supports Entire project for
    sequential batches; the other listed operations remain single-cloud tools.
    QA and Align also offer an explicit Selected cloud scope. They never
    silently fall back from project processing to a single input.
 5. Double-click a file to show or hide it. A filled circle means displayed;
-   an empty circle means hidden or not yet loaded. Trajectory display still
+   an empty circle means hidden or not yet loaded. Outputs open by type: an
+   `.asc` surface draws as a surface, `.dxf` / `.geojson` / `.json` as lines
+   (in an output, a contour that is a single point is skipped in the drawing;
+   your own breakline files are still checked as Contours will check them),
+   an HTML report or a report folder opens in the browser, and anything else
+   says it has no display and names its folder. A missing file says so.
+   Overlays need a cloud loaded first. The frame/vertical question is
+   remembered per file and asked again when the file changes (size or time)
+   or the loaded cloud's declared coordinate system differs from the one it
+   was answered for. A cloud that declares no vertical datum cannot be told
+   apart by it, so a change of vertical datum alone does not re-ask.
+   Trajectory display still
    requires frame/vertical confirmation. Right-click provides fit, remove,
    add folder, legacy analysis-project load/save, output import and delivery
    selection. Removing a file changes project references, not the source file.
@@ -74,7 +92,8 @@ chosen files for review; it does not transmit or publish them.
   implemented bounded section extractor. The only 2D inspection plot is the
   station/elevation section; there is no second plan/cloud viewer.
 - Add control CSVs with explicit column order or DXF/GeoJSON breaklines in
-  Project files. Double-click overlays them after frame confirmation.
+  Project files. Double-click overlays them after frame confirmation
+  (remembered per file, as above).
   Generated ASC surfaces can be sampled as green 3D overlays on a loaded cloud.
   Surface/control/breakline overlays are visual context, not transformations.
 
@@ -85,8 +104,11 @@ layers, processing settings, active cloud, job history, review notes, camera,
 file visibility and section definitions. The initial autosave location is
 `%LOCALAPPDATA%/pyArgus-Codex/last-workspace.json`. Resume last explicitly reads
 that session. Autosave occurs at job transitions, periodically and on close.
-Open workspace restores referenced clouds when available. Overlay coordinates
-still require explicit confirmation; controls, breaklines and trajectories
+Open workspace restores referenced clouds when available and clears the
+previous session's sidebar selection. The workspace remembers which files'
+frames were confirmed (by size, time and the cloud's declared coordinate
+system), so an unchanged file over the same cloud frame is not asked about
+again; controls, breaklines and trajectories
 remain listed even if not drawn yet. Existing project JSONs remain separate
 analysis inputs and can be loaded from the Project files context menu.
 

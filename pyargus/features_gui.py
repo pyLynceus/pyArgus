@@ -133,7 +133,7 @@ class FeaturePanel:
         self.model.redo() if redo else self.model.undo();self.mode.set('Inspect');self.changed()
 
     def export(self):
-        path=filedialog.asksaveasfilename(parent=self.parent,defaultextension='.dxf',filetypes=(('3D feature linework','*.dxf'),))
+        path=filedialog.asksaveasfilename(parent=self.parent,defaultextension='.dxf',filetypes=(('3D feature linework','*.dxf'),),confirmoverwrite=False)
         if path:
             outputs=export_dxf(self.model.items,path,self.accepted_only.get())
             self.notice.set('Exported '+str(outputs[0])+' and provenance sidecar. Coordinates unchanged; no reprojection.')

@@ -29,9 +29,13 @@ def defaults(function):
 
 
 @contextmanager
-def analysis_job(operation, output, settings, *, inputs=(), controls=(), log=print):
+def analysis_job(operation, output, settings, *, inputs=(), controls=(), log=print,
+                 record_dir=None):
     # Solve-only jobs must not create files beside read-only source datasets.
-    target = output or (Path.cwd() / "pyargus-job-records" / "alignment-solve")
+    # A caller that has a project names the folder (the GUI's is the
+    # workspace's); the CLI's records go where it was started.
+    folder = Path(record_dir) if record_dir is not None else Path.cwd() / "pyargus-job-records"
+    target = output or (folder / "alignment-solve")
     with JobRecord(operation, target, plain(settings)) as record:
         record.data["intended_output"] = str(Path(output).resolve()) if output else None
         record.data["metric_note"] = "Nonfinite or unavailable metrics are null; completion is not accuracy acceptance."

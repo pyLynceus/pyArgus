@@ -14,6 +14,25 @@ NAMES={'Strip QA':'Initial QA','Classify':'Classification','Above ground':'Class
        'Align':'Alignment','DTM':'Surface','DTM / DSM':'Surface','Contours':'Contours','Colorize':'Colorization'}
 
 
+def display_kind(layer):
+    """How a non-cloud file is shown: by its declared kind where that is a
+    display kind, otherwise by its type. None means the viewer has no
+    display for it."""
+    if layer['kind'] in ('control','breaklines','surface'):return layer['kind']
+    suffix=Path(layer['path']).suffix.lower()
+    if suffix=='.asc':return 'surface'
+    if suffix in ('.dxf','.geojson','.json'):return 'breaklines'
+    if suffix in ('.html','.htm'):return 'report'
+    return None
+
+
+def open_externally(path):
+    """Open a file with the system's default program (a report in the
+    browser)."""
+    import webbrowser
+    webbrowser.open(Path(path).resolve().as_uri())
+
+
 class Workspace:
     def __init__(self, app, parent):
         from pyargus.viewer3d import Viewer
@@ -216,7 +235,11 @@ class Workspace:
             if track.path in selected:p.track_box.selection_set(i)
         if len(layers)==1:
             layer=layers[0];self.layer_note.set(layer['path'])
-            if Path(layer['path']).suffix.lower() in ('.las','.laz'):self.set_active_cloud(layer['path'])
+            if Path(layer['path']).suffix.lower() in ('.las','.laz'):
+                # a rebuild re-delivers the row already shown as the input;
+                # applying it again would reset a cloud typed into a stage
+                if layer['path']!=self.task_input():self.set_active_cloud(layer['path'])
+                self._shown_input=layer['path']
             if layer['kind']=='trajectory':
                 track=next((t for t in p.tracks if t.path==layer['path']),None)
                 if track:
@@ -241,7 +264,7 @@ class Workspace:
         try:self.activate_cloud_version(selected[0]['path'])
         except (OSError,ValueError) as exc:messagebox.showerror('Processing version',str(exc),parent=self.root)
 
-    def activate_cloud_version(self,path):
+    def activate_cloud_version(self,path,take_input=True):
         path=str(Path(path).resolve())
         if not Path(path).is_file():raise ValueError('Cloud version is missing: '+path)
         panel=self.project_panel;root=self.tracker.cloud_root(path)
@@ -257,7 +280,7 @@ class Workspace:
         for old in previous:panel.bindings.pop(old,None)
         if bindings:panel.bindings[path]=next(iter(bindings))
         self.add_layer(path,'cloud','Selected processing version')
-        self.set_active_cloud(path)
+        if take_input:self.set_active_cloud(path)
         panel.refresh()
         if self.viewer.busy:
             self.pending_version_view=True
@@ -274,7 +297,7 @@ class Workspace:
             if var is not None:var.set(not var.get());layer['visible']=var.get()
             elif layer['kind']=='trajectory':tracks.append(path)
             elif Path(path).suffix.lower() in ('.las','.laz'):to_load.append(path)
-            else:self.overlay(layer)
+            else:self.show_file(layer)
         if to_load:
             self.viewer.load(list(dict.fromkeys([*self.viewer.paths,*to_load])))
             if tracks:self.viewer.status.set('Loading clouds first. Show the selected trajectories after loading finishes.')
@@ -474,10 +497,24 @@ class Workspace:
             source=completed.get('settings',{}).get('cloud')
             if source and len(results)==1:
                 self.tracker.register_cloud_result(source,results[0],completed['id'])
+                # the result takes over the task input only while the input is
+                # still the cloud it was made from: a cloud the operator chose
+                # during the run stays chosen
+                take=self.task_input()==str(Path(source).resolve())
+                # and a stage's own cloud field set to something else (typed
+                # during the run, say) keeps it
+                typed={s:s.cloud_override.get() for s in self.app.stages if hasattr(s,'cloud_override')
+                       and s.cloud_override.get().strip()
+                       and str(Path(s.cloud_override.get().strip()).resolve())!=str(Path(source).resolve())}
                 try:
-                    self.activate_cloud_version(results[0])
+                    self.activate_cloud_version(results[0],take_input=take)
+                    for stage,value in typed.items():
+                        if stage.cloud_override.get()!=value:
+                            stage.cloud_override.set(value)
+                            self.app.runner.log(f'{stage.title} keeps its own cloud: {value}')
                     self.viewer.mode.set('Classification')
-                    self.app.runner.log('Active processing version: '+results[0])
+                    self.app.runner.log('Active processing version: '+results[0]
+                                        +('' if take else '; the task input stays '+self.app.cloud_path.get()))
                 except (OSError,ValueError) as exc:
                     self.app.runner.log('Result saved; automatic activation failed: '+str(exc))
         self.persist();self.refresh();self.refresh_layers();self.history()
@@ -576,7 +613,31 @@ class Workspace:
                 t=tracks[layer['path']];state='Set time base' if t.time_mode not in ('same','week') else 'Time: '+t.time_mode
             self.layer_tree.insert('','end',iid=str(i),text=mark+' '+Path(layer['path']).name,values=(state,))
             if layer['path'] in selected:self.layer_tree.selection_add(str(i))
+        self.follow_task_input()
         self.file_summary.set(self.project_panel.counts.get())
+
+    def task_input(self):
+        active=self.app.cloud_path.get().strip()
+        return str(Path(active).resolve()) if active else ''
+
+    def follow_task_input(self):
+        """A single selected cloud row IS the task input, so the tree follows
+        the input when something other than a click changed it. The select
+        events a rebuild queues arrive after it returns and read the selection
+        as it then stands: left on the retained original after Classify
+        activated its result, they made the original the input again, and the
+        next DTM ran on the unclassified cloud. Only a change of input since
+        the tree last showed it moves the selection: a selection that differs
+        while the input has not is a click whose event is still queued."""
+        active=self.task_input()
+        shown,self._shown_input=getattr(self,'_shown_input',None),active
+        if active==shown:return
+        layers=self.selected_layers()
+        if len(layers)!=1 or Path(layers[0]['path']).suffix.lower() not in ('.las','.laz'):return
+        if layers[0]['path']==active:return
+        row=next((str(i) for i,l in enumerate(self.tracker.data['layers']) if l['path']==active),None)
+        if row is None:self.layer_tree.selection_remove(*self.layer_tree.selection())
+        else:self.layer_tree.selection_set(row)
 
     def selected_layers(self):return [self.tracker.data['layers'][int(i)] for i in self.layer_tree.selection() if int(i)<len(self.tracker.data['layers'])]
 
@@ -604,7 +665,10 @@ class Workspace:
         if not j:return
         paths=[p[0] for p in j.get('outputs',[]) if Path(p[0]).suffix.lower() in ('.las','.laz') and Path(p[0]).exists()]
         if paths:self.viewer.load(paths)
-        if j.get('records'):
+        # the review reads QA, alignment and ground-classification records;
+        # a surface, contour or above-ground record has nothing to show there
+        from pyargus.review import reviewable
+        if j.get('records') and reviewable(j['records'][-1]):
             try:self.review.open_record(j['records'][-1]);self.tabs.select(self.review_tab)
             except Exception as exc:messagebox.showerror('Review',str(exc),parent=self.root)
 
@@ -648,10 +712,44 @@ class Workspace:
             if hasattr(s,'breaklines'):s.breaklines.set(path)
         self.persist();self.refresh_layers()
 
+    def show_file(self,layer):
+        """Show a non-cloud file the way its kind calls for. An output's own
+        kind is just 'output', so the file type decides: a DTM .asc used to
+        fall through to the breakline reader and fail with a JSON error."""
+        path=Path(layer['path'])
+        if not path.exists():
+            messagebox.showerror('Missing file',f'{path.name} is missing: {path}',parent=self.root);return
+        if path.is_dir():
+            # a report folder (Strip QA's output) opens its report
+            report=path/'report.html'
+            open_externally(report if report.is_file() else path);return
+        kind=display_kind(layer)
+        if kind in ('control','breaklines','surface'):
+            if self.viewer.scene is None:
+                messagebox.showinfo('No cloud loaded',f'{path.name} is drawn over a cloud. Load a cloud first.',parent=self.root);return
+            # an operator's own breakline file keeps the strict check the
+            # Contours stage applies; an output is only being drawn
+            self.overlay(dict(layer,kind=kind,drawing_only=layer['kind']!=kind))
+        elif kind=='report':open_externally(path)
+        else:messagebox.showinfo('No display',f'{path.name} has no display in the viewer. Its folder: {path.parent}',parent=self.root)
+
+    def confirm_frame(self,path):
+        """Ask once per file whether it uses the loaded cloud's frame; ask
+        again when the file has changed (size or time) or the cloud is in
+        another coordinate system."""
+        from pyargus.job_manifest import identity
+        crs=self.viewer.scene[5] if self.viewer.scene is not None else None
+        stamp=identity(path);key=[stamp['size_bytes'],stamp['mtime_ns'],crs.to_string() if crs is not None else None]
+        confirmed=self.tracker.data.setdefault('frame_confirmed',{})
+        if confirmed.get(str(Path(path).resolve()))==key:return True
+        if not messagebox.askyesno('Overlay coordinates','Confirm this layer uses the cloud XYZ frame, units and vertical datum.',parent=self.root):return False
+        confirmed[str(Path(path).resolve())]=key
+        return True
+
     def overlay(self,layer):
         if self.viewer.scene is None:return
-        if not messagebox.askyesno('Overlay coordinates','Confirm this layer uses the cloud XYZ frame, units and vertical datum.',parent=self.root):return
         try:
+            if not self.confirm_frame(layer['path']):return
             if layer['kind']=='control':
                 from pyargus.formats.control import read_control_csv
                 _,x,y,z=read_control_csv(layer['path'],layer['order']);segments=[np.array([[a,b,c]]) for a,b,c in zip(x,y,z)]
@@ -663,7 +761,7 @@ class Workspace:
                 self.viewer.draw();return
             else:
                 from pyargus.formats.breaklines import read_breaklines
-                segments=read_breaklines(layer['path'])
+                segments=read_breaklines(layer['path'],skip_degenerate=layer.get('drawing_only',False))
             var=tk.BooleanVar(value=True);self.overlay_vars[layer['path']]=var;self.viewer.extra_layers.append((layer['path'],segments,var))
             ttk.Checkbutton(self.viewer.layers,text=Path(layer['path']).name,variable=var,command=self.viewer.draw).pack(anchor='w')
             self.viewer.draw()
@@ -705,6 +803,11 @@ class Workspace:
             a,b,width=self.review.plan.corridor;definition=dict(start=a.tolist(),end=b.tolist(),width=width)
             if not self.tracker.data['sections'] or self.tracker.data['sections'][-1]!=definition:self.tracker.data['sections'].append(definition)
 
+    def record_folder(self):
+        """Where a run with no output to sit beside (a solve-only Align)
+        keeps its job record: the workspace's own folder."""
+        return self.path.resolve().parent/'.pyargus'/'records'
+
     def persist(self):
         self.capture()
         try:
@@ -736,6 +839,10 @@ class Workspace:
             from pyargus.features import Features
             tracker=Tracker.load(path)
             features=Features(tracker.data.get('features',[]))
+            # the tree's rows are positions in the OLD workspace's file list;
+            # kept selected, they would select whatever sits at the same
+            # positions in this one (as load_analysis_project already clears)
+            self.layer_tree.selection_remove(*self.layer_tree.selection())
             self.tracker=tracker;self.refresh_key=None;self.path=Path(path);data=tracker.data;p=self.project_panel
             self.features.restore(features)
             proj=data['project'];p.clouds=proj.get('clouds',[]);p.tracks=[TrajectoryInput(**t) for t in proj.get('trajectories',[])];p.bindings=proj.get('bindings',{})
