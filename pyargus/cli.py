@@ -1062,8 +1062,14 @@ def build_parser():
     p_gui = sub.add_parser(
         "gui", help="open the desktop application (tkinter; no extra "
                     "dependency)")
+    p_gui.add_argument("--project", help="the pyLynceus launcher's job folder")
+    p_gui.add_argument("--handover", help="the launcher's handover json")
+    p_gui.add_argument("--check", action="store_true",
+                       help="translate --project/--handover and report what "
+                            "would open, without opening the window")
     p_gui.set_defaults(func=lambda args: __import__(
-        "pyargus.gui", fromlist=["main"]).main())
+        "pyargus.gui", fromlist=["main"]).main(
+            project=args.project, handover=args.handover, check=args.check))
     return parser
 
 

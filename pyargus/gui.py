@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from pyargus.workspace_state import NOISE_MAX_FRACTION_TEXT
+from pyargus.handover import HandoverRefused, resolve
 
 try:
     import tkinter as tk
@@ -1298,6 +1299,33 @@ class Application:
             + (f": {tail}" if tail else "")
             + f" -- full output in {log_path}")
 
+    def apply_launch(self, launch):
+        """Open on a launcher launch context: the handover's clouds become
+        project inputs (spec task 8's acceptance), the window wears the
+        job's own words, and anything the handover could not offer is
+        said in the log -- never guessed at."""
+        workspace = self.workspace
+        if launch.clouds:
+            clouds = [str(Path(c).resolve()) for c in launch.clouds]
+            workspace.project_panel.add_paths(clouds, False)
+            workspace.set_active_cloud(clouds[0])
+            workspace.load_project_clouds()
+        headline = (launch.job_id + " " + launch.title).strip()
+        said = "Opened on the launcher's handover"
+        if headline:
+            said += f": {headline}"
+        if launch.project_dir is not None:
+            said += f" \u2014 {launch.project_dir}"
+        if launch.units:
+            said += f" | {launch.units}"
+            if launch.datum:
+                said += f", heights on {launch.datum}"
+        workspace.here.set(said)
+        for note in launch.notes:
+            self.runner.log("handover: " + note)
+        if headline:
+            self.root.title(f"pyArgus \u2014 {headline}")
+
     def _confirm_close(self):
         # A cancelled application exit must leave the editor session intact.
         if self.runner.running:
@@ -1436,15 +1464,56 @@ class Application:
         self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
 
 
-def main():
+def _report_launch(launch):
+    """--check: what a launch context would open, said without opening
+    anything -- the launcher's own --selftest idea, this side of the seam."""
+    if launch is None:
+        print("no launch context (neither --handover nor --project): plain window")
+        return 0
+    print(f"job folder: {launch.project_dir}")
+    if launch.job_id or launch.title:
+        print(f"job: {(launch.job_id + ' ' + launch.title).strip()}")
+    if launch.units:
+        print(f"units: {launch.units}")
+    print(f"clouds: {len(launch.clouds)}")
+    for cloud in launch.clouds:
+        print(f"  {cloud}")
+    for note in launch.notes:
+        print(f"note: {note}")
+    return 0
+
+
+def main(project=None, handover=None, check=False):
+    """The window, optionally opened on the launcher's launch context.
+
+    ``--project``/``--handover`` (or the launcher's environment,
+    ``PYLYNCEUS_PROJECT``/``PYLYNCEUS_HANDOVER``) name the job and the
+    envelope written for this launch; the handover's clouds open as
+    project inputs. A refusal says which file and why, on stderr, with
+    exit 2 -- the suite's user-facing error -- before Tk is asked for a
+    root. ``--check`` reports what would open and writes nothing.
+    """
+    try:
+        launch = resolve(handover=handover, project=project)
+    except HandoverRefused as exc:
+        print(f"pyArgus: {exc}", file=sys.stderr)
+        return 2
+    if check:
+        return _report_launch(launch)
     if not TK_AVAILABLE:  # pragma: no cover
         raise SystemExit(
             "tkinter is not available in this Python; the GUI needs it "
             "(the library does not)")
+    if launch is not None and launch.project_dir is not None:
+        # The pickers start in the job folder (the launcher told pyLynceus's
+        # own Tools > pyArgus the same way: PYARGUS_DATA_DIR).
+        os.environ.setdefault("PYARGUS_DATA_DIR", str(launch.project_dir))
     root = tk.Tk()
     apply_theme(root)
     apply_branding(root)
-    Application(root)
+    app = Application(root)
+    if launch is not None:
+        app.apply_launch(launch)
     root.mainloop()
     return 0
 

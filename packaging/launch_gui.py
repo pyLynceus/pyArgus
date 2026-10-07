@@ -1,6 +1,6 @@
 """Frozen desktop entry and a repeatable packaging smoke test."""
 import sys
-from pyargus.gui import main
+from pyargus.gui import main as _gui_main
 
 
 def self_test():
@@ -186,6 +186,24 @@ def self_test():
     window.update_idletasks()
     window.destroy()
     return 0
+
+
+def _flag(argv, name):
+    """The value after ``--name`` in argv, or None. The frozen entry reads
+    the launcher's flags without argparse: its argv is short and fixed
+    (--project, --handover, --check)."""
+    for index, item in enumerate(argv):
+        if item == name:
+            return argv[index + 1] if index + 1 < len(argv) else None
+    return None
+
+
+def main():
+    """The desktop entry, with the launcher's flags passed through."""
+    argv = sys.argv[1:]
+    return _gui_main(project=_flag(argv, "--project"),
+                     handover=_flag(argv, "--handover"),
+                     check="--check" in argv)
 
 
 if __name__ == "__main__":
