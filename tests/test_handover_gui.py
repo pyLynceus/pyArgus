@@ -65,3 +65,81 @@ def test_notes_are_said_in_the_log(application, tmp_path):
     said = "\n".join(str(line) for line in app.runner.lines.queue)
     assert "not on disk" in said
     assert app.workspace.project_panel.clouds == []
+
+
+# --- review findings (2026-10-08), GUI half --------------------------------
+
+def test_a_handed_over_control_is_reported_with_its_action(application, tmp_path):
+    """Finding 3: an offered control vanished silently -- the reader set the
+    field, apply_launch ignored it. It must be said, with the manual action."""
+    import json as _json
+
+    from pyargus.handover import resolve
+
+    app = application
+    control = tmp_path / "control.csv"
+    control.write_text("p,n,e,z\n", encoding="utf-8")
+    job = tmp_path / "job"
+    (job / "cache").mkdir(parents=True)
+    envelope = job / "cache" / "x.handover.json"
+    envelope.write_text(_json.dumps({
+        "format": "pylynceus-handover", "version": 2,
+        "project_dir": str(job), "job_file": str(job / "job.pyljob"),
+        "inputs": {"clouds": [], "control": str(control)},
+        "context": {},
+    }), encoding="utf-8")
+
+    app.apply_launch(resolve(handover=str(envelope)))
+    said = "\n".join(str(line) for line in app.runner.lines.queue)
+    assert str(control) in said and "column order" in said
+
+
+def test_the_check_door_reports_the_control(application, tmp_path, capsys):
+    """The --check report names the control and its required action too."""
+    import json as _json
+
+    from pyargus import gui
+    from pyargus.handover import resolve
+
+    control = tmp_path / "control.csv"
+    control.write_text("p,n,e,z\n", encoding="utf-8")
+    job = tmp_path / "job"
+    job.mkdir()
+    envelope = tmp_path / "x.handover.json"
+    envelope.write_text(_json.dumps({
+        "format": "pylynceus-handover", "version": 2,
+        "project_dir": str(job), "job_file": str(job / "job.pyljob"),
+        "inputs": {"clouds": [], "control": str(control)},
+        "context": {},
+    }), encoding="utf-8")
+    code = gui.main(handover=str(envelope), check=True)
+    assert code == 0
+    said = capsys.readouterr().out
+    assert str(control) in said and "column order" in said
+
+
+def test_the_primary_pickers_start_in_the_launch_folder(monkeypatch, application):
+    """Finding 2: PYARGUS_DATA_DIR reached only the legacy dialogs; the
+    workspace's own Add files / folder pickers ignored it."""
+    import os
+
+    from unittest.mock import patch
+
+    from pyargus import workspace_gui
+
+    app = application
+    folder = "C:/some/job/folder"
+    monkeypatch.setenv("PYARGUS_DATA_DIR", folder)
+    seen = {}
+
+    def _capture(*args, **kwargs):
+        seen.update(kwargs)
+        return ()
+
+    with patch.object(workspace_gui.filedialog, "askopenfilenames", _capture):
+        app.workspace.add_files()
+    assert seen.get("initialdir") == folder
+
+    with patch.object(workspace_gui.filedialog, "askdirectory", _capture):
+        app.workspace.add_folder()
+    assert seen.get("initialdir") == folder

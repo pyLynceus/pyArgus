@@ -198,3 +198,51 @@ def test_the_frozen_entry_takes_the_contracts_flags():
     assert module._flag(["--project", "P"], "--project") == "P"
     assert module._flag(["--handover"], "--handover") is None
     assert module._flag([], "--project") is None
+
+
+
+# --- review findings (2026-10-08), each pinned -----------------------------
+
+def test_invalid_utf8_is_refused_like_any_unreadable_file(tmp_path, capsys):
+    """Finding 4: UnicodeDecodeError was not an OSError; --check raised a
+    traceback instead of exit 2 with the reason."""
+    from pyargus import gui
+
+    bad = tmp_path / "invalid-utf8.json"
+    bad.write_bytes(b"\xff\xfe{")
+    code = gui.main(handover=str(bad), check=True)
+    assert code == 2
+    said = capsys.readouterr().err
+    assert "cannot be read" in said and str(bad) in said
+
+
+def test_a_refusal_reaches_a_windowed_process(monkeypatch, capsys):
+    """Finding 1: console=False leaves sys.stderr None, and print() to None
+    is a silent no-op -- the frozen exe died silently. With stderr absent a
+    message box must show the reason; with neither, a temp log line."""
+    from pyargus import gui
+
+    monkeypatch.setattr(gui.sys, "stderr", None)
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, text, **kw: shown.append(text))
+    code = gui.main(handover="C:/definitely/not/there.handover.json", check=True)
+    assert code == 2
+    assert shown and "cannot be read" in shown[0]
+
+    # and if even Tk cannot show it: the refusal still lands in the log file
+    import tempfile
+    from pathlib import Path as _Path
+
+    def _no_box(*a, **k):
+        raise RuntimeError("no display")
+
+    monkeypatch.setattr(gui.messagebox, "showerror", _no_box)
+    log = _Path(tempfile.gettempdir()) / "pyArgus-refusal.log"
+    if log.exists():
+        log.unlink()
+    code = gui.main(handover="C:/definitely/not/there.handover.json", check=True)
+    assert code == 2
+    assert "cannot be read" in log.read_text(encoding="utf-8")
+
+

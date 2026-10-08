@@ -14,6 +14,14 @@ NAMES={'Strip QA':'Initial QA','Classify':'Classification','Above ground':'Class
        'Align':'Alignment','DTM':'Surface','DTM / DSM':'Surface','Contours':'Contours','Colorize':'Colorization'}
 
 
+def _launch_folder():
+    """Where the pickers start when the launcher launched this window:
+    PYARGUS_DATA_DIR is the job folder the launcher set (the same variable
+    pyLynceus's own Tools > pyArgus seeds). None: filedialog's own default
+    (review finding: only the legacy path_row dialogs honored it)."""
+    return os.environ.get('PYARGUS_DATA_DIR') or None
+
+
 def display_kind(layer):
     """How a non-cloud file is shown: by its declared kind where that is a
     display kind, otherwise by its type. None means the viewer has no
@@ -162,7 +170,7 @@ class Workspace:
     def add_files(self,paths=None):
         if self.app.runner.running or self.viewer.busy:return
         if paths is None:
-            paths=filedialog.askopenfilenames(parent=self.root,title='Add project files',filetypes=(
+            paths=filedialog.askopenfilenames(parent=self.root,title='Add project files',initialdir=_launch_folder(),filetypes=(
                 ('Project files','*.las *.laz *.trj *.out *.csv *.dxf *.geojson *.asc'),('All files','*.*')))
         clouds=[];tracks=[]
         for raw in paths:
@@ -188,7 +196,7 @@ class Workspace:
         self.refresh_layers();self.persist()
 
     def add_folder(self):
-        folder=filedialog.askdirectory(parent=self.root,title='Add clouds and trajectories from a folder')
+        folder=filedialog.askdirectory(parent=self.root,title='Add clouds and trajectories from a folder',initialdir=_launch_folder())
         if folder:self.add_files(sorted(str(p) for p in Path(folder).iterdir() if p.is_file() and p.suffix.lower() in ('.las','.laz','.trj','.out')))
 
     def load_analysis_project(self):

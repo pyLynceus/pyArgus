@@ -1323,6 +1323,17 @@ class Application:
         workspace.here.set(said)
         for note in launch.notes:
             self.runner.log("handover: " + note)
+        if launch.control is not None:
+            # The column order is the operator's to choose (add_files asks;
+            # the contract's rule: never guess it), so the control is NOT
+            # loaded silently -- it is reported, with the action it needs
+            # (review finding: it vanished from sidebar, QA settings, log).
+            self.runner.log("handover: control file offered at "
+                            f"{launch.control} -- add it in Project files; "
+                            "its column order (pnez/penz) is yours to choose")
+        if launch.adjustment is not None:
+            self.runner.log("handover: adjustment {0} is recorded in the "
+                            "handover; pyArgus does not load it".format(launch.adjustment))
         if headline:
             self.root.title(f"pyArgus \u2014 {headline}")
 
@@ -1464,6 +1475,37 @@ class Application:
         self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
 
 
+def _say_refusal(text):
+    """A refusal, said where it can be seen.
+
+    stderr when there is one (the CLI, a dev run -- the suite's habit).
+    A windowed exe has NONE: ``console=False`` leaves sys.stderr None, and
+    print() to None is a silent no-op, so a frozen launch would die in
+    silence (review finding). There, a message box; and if even a box
+    cannot be shown, a line in a temp log, so the refusal outlives the
+    press. Exit code 2 is the caller's, unchanged.
+    """
+    if sys.stderr is not None:
+        print(f"pyArgus: {text}", file=sys.stderr)
+        return
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("pyArgus", text, parent=root)
+        root.destroy()
+        return
+    except Exception:
+        pass
+    try:
+        import tempfile
+
+        with open(Path(tempfile.gettempdir()) / "pyArgus-refusal.log", "a",
+                  encoding="utf-8") as handle:
+            handle.write(f"pyArgus: {text}\n")
+    except OSError:
+        pass
+
+
 def _report_launch(launch):
     """--check: what a launch context would open, said without opening
     anything -- the launcher's own --selftest idea, this side of the seam."""
@@ -1478,6 +1520,10 @@ def _report_launch(launch):
     print(f"clouds: {len(launch.clouds)}")
     for cloud in launch.clouds:
         print(f"  {cloud}")
+    if launch.control is not None:
+        print(f"control: {launch.control} (add it and choose its column order)")
+    if launch.adjustment is not None:
+        print(f"adjustment: {launch.adjustment} (recorded; not loaded by pyArgus)")
     for note in launch.notes:
         print(f"note: {note}")
     return 0
@@ -1496,7 +1542,7 @@ def main(project=None, handover=None, check=False):
     try:
         launch = resolve(handover=handover, project=project)
     except HandoverRefused as exc:
-        print(f"pyArgus: {exc}", file=sys.stderr)
+        _say_refusal(str(exc))
         return 2
     if check:
         return _report_launch(launch)

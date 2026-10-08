@@ -99,7 +99,10 @@ def read_handover(path) -> Handover:
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # UnicodeDecodeError (a ValueError) is not an OSError: a handover
+        # with stray bytes is refused by name like any unreadable file, not
+        # a traceback out of --check (review finding).
         raise HandoverRefused(f"the handover {path} cannot be read ({exc})") from None
     try:
         data = json.loads(text)

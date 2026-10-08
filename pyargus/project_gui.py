@@ -250,7 +250,9 @@ class ProjectWindow:
         except (ValueError,OSError,KeyError,TypeError) as exc: messagebox.showerror('Project',str(exc),parent=self.window)
 
     def choose_output(self):
-        parent = filedialog.askdirectory(parent=self.window)
+        import os
+        parent = filedialog.askdirectory(parent=self.window,
+                                         initialdir=os.environ.get('PYARGUS_DATA_DIR') or None)
         if parent:
             stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             self.out.set(str(Path(parent)/f'pyargus_project_{stamp}'))
