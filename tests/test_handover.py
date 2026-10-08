@@ -216,33 +216,49 @@ def test_invalid_utf8_is_refused_like_any_unreadable_file(tmp_path, capsys):
     assert "cannot be read" in said and str(bad) in said
 
 
-def test_a_refusal_reaches_a_windowed_process(monkeypatch, capsys):
+def test_a_refusal_reaches_a_windowed_process(monkeypatch, tmp_path):
     """Finding 1: console=False leaves sys.stderr None, and print() to None
     is a silent no-op -- the frozen exe died silently. With stderr absent a
-    message box must show the reason; with neither, a temp log line."""
+    message box must show the reason; with no box either, a log line.
+
+    Every path is stubbed: the box path uses a fake root, so it runs on a
+    display-less CI runner too; the log path runs under tmp_path, so the
+    test never touches the application's own refusal log (both review
+    findings on this test)."""
     from pyargus import gui
 
     monkeypatch.setattr(gui.sys, "stderr", None)
-    shown = []
-    monkeypatch.setattr(gui.messagebox, "showerror",
-                        lambda title, text, **kw: shown.append(text))
-    code = gui.main(handover="C:/definitely/not/there.handover.json", check=True)
-    assert code == 2
-    assert shown and "cannot be read" in shown[0]
 
-    # and if even Tk cannot show it: the refusal still lands in the log file
+    if gui.TK_AVAILABLE:
+        class _Root:
+            def withdraw(self):
+                pass
+
+            def destroy(self):
+                pass
+
+        monkeypatch.setattr(gui.tk, "Tk", _Root)
+        shown = []
+        monkeypatch.setattr(gui.messagebox, "showerror",
+                            lambda title, text, **kw: shown.append(text))
+        code = gui.main(handover="C:/definitely/not/there.handover.json", check=True)
+        assert code == 2
+        assert shown and "cannot be read" in shown[0]
+
+    # no box available: the refusal still lands in a log -- under THIS
+    # test's directory, never the real temp dir
     import tempfile
-    from pathlib import Path as _Path
 
-    def _no_box(*a, **k):
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+
+    def _no_root():
         raise RuntimeError("no display")
 
-    monkeypatch.setattr(gui.messagebox, "showerror", _no_box)
-    log = _Path(tempfile.gettempdir()) / "pyArgus-refusal.log"
-    if log.exists():
-        log.unlink()
+    if gui.TK_AVAILABLE:
+        monkeypatch.setattr(gui.tk, "Tk", _no_root)
     code = gui.main(handover="C:/definitely/not/there.handover.json", check=True)
     assert code == 2
-    assert "cannot be read" in log.read_text(encoding="utf-8")
+    assert "cannot be read" in (tmp_path / "pyArgus-refusal.log").read_text(
+        encoding="utf-8")
 
 
