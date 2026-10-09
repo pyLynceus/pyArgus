@@ -14,42 +14,13 @@ NAMES={'Strip QA':'Initial QA','Classify':'Classification','Above ground':'Class
        'Align':'Alignment','DTM':'Surface','DTM / DSM':'Surface','Contours':'Contours','Colorize':'Colorization'}
 
 
-def _launch_folder():
-    """Where the pickers start when the launcher launched this window:
-    PYARGUS_DATA_DIR is the job folder the launcher set (the same variable
-    pyLynceus's own Tools > pyArgus seeds). None: filedialog's own default
-    (review finding: only the legacy path_row dialogs honored it)."""
-    return os.environ.get('PYARGUS_DATA_DIR') or None
-
-
-def display_kind(layer):
-    """How a non-cloud file is shown: by its declared kind where that is a
-    display kind, otherwise by its type. None means the viewer has no
-    display for it."""
-    if layer['kind'] in ('control','breaklines','surface'):return layer['kind']
-    suffix=Path(layer['path']).suffix.lower()
-    if suffix=='.asc':return 'surface'
-    if suffix in ('.dxf','.geojson','.json'):return 'breaklines'
-    if suffix in ('.html','.htm'):return 'report'
-    return None
-
-
-def open_externally(path):
-    """Open a file with the system's default program (a report in the
-    browser)."""
-    import webbrowser
-    webbrowser.open(Path(path).resolve().as_uri())
-
-
 class Workspace:
     def __init__(self, app, parent):
         from pyargus.viewer3d import Viewer
         from pyargus.project_gui import ProjectWindow
         from pyargus.review_gui import ReviewWorkspace
+        self.workspace_host=parent
         self.app=app; self.root=app.root; self.tracker=Tracker(); self.active=None
-        # each stage's fields as constructed: a workspace saved before a field
-        # existed restores that field to this, not to what the last workspace left
-        self.stage_defaults={type(s).__name__:self.stage_settings(s) for s in app.stages}
         self.path=Path(os.environ.get('PYARGUS_WORKSPACE_AUTOSAVE',str(Path(os.environ.get('LOCALAPPDATA',Path.home()))/'pyArgus-Codex'/'last-workspace.json')))
         self.resume_path=self.path.with_suffix('.last.json')
         self.refresh_key=None; self.last_scene=None; self.last_record=None; self.pending_view=None; self.closed=False; self.last_save=time.monotonic()
@@ -57,14 +28,18 @@ class Workspace:
         self.sidebar=ttk.Frame(shell,width=250,padding=(0,0,8)); shell.add(self.sidebar,weight=0)
         center=ttk.Frame(shell);shell.add(center,weight=1)
         parent=center
-        bar=ttk.Frame(parent); bar.pack(fill='x')
+        bar=ttk.Frame(parent); bar.pack(fill='x');self.command_bar=bar
         for label,cmd in [('Open workspace',self.open),('Save workspace as',self.save_as),('Resume last',self.resume)]:
             ttk.Button(bar,text=label,command=cmd).pack(side='left',padx=2)
         self.here=tk.StringVar(value='You are here: add project files, then Inspect / match.')
-        ttk.Label(parent,textvariable=self.here,wraplength=1050,font=('Segoe UI',10,'bold')).pack(fill='x',pady=3)
+        self.location_label=ttk.Label(parent,textvariable=self.here,wraplength=1050,font=('Segoe UI',10,'bold'));self.location_label.pack(fill='x',pady=3)
         panes=ttk.Panedwindow(parent,orient='vertical'); panes.pack(fill='both',expand=True)
         top=ttk.Frame(panes,height=570); bottom=ttk.Frame(panes,height=280)
         panes.add(top,weight=3); panes.add(bottom,weight=1)
+        self.review_panes=panes;self.review_bottom=bottom
+        self.review_mode=tk.BooleanVar(value=False);self.show_dock=tk.BooleanVar(value=True)
+        ttk.Checkbutton(bar,text='Review mode',variable=self.review_mode,command=self.layout_review).pack(side='left',padx=6)
+        ttk.Checkbutton(bar,text='Show controls',variable=self.show_dock,command=self.layout_review).pack(side='left')
         self.viewer=Viewer(self.root,parent=top)
         self.viewer.on_import_tracks=self.register_tracks
         self.viewer.layers.pack_forget()
@@ -76,7 +51,7 @@ class Workspace:
         choice.bind('<<ComboboxSelected>>',lambda e:self.viewer.view(*views[preset.get()]))
         self.viewer.buttons[-1].configure(text='Reset detail')
         self.viewer.on_point=self.picked_point
-        filters=ttk.Frame(top); filters.pack(fill='x',before=self.viewer.window)
+        filters=ttk.Frame(top); filters.pack(fill='x',before=self.viewer.window);self.filter_bar=filters
         self.class_filter=tk.StringVar(value='All'); self.line_filter=tk.StringVar(value='All')
         for name,var in [('Class',self.class_filter),('LAS line',self.line_filter)]:
             ttk.Label(filters,text=name).pack(side='left'); ttk.Entry(filters,textvariable=var,width=7).pack(side='left')
@@ -87,6 +62,7 @@ class Workspace:
         self.review_tab=ttk.Frame(self.tabs); self.layers_tab=ttk.Frame(self.tabs)
         for frame,title in [(self.progress_tab,'Progress / history'),(self.project_tab,'Project settings'),
                             (self.review_tab,'QA / cross-sections')]: self.tabs.add(frame,text=title)
+        self.qa_tab=ttk.Frame(self.tabs);self.tabs.add(self.qa_tab,text='QA results')
         self.log_tab=ttk.Frame(self.tabs);self.tabs.add(self.log_tab,text='Log')
         app.log.pack(in_=self.log_tab,fill='both',expand=True)
         # Project settings remain fully accessible even when the dock is short.
@@ -102,26 +78,64 @@ class Workspace:
         self.trajectory_choice=ttk.Combobox(self.single_trajectory,textvariable=app.sbet_path,state='readonly',values=('',))
         self.trajectory_choice.pack(fill='x')
         self.trajectory_choice.bind('<<ComboboxSelected>>',lambda e:self.sync_single_trajectory())
-        ttk.Button(self.single_trajectory,text='Trajectory clock / frame settings',command=lambda:self.tabs.select(self.project_tab)).pack(anchor='w',pady=4)
+        ttk.Button(self.single_trajectory,text='Trajectory clock / frame settings',command=lambda:self.show_panel(self.project_tab)).pack(anchor='w',pady=4)
         self.project_task=ttk.Frame(app.task_panel)
         ttk.Label(self.project_task,text='Project settings apply to all input clouds.',wraplength=340).pack(anchor='w',pady=6)
-        ttk.Button(self.project_task,text='Review project settings / matching',command=lambda:self.tabs.select(self.project_tab)).pack(fill='x')
+        ttk.Button(self.project_task,text='Review project settings / matching',command=lambda:self.show_panel(self.project_tab)).pack(fill='x')
         ttk.Label(self.project_task,text='New output folder (QA / alignment)').pack(anchor='w',pady=(10,0))
         ttk.Entry(self.project_task,textvariable=self.project_panel.out).pack(fill='x')
         ttk.Button(self.project_task,text='Choose output parent…',command=self.project_panel.choose_output).pack(anchor='w',pady=4)
         self.task_hint=tk.StringVar()
         ttk.Label(self.project_task,textvariable=self.task_hint,wraplength=340).pack(fill='x',pady=8)
-        self.review=ReviewWorkspace(self.root,parent=self.review_tab,viewer=self.viewer)
+        self.review=ReviewWorkspace(self.root,parent=self.review_tab,viewer=self.viewer,qa_parent=self.qa_tab)
+        self.review.on_record=lambda:self.show_panel(self.qa_tab)
         from pyargus.features_gui import FeaturePanel
-        self.features_tab=ttk.Frame(self.tabs);self.tabs.insert(self.log_tab,self.features_tab,text='Features')
-        self.features=FeaturePanel(self,self.features_tab)
+        self.features_tab=ttk.Frame(self.tabs);self.tabs.insert(self.log_tab,self.features_tab,text='Linework')
+        from pyargus.linework_gui import LineworkPanel
+        self.linework_tabs=ttk.Notebook(self.features_tab);self.linework_tabs.pack(fill='both',expand=True)
+        self.imported_tab=ttk.Frame(self.linework_tabs);self.edit_tab=ttk.Frame(self.linework_tabs)
+        self.linework_tabs.add(self.imported_tab,text='Imported layers');self.linework_tabs.add(self.edit_tab,text='Edit / trace')
+        self.linework=LineworkPanel(self,self.imported_tab)
+        self.review.route.layers=lambda:self.linework.layers
+        self.review.route.on_activate=self.show_section_review
+        self.review.route.is_active=lambda:self.tabs.select()==str(self.review_tab) and self.review.tabs.select()==str(self.review.inspect_tab) and self.show_dock.get()
+        self.viewer.linework_geometry=self.linework.geometry;self.viewer.on_linework=self.linework.imported
+        self.features=FeaturePanel(self,self.edit_tab)
         self.viewer.on_feature_draw=self.features.draw
+        self.viewer.feature_geometry=self.features.geometry
         self._build_progress(); self._build_layers()
         self.overlay_vars={}
+        from pyargus.workspace_layout import WorkspaceLayout
+        self.layout=WorkspaceLayout(self)
+        self.refresh_layers()
         self.poll_id=self.root.after(500,self.poll)
 
+    def layout_review(self):
+        if hasattr(self,"layout"):
+            self.layout.set_mode("Review" if self.review_mode.get() else "Process");return
+        if self.review_mode.get():
+            self.app.task_panel.pack_forget()
+            self.tabs.select(self.features_tab)
+        else:self.app.task_panel.pack(side='right',fill='y',before=self.workspace_host)
+        visible=str(self.review_bottom) in self.review_panes.panes()
+        if self.show_dock.get() and not visible:self.review_panes.add(self.review_bottom,weight=1)
+        elif not self.show_dock.get() and visible:self.review_panes.forget(self.review_bottom)
+        if self.review_mode.get() and self.show_dock.get():
+            self.root.after_idle(lambda:self.review_panes.sashpos(0,int(self.review_panes.winfo_height()*.72)) if not self.closed and len(self.review_panes.panes())>1 else None)
+
+    def show_panel(self,panel):
+        if hasattr(self,"layout"):self.layout.show_panel(panel)
+        else:self.tabs.select(panel)
+
+    def show_section_review(self):
+        if hasattr(self,"layout"):
+            self.layout.set_mode("Review");self.show_panel(self.review_tab);self.review.tabs.select(self.review.inspect_tab)
+            self.layout.request_split(.38);return
+        self.show_dock.set(True);self.layout_review()
+        self.tabs.select(self.review_tab);self.review.tabs.select(self.review.inspect_tab)
+        self.root.after_idle(lambda:self.review_panes.sashpos(0,int(self.review_panes.winfo_height()*.32)) if not self.closed and len(self.review_panes.panes())>1 else None)
+
     def picked_point(self,value):
-        self.here.set('Picked sample: '+str(value))
         self.features.pick(value)
 
     def _build_progress(self):
@@ -149,12 +163,12 @@ class Workspace:
 
     def _build_layers(self):
         panel=self.sidebar
-        ttk.Label(panel,text='Project files',font=('Segoe UI',12,'bold')).pack(anchor='w')
-        tools=ttk.Frame(panel);tools.pack(fill='x',pady=5)
+        ttk.Label(panel,text='Layers',font=('Segoe UI',12,'bold')).pack(anchor='w')
+        tools=ttk.Frame(panel);tools.pack(fill='x',pady=5);self.layer_tools=tools
         ttk.Button(tools,text='Add files…',command=self.add_files).pack(side='left')
-        ttk.Button(tools,text='Settings',command=lambda:self.tabs.select(self.project_tab)).pack(side='left')
+        ttk.Button(tools,text='Settings',command=lambda:self.show_panel(self.project_tab)).pack(side='left')
         self.file_summary=tk.StringVar()
-        ttk.Label(panel,textvariable=self.file_summary,wraplength=260).pack(fill='x')
+        self.layer_summary=ttk.Label(panel,textvariable=self.file_summary,wraplength=260);self.layer_summary.pack(fill='x')
         self.layer_tree=ttk.Treeview(panel,columns=('kind',),show='tree headings',selectmode='extended',height=16)
         self.layer_tree.heading('#0',text='File / visibility');self.layer_tree.column('#0',width=185,minwidth=120)
         self.layer_tree.heading('kind',text='State');self.layer_tree.column('kind',width=105,minwidth=80)
@@ -162,16 +176,16 @@ class Workspace:
         self.layer_tree.bind('<<TreeviewSelect>>',self.select_layer)
         self.layer_tree.bind('<Double-1>',lambda e:self.toggle_layer())
         self.layer_tree.bind('<Button-3>',self.layer_menu)
-        ttk.Label(panel,text='Select a cloud to set task input.\nDouble-click to show / hide.\nRight-click for layer actions.',wraplength=270).pack(fill='x',pady=6)
+        self.layer_help=ttk.Label(panel,text='Select a cloud for processing. Double-click to show / hide. Right-click for actions.',wraplength=250);self.layer_help.pack(fill='x',pady=6)
         self.layer_note=tk.StringVar()
-        ttk.Label(panel,textvariable=self.layer_note,wraplength=270).pack(fill='x')
+        self.layer_note_label=ttk.Label(panel,textvariable=self.layer_note,wraplength=270);self.layer_note_label.pack(fill='x')
         self.sync_project_layers()
 
     def add_files(self,paths=None):
         if self.app.runner.running or self.viewer.busy:return
         if paths is None:
-            paths=filedialog.askopenfilenames(parent=self.root,title='Add project files',initialdir=_launch_folder(),filetypes=(
-                ('Project files','*.las *.laz *.trj *.out *.csv *.dxf *.geojson *.asc'),('All files','*.*')))
+            paths=filedialog.askopenfilenames(parent=self.root,title='Add clouds and trajectories',filetypes=(
+                ('Clouds and trajectories','*.las *.laz *.trj *.out'),('All files','*.*')))
         clouds=[];tracks=[]
         for raw in paths:
             path=str(Path(raw).resolve());suffix=Path(path).suffix.lower()
@@ -196,7 +210,7 @@ class Workspace:
         self.refresh_layers();self.persist()
 
     def add_folder(self):
-        folder=filedialog.askdirectory(parent=self.root,title='Add clouds and trajectories from a folder',initialdir=_launch_folder())
+        folder=filedialog.askdirectory(parent=self.root,title='Add clouds and trajectories from a folder')
         if folder:self.add_files(sorted(str(p) for p in Path(folder).iterdir() if p.is_file() and p.suffix.lower() in ('.las','.laz','.trj','.out')))
 
     def load_analysis_project(self):
@@ -233,7 +247,17 @@ class Workspace:
             if hasattr(stage,'cloud_override'):stage.cloud_override.set(path)
         self.update_scope()
 
+    def selected_reference(self):
+        ids=[i[4:] for i in self.layer_tree.selection() if i.startswith("dxf:")]
+        return next((l for l in self.linework.layers if len(ids)==1 and l["id"]==ids[0]),None)
+
     def select_layer(self,event=None):
+        reference=self.selected_reference()
+        if reference is not None:
+            self.linework.tree.selection_set(reference["id"]);self.linework.select()
+            self.layer_note.set(reference["source"]["path"])
+            if hasattr(self,"layout"):self.layout.linework_selection.set(reference["name"]+" — "+Path(reference["source"]["path"]).name)
+            return
         layers=self.selected_layers();p=self.project_panel
         p.cloud_box.selection_clear(0,'end');p.track_box.selection_clear(0,'end')
         selected={l['path'] for l in layers}
@@ -243,11 +267,7 @@ class Workspace:
             if track.path in selected:p.track_box.selection_set(i)
         if len(layers)==1:
             layer=layers[0];self.layer_note.set(layer['path'])
-            if Path(layer['path']).suffix.lower() in ('.las','.laz'):
-                # a rebuild re-delivers the row already shown as the input;
-                # applying it again would reset a cloud typed into a stage
-                if layer['path']!=self.task_input():self.set_active_cloud(layer['path'])
-                self._shown_input=layer['path']
+            if Path(layer['path']).suffix.lower() in ('.las','.laz'):self.set_active_cloud(layer['path'])
             if layer['kind']=='trajectory':
                 track=next((t for t in p.tracks if t.path==layer['path']),None)
                 if track:
@@ -257,9 +277,14 @@ class Workspace:
         row=self.layer_tree.identify_row(event.y)
         if row and row not in self.layer_tree.selection():self.layer_tree.selection_set(row)
         menu=tk.Menu(self.root,tearoff=False)
+        if self.selected_reference() is not None:
+            self.select_layer()
+            for label,fn in [('Show / hide',self.linework.toggle),('Fit layer',self.linework.fit),('Sections along line…',self.linework.sections),('Layer style',self.layout.linework_settings),('Remove reference layer',self.linework.remove)]:
+                menu.add_command(label=label,command=lambda f=fn:self.linework.run(f))
+            menu.tk_popup(event.x_root,event.y_root);return
         for label,cmd in [('Show / hide',self.toggle_layer),('Fit visible clouds',self.viewer.fit_selected),
                 ('Use this version for processing',self.activate_selected_version),
-                ('Trajectory settings',lambda:self.tabs.select(self.project_tab)),
+                ('Trajectory settings',lambda:self.show_panel(self.project_tab)),
                 ('Add folder…',self.add_folder),('Load analysis project…',self.load_analysis_project),('Save analysis project…',self.project_panel.save_project),('Import existing output…',self.import_output),('Select as deliverables',self.delivery),('Remove from project',self.remove_layers)]:
             menu.add_command(label=label,command=cmd)
         menu.tk_popup(event.x_root,event.y_root)
@@ -272,7 +297,7 @@ class Workspace:
         try:self.activate_cloud_version(selected[0]['path'])
         except (OSError,ValueError) as exc:messagebox.showerror('Processing version',str(exc),parent=self.root)
 
-    def activate_cloud_version(self,path,take_input=True):
+    def activate_cloud_version(self,path):
         path=str(Path(path).resolve())
         if not Path(path).is_file():raise ValueError('Cloud version is missing: '+path)
         panel=self.project_panel;root=self.tracker.cloud_root(path)
@@ -288,7 +313,7 @@ class Workspace:
         for old in previous:panel.bindings.pop(old,None)
         if bindings:panel.bindings[path]=next(iter(bindings))
         self.add_layer(path,'cloud','Selected processing version')
-        if take_input:self.set_active_cloud(path)
+        self.set_active_cloud(path)
         panel.refresh()
         if self.viewer.busy:
             self.pending_version_view=True
@@ -298,6 +323,11 @@ class Workspace:
 
     def toggle_layer(self):
         if self.viewer.busy:return
+        for item in self.layer_tree.selection():
+            if item.startswith("dxf:"):
+                layer=next((l for l in self.linework.layers if l["id"]==item[4:]),None)
+                if layer:layer["visible"]=not layer["visible"]
+        self.linework.refresh()
         selected=self.selected_layers()
         to_load=[];tracks=[]
         for layer in selected:
@@ -305,7 +335,7 @@ class Workspace:
             if var is not None:var.set(not var.get());layer['visible']=var.get()
             elif layer['kind']=='trajectory':tracks.append(path)
             elif Path(path).suffix.lower() in ('.las','.laz'):to_load.append(path)
-            else:self.show_file(layer)
+            else:self.overlay(layer)
         if to_load:
             self.viewer.load(list(dict.fromkeys([*self.viewer.paths,*to_load])))
             if tracks:self.viewer.status.set('Loading clouds first. Show the selected trajectories after loading finishes.')
@@ -320,6 +350,9 @@ class Workspace:
 
     def remove_layers(self):
         if self.app.runner.running or self.viewer.busy:return
+        references={i[4:] for i in self.layer_tree.selection() if i.startswith('dxf:')}
+        if references:
+            self.linework.layers=[l for l in self.linework.layers if l['id'] not in references];self.linework.changed()
         paths={l['path'] for l in self.selected_layers()};p=self.project_panel
         if not paths:return
         p.clouds=[c for c in p.clouds if c not in paths];p.tracks=[t for t in p.tracks if t.path not in paths]
@@ -402,11 +435,8 @@ class Workspace:
             parent=Path(stage.batch_dir.get().strip())
             if not stage.batch_dir.get().strip() or not parent.is_dir():raise ValueError('Choose an existing Batch output parent')
             from pyargus.classify.job import validate_noise_bounds
-            try:fraction=float(stage.noise_max_fraction.get())
-            except ValueError:raise ValueError('Noise max fraction must be a number') from None
             validate_noise_bounds(float(stage.noise_min.get()) if stage.noise_min.get().strip() else None,
-                                  float(stage.noise_max.get()) if stage.noise_max.get().strip() else None,
-                                  fraction)
+                                  float(stage.noise_max.get()) if stage.noise_max.get().strip() else None)
             folder=parent/('classification_'+time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8])
             folder.mkdir()
             items=[dict(source=p,output=str(folder/f'{i+1:03d}_{Path(p).stem}_ground.las'),status='Waiting') for i,p in enumerate(paths)]
@@ -505,24 +535,10 @@ class Workspace:
             source=completed.get('settings',{}).get('cloud')
             if source and len(results)==1:
                 self.tracker.register_cloud_result(source,results[0],completed['id'])
-                # the result takes over the task input only while the input is
-                # still the cloud it was made from: a cloud the operator chose
-                # during the run stays chosen
-                take=self.task_input()==str(Path(source).resolve())
-                # and a stage's own cloud field set to something else (typed
-                # during the run, say) keeps it
-                typed={s:s.cloud_override.get() for s in self.app.stages if hasattr(s,'cloud_override')
-                       and s.cloud_override.get().strip()
-                       and str(Path(s.cloud_override.get().strip()).resolve())!=str(Path(source).resolve())}
                 try:
-                    self.activate_cloud_version(results[0],take_input=take)
-                    for stage,value in typed.items():
-                        if stage.cloud_override.get()!=value:
-                            stage.cloud_override.set(value)
-                            self.app.runner.log(f'{stage.title} keeps its own cloud: {value}')
+                    self.activate_cloud_version(results[0])
                     self.viewer.mode.set('Classification')
-                    self.app.runner.log('Active processing version: '+results[0]
-                                        +('' if take else '; the task input stays '+self.app.cloud_path.get()))
+                    self.app.runner.log('Active processing version: '+results[0])
                 except (OSError,ValueError) as exc:
                     self.app.runner.log('Result saved; automatic activation failed: '+str(exc))
         self.persist();self.refresh();self.refresh_layers();self.history()
@@ -610,44 +626,29 @@ class Workspace:
 
     def refresh_layers(self):
         selected={l['path'] for l in self.selected_layers()}
+        reference_selection=[i for i in self.layer_tree.selection() if i.startswith('dxf:')]
+        opened={i:self.layer_tree.item(i,'open') for i in self.layer_tree.get_children()}
         self.layer_tree.delete(*self.layer_tree.get_children())
+        for name in ('Point clouds','Trajectories','Linework','Control','Outputs'):
+            self.layer_tree.insert('','end',iid='group:'+name,text=name,open=opened.get('group:'+name,True))
         tracks={t.path:t for t in self.project_panel.tracks}
         for i,layer in enumerate(self.tracker.data['layers']):
             var=self.visible_var(layer['path']);mark='●' if var is not None and var.get() else '○'
             state=layer['kind']
             if layer['path'] in self.project_panel.clouds:state='Active input'
             elif layer['path'] in self.tracker.data.get('cloud_versions',{}):state='Retained version'
+            elif layer['path'] in self.viewer.review_only_paths:state='Review only'
             if layer['path'] in tracks:
                 t=tracks[layer['path']];state='Set time base' if t.time_mode not in ('same','week') else 'Time: '+t.time_mode
-            self.layer_tree.insert('','end',iid=str(i),text=mark+' '+Path(layer['path']).name,values=(state,))
+            group='Point clouds' if Path(layer['path']).suffix.lower() in ('.las','.laz') else 'Trajectories' if layer['kind']=='trajectory' else 'Linework' if layer['kind']=='breaklines' else 'Control' if layer['kind']=='control' else 'Outputs'
+            self.layer_tree.insert('group:'+group,'end',iid=str(i),text=mark+' '+Path(layer['path']).name,values=(state,))
             if layer['path'] in selected:self.layer_tree.selection_add(str(i))
-        self.follow_task_input()
+        for layer in self.linework.layers:
+            item='dxf:'+layer['id'];self.layer_tree.insert('group:Linework','end',iid=item,text=('● ' if layer['visible'] else '○ ')+layer['name'],values=('DXF reference',))
+            if item in reference_selection:self.layer_tree.selection_add(item)
         self.file_summary.set(self.project_panel.counts.get())
 
-    def task_input(self):
-        active=self.app.cloud_path.get().strip()
-        return str(Path(active).resolve()) if active else ''
-
-    def follow_task_input(self):
-        """A single selected cloud row IS the task input, so the tree follows
-        the input when something other than a click changed it. The select
-        events a rebuild queues arrive after it returns and read the selection
-        as it then stands: left on the retained original after Classify
-        activated its result, they made the original the input again, and the
-        next DTM ran on the unclassified cloud. Only a change of input since
-        the tree last showed it moves the selection: a selection that differs
-        while the input has not is a click whose event is still queued."""
-        active=self.task_input()
-        shown,self._shown_input=getattr(self,'_shown_input',None),active
-        if active==shown:return
-        layers=self.selected_layers()
-        if len(layers)!=1 or Path(layers[0]['path']).suffix.lower() not in ('.las','.laz'):return
-        if layers[0]['path']==active:return
-        row=next((str(i) for i,l in enumerate(self.tracker.data['layers']) if l['path']==active),None)
-        if row is None:self.layer_tree.selection_remove(*self.layer_tree.selection())
-        else:self.layer_tree.selection_set(row)
-
-    def selected_layers(self):return [self.tracker.data['layers'][int(i)] for i in self.layer_tree.selection() if int(i)<len(self.tracker.data['layers'])]
+    def selected_layers(self):return [self.tracker.data['layers'][int(i)] for i in self.layer_tree.selection() if i.isdigit() and int(i)<len(self.tracker.data['layers'])]
 
     def import_output(self):
         path=filedialog.askopenfilename(parent=self.root,title='Import an existing output (unverified)')
@@ -665,7 +666,7 @@ class Workspace:
                      inputs=[[i['path'],i['size_bytes'],i['mtime_ns']] for i in data.get('inputs',[])],
                      outputs=[[i['path'],i['size_bytes'],i['mtime_ns']] for i in data.get('outputs',[])])
             for layer in self.review.layers:self.add_layer(layer['path'],layer['role'],j['id'])
-            self.persist();self.refresh();self.refresh_layers();self.tabs.select(self.review_tab)
+            self.persist();self.refresh();self.refresh_layers();self.show_panel(self.qa_tab)
         except Exception as exc:messagebox.showerror('Import job',str(exc),parent=self.root)
 
     def load_result(self):
@@ -673,11 +674,8 @@ class Workspace:
         if not j:return
         paths=[p[0] for p in j.get('outputs',[]) if Path(p[0]).suffix.lower() in ('.las','.laz') and Path(p[0]).exists()]
         if paths:self.viewer.load(paths)
-        # the review reads QA, alignment and ground-classification records;
-        # a surface, contour or above-ground record has nothing to show there
-        from pyargus.review import reviewable
-        if j.get('records') and reviewable(j['records'][-1]):
-            try:self.review.open_record(j['records'][-1]);self.tabs.select(self.review_tab)
+        if j.get('records'):
+            try:self.review.open_record(j['records'][-1]);self.show_panel(self.qa_tab)
             except Exception as exc:messagebox.showerror('Review',str(exc),parent=self.root)
 
     def load_project_clouds(self):
@@ -720,44 +718,10 @@ class Workspace:
             if hasattr(s,'breaklines'):s.breaklines.set(path)
         self.persist();self.refresh_layers()
 
-    def show_file(self,layer):
-        """Show a non-cloud file the way its kind calls for. An output's own
-        kind is just 'output', so the file type decides: a DTM .asc used to
-        fall through to the breakline reader and fail with a JSON error."""
-        path=Path(layer['path'])
-        if not path.exists():
-            messagebox.showerror('Missing file',f'{path.name} is missing: {path}',parent=self.root);return
-        if path.is_dir():
-            # a report folder (Strip QA's output) opens its report
-            report=path/'report.html'
-            open_externally(report if report.is_file() else path);return
-        kind=display_kind(layer)
-        if kind in ('control','breaklines','surface'):
-            if self.viewer.scene is None:
-                messagebox.showinfo('No cloud loaded',f'{path.name} is drawn over a cloud. Load a cloud first.',parent=self.root);return
-            # an operator's own breakline file keeps the strict check the
-            # Contours stage applies; an output is only being drawn
-            self.overlay(dict(layer,kind=kind,drawing_only=layer['kind']!=kind))
-        elif kind=='report':open_externally(path)
-        else:messagebox.showinfo('No display',f'{path.name} has no display in the viewer. Its folder: {path.parent}',parent=self.root)
-
-    def confirm_frame(self,path):
-        """Ask once per file whether it uses the loaded cloud's frame; ask
-        again when the file has changed (size or time) or the cloud is in
-        another coordinate system."""
-        from pyargus.job_manifest import identity
-        crs=self.viewer.scene[5] if self.viewer.scene is not None else None
-        stamp=identity(path);key=[stamp['size_bytes'],stamp['mtime_ns'],crs.to_string() if crs is not None else None]
-        confirmed=self.tracker.data.setdefault('frame_confirmed',{})
-        if confirmed.get(str(Path(path).resolve()))==key:return True
-        if not messagebox.askyesno('Overlay coordinates','Confirm this layer uses the cloud XYZ frame, units and vertical datum.',parent=self.root):return False
-        confirmed[str(Path(path).resolve())]=key
-        return True
-
     def overlay(self,layer):
         if self.viewer.scene is None:return
+        if not messagebox.askyesno('Overlay coordinates','Confirm this layer uses the cloud XYZ frame, units and vertical datum.',parent=self.root):return
         try:
-            if not self.confirm_frame(layer['path']):return
             if layer['kind']=='control':
                 from pyargus.formats.control import read_control_csv
                 _,x,y,z=read_control_csv(layer['path'],layer['order']);segments=[np.array([[a,b,c]]) for a,b,c in zip(x,y,z)]
@@ -769,7 +733,7 @@ class Workspace:
                 self.viewer.draw();return
             else:
                 from pyargus.formats.breaklines import read_breaklines
-                segments=read_breaklines(layer['path'],skip_degenerate=layer.get('drawing_only',False))
+                segments=read_breaklines(layer['path'])
             var=tk.BooleanVar(value=True);self.overlay_vars[layer['path']]=var;self.viewer.extra_layers.append((layer['path'],segments,var))
             ttk.Checkbutton(self.viewer.layers,text=Path(layer['path']).name,variable=var,command=self.viewer.draw).pack(anchor='w')
             self.viewer.draw()
@@ -786,14 +750,25 @@ class Workspace:
 
     def filter(self):
         try:
-            self.viewer.class_filter=None if self.class_filter.get().lower()=='all' else int(self.class_filter.get())
-            self.viewer.line_filter=None if self.line_filter.get().lower()=='all' else int(self.line_filter.get())
+            from pyargus.review_shortcuts import parse_classes
+            classes=parse_classes(self.class_filter.get())
+            line=None if self.line_filter.get().strip().lower()=='all' else int(self.line_filter.get())
+            if line is not None and not 0<=line<=65535:raise ValueError('Line ID must be 0–65535 or All.')
+            self.viewer.class_filter=classes
+            self.viewer.line_filter=line
             self.viewer.draw()
-        except ValueError:messagebox.showerror('Filter','Enter All or a numeric class/line ID.',parent=self.root)
+        except ValueError as exc:messagebox.showerror('Filter',str(exc),parent=self.root)
 
     def capture(self):
         from copy import deepcopy
         self.tracker.data['features']=deepcopy(self.features.model.items)
+        self.tracker.data['linework']=deepcopy(self.linework.layers)
+        self.tracker.data['section_route']=deepcopy(self.review.route.state)
+        self.tracker.data['review_layout']=dict(review=self.review_mode.get(),controls=self.show_dock.get())
+        if hasattr(self,'layout'):self.tracker.data['ui_layout']=self.layout.snapshot()
+        if hasattr(self,'overview'):self.tracker.data['project_overview']=self.overview.snapshot()
+        if hasattr(self,'comparison'):self.tracker.data['version_comparison']=self.comparison.snapshot()
+        self.tracker.data['review_only_clouds']=sorted(self.viewer.review_only_paths)
         p=self.project_panel
         try:self.tracker.data['project']=asdict(p.snapshot())
         except ValueError:pass
@@ -806,15 +781,14 @@ class Workspace:
         if self.viewer.scene is not None:
             v=self.viewer
             self.tracker.data['view']=dict(paths=list(v.paths),visible=[b.get() for b in v.visible],yaw=v.yaw,pitch=v.pitch,zoom=v.zoom,
-                pan=v.pan.tolist(),center=v.center.tolist(),span=v.span,mode=v.mode.get(),class_filter=self.class_filter.get(),line_filter=self.line_filter.get())
+                pan=v.pan.tolist(),center=v.center.tolist(),span=v.span,mode=v.mode.get(),renderer=v.renderer.get(),auto_detail=v.auto_detail.get(),stereo=v.stereo.get(),stereo_depth=v.stereo_depth.get(),stereo_swap=v.stereo_swap.get(),class_filter=self.class_filter.get(),line_filter=self.line_filter.get())
         if self.review.plan.corridor is not None:
-            a,b,width=self.review.plan.corridor;definition=dict(start=a.tolist(),end=b.tolist(),width=width)
+            editor=getattr(self.viewer,'corridor_editor',None)
+            corridor=editor.original if editor and editor.drag is not None else self.review.plan.corridor
+            a,b,width=corridor;definition=dict(start=a.tolist(),end=b.tolist(),width=width)
             if not self.tracker.data['sections'] or self.tracker.data['sections'][-1]!=definition:self.tracker.data['sections'].append(definition)
-
-    def record_folder(self):
-        """Where a run with no output to sit beside (a solve-only Align)
-        keeps its job record: the workspace's own folder."""
-        return self.path.resolve().parent/'.pyargus'/'records'
+        if hasattr(self,'notes'):
+            self.notes.checkpoint();self.tracker.data['review_notes']=deepcopy(self.notes.model.data)
 
     def persist(self):
         self.capture()
@@ -841,18 +815,29 @@ class Workspace:
             except (OSError,ValueError,KeyError):pass
         if target.exists():self.restore(target)
 
-    def restore(self,path):
+    def restore(self,path,*,load_view=True):
+        self.viewer.cancel_corridor_drag()
         from pyargus.project import TrajectoryInput
         try:
             from pyargus.features import Features
             tracker=Tracker.load(path)
+            from pyargus.review_memory import ReviewMemory
+            notes=ReviewMemory(tracker.data.get('review_notes'))
+            from pyargus.version_comparison import preferences,cloud_path
+            comparison=preferences(tracker.data.get('version_comparison'))
+            review_only={cloud_path(p) for p in tracker.data.get('review_only_clouds',[])}
             features=Features(tracker.data.get('features',[]))
-            # the tree's rows are positions in the OLD workspace's file list;
-            # kept selected, they would select whatever sits at the same
-            # positions in this one (as load_analysis_project already clears)
-            self.layer_tree.selection_remove(*self.layer_tree.selection())
+            from pyargus.linework import validate
+            validate(tracker.data.get('linework',[]))
             self.tracker=tracker;self.refresh_key=None;self.path=Path(path);data=tracker.data;p=self.project_panel
             self.features.restore(features)
+            self.linework.restore(data.get('linework',[]))
+            self.review.route.restore(data.get('section_route'))
+            self.notes.restore(notes)
+            self.viewer.review_only_paths=review_only
+            self.comparison.restore(comparison)
+            layout=data.get('review_layout',{})
+            self.review_mode.set(layout.get('review',False));self.show_dock.set(layout.get('controls',True));self.layout_review()
             proj=data['project'];p.clouds=proj.get('clouds',[]);p.tracks=[TrajectoryInput(**t) for t in proj.get('trajectories',[])];p.bindings=proj.get('bindings',{})
             for key,var in [('map_crs',p.crs),('vertical',p.vertical),('gps_week',p.week),('max_gap',p.gap),('max_points',p.limit)]:
                 value=proj.get(key);var.set('' if value is None else str(value))
@@ -860,9 +845,7 @@ class Workspace:
             for key,value in data.get('project_options',{}).items():getattr(p,key).set(value)
             p.refresh()
             for stage in self.app.stages:
-                saved=data['settings'].get(type(stage).__name__,{})
-                defaults={k:v for k,v in self.stage_defaults.get(type(stage).__name__,{}).items() if k not in saved}
-                for key,value in {**defaults,**saved}.items():
+                for key,value in data['settings'].get(type(stage).__name__,{}).items():
                     var=getattr(stage,key,None)
                     if isinstance(var,tk.Variable):var.set(value)
             self.app.cloud_path.set(data.get('active_cloud',''));self.app.sbet_path.set(data.get('trajectory',''));self.app.trj_time.set(data.get('trj_time','Select TRJ time'))
@@ -872,13 +855,17 @@ class Workspace:
                 self.app.task_name.set(task['name']);self.select_task()
                 if task.get('scope') in self.app.scope_choice.cget('values'):
                     self.app.task_scope.set(task['scope']);self.select_task(reset_scope=False)
-            self.pending_view=data.get('view') or None
+            self.pending_view=(data.get('view') or None) if load_view else None
             if self.pending_view and all(Path(p).exists() for p in self.pending_view['paths']):self.viewer.load(self.pending_view['paths'])
             if data['sections']:
                 cut=data['sections'][-1]
                 for var,value in zip(self.review.coords,cut['start']+cut['end']):var.set(str(value))
                 self.review.width.set(str(cut['width']));self.review.set_corridor()
-        except Exception as exc:messagebox.showerror('Workspace',str(exc),parent=self.root)
+            if hasattr(self,'layout'):self.layout.restore(data.get('ui_layout',{}))
+            if hasattr(self,'overview'):self.overview.restore(data.get('project_overview',{}))
+            return True
+        except Exception as exc:
+            messagebox.showerror('Workspace',str(exc),parent=self.root);return False
 
     def poll(self):
         if self.closed:return
@@ -891,13 +878,21 @@ class Workspace:
             self.overlay_vars={p:var for p,var in self.overlay_vars.items() if str(var) in live}
             self.last_scene=v.scene;self.last_record=self.review.record
             from pyargus.job_manifest import identity
+            signatures=[identity(p) for p in v.paths]
+            inputs_changed=tuple(v.paths)!=tuple(self.review.loaded_paths) or signatures!=self.review.loaded_identities
             self.review.scene=v.scene;self.review.loaded_paths=v.paths
-            self.review.loaded_identities=[identity(p) for p in v.paths]
+            self.review.loaded_identities=signatures
             known={layer['path']:layer for layer in self.tracker.data['layers']}
             self.review.loaded_layers=[dict(path=p,role='Corrected' if known.get(p,{}).get('kind') in ('output','Corrected') else 'Original',state='available') for p in v.paths]
-            self.review.layers=self.review.loaded_layers;self.review.refresh_files();self.review.section=None
+            self.review.layers=self.review.loaded_layers;self.review.refresh_files()
+            if inputs_changed:self.review.clear_section()
             if self.pending_view:
                 saved=self.pending_view;self.pending_view=None
+                v.renderer.set(saved.get('renderer','Auto') if saved.get('renderer','Auto') in ('Auto','GPU','CPU') else 'Auto')
+                v.auto_detail.set(bool(saved.get('auto_detail',False)));v.reset_auto()
+                depth=float(saved.get('stereo_depth',2.0))
+                v.stereo_depth.set(depth if np.isfinite(depth) and 0<=depth<=6 else 2.0)
+                v.stereo.set(bool(saved.get('stereo',False)));v.stereo_swap.set(bool(saved.get('stereo_swap',False)))
                 for key in ('yaw','pitch','zoom','span'):setattr(v,key,saved[key])
                 v.pan=np.array(saved['pan']);v.center=np.array(saved['center']);v.mode.set(saved['mode'])
                 for var,value in zip(v.visible,saved['visible']):var.set(value)
@@ -905,17 +900,22 @@ class Workspace:
             self.review.redraw();v.draw()
             for p in v.paths:
                 self.add_layer(p,'cloud')
-                if p not in self.project_panel.clouds and p not in self.tracker.data.get('cloud_versions',{}) and not any(layer['path']==p and layer['kind']=='output' for layer in self.tracker.data['layers']):self.project_panel.clouds.append(p)
+                if p not in self.project_panel.clouds and p not in self.viewer.review_only_paths and p not in self.tracker.data.get('cloud_versions',{}) and not any(layer['path']==p and layer['kind']=='output' for layer in self.tracker.data['layers']):self.project_panel.clouds.append(p)
             self.project_panel.refresh()
             self.refresh_layers()
         key=tuple((p,var.get()) for p,var in zip(v.paths,v.visible))+tuple((p,item[1].get()) for p,item in zip(v.track_paths,v.tracks))
         if key!=getattr(self,'visibility_key',None):
             self.visibility_key=key;self.refresh_layers()
         self.refresh()
+        if hasattr(self,"notes"):self.notes.poll()
+        if hasattr(self,"comparison"):self.comparison.poll()
+        if hasattr(self,"package_export"):self.package_export.poll()
+        if hasattr(self,"layout"):self.layout.update()
         if time.monotonic()-self.last_save>15:
             self.persist();self.last_save=time.monotonic()
         self.poll_id=self.root.after(1500,self.poll)
 
     def close(self):
         self.persist();self.closed=True;self.root.after_cancel(self.poll_id)
+        if hasattr(self,'overview'):self.overview.close()
         self.review.close();self.viewer.close()

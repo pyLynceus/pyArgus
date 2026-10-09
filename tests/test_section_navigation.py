@@ -4,7 +4,7 @@ from pyargus.section_navigation import stepped_corridor
 from tests.test_review_workspace import root, pair, wait, record
 
 
-@pytest.mark.parametrize("start,end", [([0,0],[10,0]),([0,0],[0,10]),([2600000,1200000],[2600003,1200004])])
+@pytest.mark.parametrize("start,end", [([0,0],[10,0]),([0,0],[0,10]),([2365000,1479000],[2365003,1479004])])
 def test_step_preserves_geometry_and_round_trip(start,end):
     a,b=stepped_corridor(start,end,3,10,1)
     delta=np.subtract(end,start)

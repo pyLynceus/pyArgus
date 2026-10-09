@@ -3,25 +3,13 @@ import json
 import math
 from pathlib import Path
 
-REVIEWABLE = frozenset({"qa", "align", "project-qa", "project-align",
-                        "classify-ground-whole", "classify-ground-tiled"})
-
-
-def reviewable(path):
-    """Whether the review reads this record's operation. A record that
-    cannot be read answers True, so opening it says why."""
-    try:
-        return json.loads(Path(path).read_text(encoding="utf-8")).get("operation") in REVIEWABLE
-    except (OSError, ValueError, AttributeError, TypeError):
-        return True
-
 
 def load_review(path):
     path = Path(path).resolve()
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or data.get("schema_version") != 1:
         raise ValueError("Select a schema-1 pyArgus .job-*.json record.")
-    if data.get("operation") not in REVIEWABLE:
+    if data.get("operation") not in {"qa", "align", "project-qa", "project-align", "classify-ground-whole", "classify-ground-tiled"}:
         raise ValueError("This record is not a supported QA, alignment or ground-classification job.")
     if not isinstance(data.get("results"), dict):
         raise ValueError("Job record has no results object.")

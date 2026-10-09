@@ -203,7 +203,7 @@ class ProjectWindow:
             wanted={self.tracks[i].path for i in missing}
             rows=[str(i) for i,l in enumerate(workspace.tracker.data['layers']) if l['path'] in wanted]
             workspace.layer_tree.selection_set(rows)
-            workspace.tabs.select(workspace.project_tab)
+            workspace.show_panel(workspace.project_tab)
         raise ValueError(f'{len(missing)} trajectories need a time base. They are now selected. '
                          'Choose same or week, then click Apply to selected, or Apply time base to ALL trajectories. '
                          'Each file must show [same; ...] or [week; ...] instead of [set time; ...].')
@@ -231,7 +231,7 @@ class ProjectWindow:
     def save_project(self):
         try:
             spec = self.snapshot()
-            path = filedialog.asksaveasfilename(parent=self.window,filetypes=(('pyArgus project','*.json'),),defaultextension='.json',confirmoverwrite=False)
+            path = filedialog.asksaveasfilename(parent=self.window,filetypes=(('pyArgus project','*.json'),),defaultextension='.json')
             if path: spec.save(path)
         except (ValueError,OSError) as exc: messagebox.showerror('Project',str(exc),parent=self.window)
 
@@ -250,16 +250,14 @@ class ProjectWindow:
         except (ValueError,OSError,KeyError,TypeError) as exc: messagebox.showerror('Project',str(exc),parent=self.window)
 
     def choose_output(self):
-        import os
-        parent = filedialog.askdirectory(parent=self.window,
-                                         initialdir=os.environ.get('PYARGUS_DATA_DIR') or None)
+        parent = filedialog.askdirectory(parent=self.window)
         if parent:
             stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             self.out.set(str(Path(parent)/f'pyargus_project_{stamp}'))
 
     def save_inventory(self):
         if self.inventory is None: return
-        path = filedialog.asksaveasfilename(parent=self.window,filetypes=(('Project inventory','*.json'),),defaultextension='.json',confirmoverwrite=False)
+        path = filedialog.asksaveasfilename(parent=self.window,filetypes=(('Project inventory','*.json'),),defaultextension='.json')
         if path:
             try:
                 with Path(path).open('x',encoding='utf-8') as f: json.dump(self.inventory,f,indent=2)
@@ -328,7 +326,7 @@ class ProjectWindow:
 
 def open_project(app):
     if hasattr(app,'workspace'):
-        app.workspace.tabs.select(app.workspace.project_tab)
+        app.workspace.show_panel(app.workspace.project_tab)
         return app.workspace.project_panel
     previous = getattr(app,'project_window',None)
     if previous is not None and previous.window.winfo_exists():

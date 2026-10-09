@@ -35,8 +35,11 @@ imagery = ["pillow>=10"]
 
 cad = ["ezdxf>=1.4,<2"]
 
+# Hardware-independent OpenGL viewing; CPU rendering remains available.
+gpu = ["moderngl>=5.12,<6", "glcontext>=3,<4"]
+
 dev = ["pytest>=7", "laspy[lazrs]>=2.5", "pyproj>=3.6",
-       "scikit-learn>=1.3", "pillow>=10", "ezdxf>=1.4,<2"]
+       "scikit-learn>=1.3", "pillow>=10", "ezdxf>=1.4,<2", "moderngl>=5.12,<6", "glcontext>=3,<4"]
 
 [tool.setuptools.packages.find]
 include = ["pyargus*"]

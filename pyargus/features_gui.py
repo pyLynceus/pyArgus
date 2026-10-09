@@ -64,6 +64,8 @@ class FeaturePanel:
         self.refresh();self.workspace.persist();self.viewer.draw()
 
     def new(self):
+        self.workspace.show_panel(self.workspace.features_tab)
+        self.workspace.linework_tabs.select(self.workspace.edit_tab)
         self.selected=self.model.new(self.name.get(),self.kind.get());self.changed();self.mode.set('Append vertices')
         self.notice.set('Tracing: Shift-click displayed points in order. Finish tracing stops adding vertices.')
 
@@ -96,9 +98,11 @@ class FeaturePanel:
             for var,x in zip(self.xyz,v['xyz']):var.set(repr(x))
 
     def pick(self, value):
-        if self.mode.get()=='Inspect' or self.workspace.tabs.select()!=str(self.parent):return
+        if not self.workspace.show_dock.get():return
+        if self.mode.get()=='Inspect' or (self.workspace.tabs.select()!=str(self.workspace.features_tab) or self.workspace.linework_tabs.select()!=str(self.parent)):return
         def accept():
             from pyargus.job_manifest import identity
+            if self.viewer.stereo.get():raise ValueError('Turn off Anaglyph before tracing.')
             if self.viewer.busy:raise ValueError('Wait for cloud loading to finish before tracing.')
             source=identity(value['file']); review=self.workspace.review
             if value['file'] not in review.loaded_paths:raise ValueError('Wait for the loaded source to synchronize before tracing.')
@@ -133,13 +137,19 @@ class FeaturePanel:
         self.model.redo() if redo else self.model.undo();self.mode.set('Inspect');self.changed()
 
     def export(self):
-        path=filedialog.asksaveasfilename(parent=self.parent,defaultextension='.dxf',filetypes=(('3D feature linework','*.dxf'),),confirmoverwrite=False)
+        path=filedialog.asksaveasfilename(parent=self.parent,defaultextension='.dxf',filetypes=(('3D feature linework','*.dxf'),))
         if path:
             outputs=export_dxf(self.model.items,path,self.accepted_only.get())
             self.notice.set('Exported '+str(outputs[0])+' and provenance sidecar. Coordinates unchanged; no reprojection.')
 
     def restore(self, model):
         self.model=model;self.selected=None;self.mode.set('Inspect');self.refresh();self.viewer.draw()
+
+    def geometry(self):
+        from pyproj import CRS
+        if self.viewer.scene is None:return []
+        return [(np.array([v['xyz'] for v in f['vertices']]),3 if f['id']==self.selected else 2,f['id']==self.selected)
+                for f in self.model.items if f['vertices'] and CRS(f['crs'])==self.viewer.scene[5]]
 
     def draw(self, scale, w, h):
         from pyargus.viewer3d import project_points

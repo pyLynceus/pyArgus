@@ -17,3 +17,7 @@ line filter and vertical exaggeration remain selected; the new profile fits
 its extracted data. Sources and classifications are unchanged. This is manual
 parallel-section stepping, not automatic following of a curved road alignment.
 Saved review presets and section-navigation persistence remain future work.
+
+For perpendicular sections following an imported DXF entity, see
+[Line-following sections](LINE_FOLLOWING_SECTIONS.md). Route station/settings
+now persist; the manual parallel stepping described above remains available.

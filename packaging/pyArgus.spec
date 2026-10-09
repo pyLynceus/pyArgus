@@ -17,7 +17,7 @@ a = Analysis(
     # runtime; the path is relative to this spec file. pyproj's grid
     # data comes in through its contrib hook.
     datas=[('../pyargus/assets', 'pyargus/assets')],
-    hiddenimports=[],
+    hiddenimports=['glcontext', 'glcontext.wgl'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

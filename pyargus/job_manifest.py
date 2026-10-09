@@ -22,19 +22,6 @@ def identity(path, *, hash_content=False):
     return result
 
 
-def _replace(source, target, attempts=20, pause=0.05):
-    """os.replace, retried for about a second: on Windows a scanner or
-    indexer briefly holding the record just written makes the replace fail
-    with access denied, and that failed whole jobs."""
-    for attempt in range(attempts):
-        try:
-            return os.replace(source, target)
-        except PermissionError:
-            if attempt == attempts - 1:
-                raise
-            time.sleep(pause)
-
-
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -63,7 +50,7 @@ class JobRecord:
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-            _replace(temporary, self.path)
+            os.replace(temporary, self.path)
         finally:
             temporary.unlink(missing_ok=True)
 

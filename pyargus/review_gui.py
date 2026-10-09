@@ -88,7 +88,7 @@ class Plot:
 
 
 class ReviewWorkspace:
-    def __init__(self, root, parent=None, viewer=None):
+    def __init__(self, root, parent=None, viewer=None, qa_parent=None):
         import tkinter as tk
         from tkinter import ttk
         self.tk = tk
@@ -110,8 +110,12 @@ class ReviewWorkspace:
         self.status=tk.StringVar(value="Open a QA/alignment job record, or add clouds for standalone sections.")
         ttk.Label(self.window,textvariable=self.status,wraplength=1200).pack(fill="x",padx=8)
         self.tabs=ttk.Notebook(self.window); self.tabs.pack(fill="both",expand=True,padx=8,pady=5)
-        review=ttk.Frame(self.tabs); inspect=ttk.Frame(self.tabs)
-        self.tabs.add(review,text="QA results"); self.tabs.add(inspect,text="Clouds and cross-sections")
+        review=ttk.Frame(qa_parent if qa_parent is not None else self.tabs); inspect=ttk.Frame(self.tabs)
+        if qa_parent is None:self.tabs.add(review,text="QA results")
+        else:
+            review.pack(fill="both",expand=True)
+            ttk.Style(root).layout("Flat.TNotebook.Tab",[]);self.tabs.configure(style="Flat.TNotebook")
+        self.tabs.add(inspect,text="Clouds and cross-sections")
         self.inspect_tab=inspect
         opts=ttk.Frame(review); opts.pack(fill="x")
         ttk.Label(opts,text="Investigate |dZ| / RMS above (map units):").pack(side="left")
@@ -133,6 +137,8 @@ class ReviewWorkspace:
         self.filelist.bind("<<ListboxSelect>>", lambda e: self.redraw() if not self.busy else None)
         self.confirm=tk.BooleanVar(value=False)
         ttk.Checkbutton(files,text="I confirm selected clouds share XYZ units and vertical datum (CRS alone may not establish heights)",variable=self.confirm).pack(anchor="w")
+        self.advanced=ttk.Frame(inspect)
+        details_parent=self.advanced if viewer is not None else inspect
         sourcebar=ttk.Frame(inspect); sourcebar.pack(fill="x",pady=3)
         ttk.Label(sourcebar,text="Section source:").pack(side="left")
         self.section_source=tk.StringVar()
@@ -142,13 +148,17 @@ class ReviewWorkspace:
         self.source_paths=()
         ttk.Label(inspect,text="Choose one cloud or an explicit comparison. Viewer visibility does not select section inputs.").pack(anchor="w")
         controls=ttk.Frame(inspect); controls.pack(fill="x",pady=3)
+        primary_controls=controls;self.primary_controls=controls
+        controls=ttk.Frame(details_parent);controls.pack(fill="x",pady=3)
         self.coords=[tk.StringVar() for _ in range(4)]
         for label,var in zip(("A east","A north","B east","B north"),self.coords):
             ttk.Label(controls,text=label).pack(side="left"); ttk.Entry(controls,textvariable=var,width=12).pack(side="left")
+        coordinate_controls=controls
+        controls=primary_controls
         self.width=tk.StringVar(value="3.0")
         ttk.Label(controls,text="Full width").pack(side="left"); ttk.Entry(controls,textvariable=self.width,width=7).pack(side="left")
         button=ttk.Button(controls,text="Extract section",command=self.extract); button.pack(side="left"); self.buttons.append(button)
-        button=ttk.Button(controls,text="Export sample CSV…",command=self.export); button.pack(side="left"); self.buttons.append(button)
+        button=ttk.Button(coordinate_controls,text="Export sample CSV…",command=self.export); button.pack(side="left"); self.buttons.append(button)
         stepbar=ttk.Frame(inspect); stepbar.pack(fill="x",pady=3)
         self.step_distance=tk.StringVar(value="10.0")
         ttk.Label(stepbar,text="Step distance (map units):").pack(side="left")
@@ -157,19 +167,21 @@ class ReviewWorkspace:
             button=ttk.Button(stepbar,text=label,command=lambda d=direction:self.step_section(d))
             button.pack(side="left",padx=2); self.buttons.append(button)
         ttk.Label(stepbar,text="Looking A to B; shifts sideways and extracts automatically.").pack(side="left",padx=6)
+        from pyargus.route_sections_gui import RouteSections
+        self.route=RouteSections(self,inspect,stepbar)
         from pyargus.section_cache_store import CacheStore
         self.cache_store=CacheStore()
-        cachebar=ttk.Frame(inspect);cachebar.pack(fill='x',pady=3)
+        cachebar=ttk.Frame(details_parent);cachebar.pack(fill='x',pady=3)
         self.use_cache=tk.BooleanVar(value=True)
         ttk.Checkbutton(cachebar,text='Use cache when available',variable=self.use_cache).pack(side='left')
         for text,command in (('Build section cache',self.build_section_cache),('Clear all section caches',self.clear_section_caches)):
             button=ttk.Button(cachebar,text=text,command=command);button.pack(side='left',padx=3);self.buttons.append(button)
         self.cache_status=tk.StringVar(value='Optional local cache; missing/stale caches use a full scan. Build uses Section source; Clear removes all local section caches.')
-        ttk.Label(inspect,textvariable=self.cache_status,wraplength=1100).pack(anchor='w')
-        editbar=ttk.Frame(inspect); editbar.pack(fill='x',pady=3)
+        ttk.Label(details_parent,textvariable=self.cache_status,wraplength=1100).pack(anchor='w')
+        editbar=ttk.Frame(details_parent); editbar.pack(fill='x',pady=3)
         button=ttk.Button(editbar,text='Edit classifications…',command=self.edit_section); button.pack(side='left'); self.buttons.append(button)
         ttk.Label(editbar,text='Complete single-cloud sections only; source remains unchanged.').pack(side='left',padx=6)
-        controls=ttk.Frame(inspect); controls.pack(fill="x")
+        controls=ttk.Frame(details_parent); controls.pack(fill="x")
         self.mode=tk.StringVar(value="Dataset")
         ttk.Label(controls,text="Color:").pack(side="left")
         combo=ttk.Combobox(controls,textvariable=self.mode,values=("Dataset","Flight line","Classification"),state="readonly",width=15)
@@ -182,9 +194,14 @@ class ReviewWorkspace:
         ttk.Entry(controls,textvariable=self.exaggeration,width=5).pack(side="left")
         ttk.Button(controls,text="Apply display",command=self.redraw).pack(side="left")
         self.legend=tk.StringVar(value="Dataset colors: original cyan; corrected orange. Manual layers alternate.")
-        ttk.Label(inspect,textvariable=self.legend,wraplength=1180).pack(anchor="w")
-        ttk.Label(inspect,text="Section: in the main 3D Top view Ctrl-click A then B (standalone: click plan). Units follow LAS CRS.").pack(anchor="w")
+        ttk.Label(details_parent,textvariable=self.legend,wraplength=1180).pack(anchor="w")
+        ttk.Label(details_parent,text="Section: in the main 3D Top view Ctrl-click A then B (standalone: click plan). Units follow LAS CRS.").pack(anchor="w")
+        self.details_visible=tk.BooleanVar(value=False)
+        if viewer is not None:
+            ttk.Checkbutton(inspect,text='Section options: coordinates, display, cache, editing and export',
+                            variable=self.details_visible,command=self.toggle_details).pack(anchor='w')
         panes=ttk.Panedwindow(inspect,orient="vertical"); panes.pack(fill="both",expand=True)
+        self.section_panes=panes
         top=ttk.Frame(panes); bottom=ttk.Frame(panes); panes.add(top,weight=1); panes.add(bottom,weight=1)
         if viewer is None:
             self.plan=Plot(top,"Easting","Northing",self.pick)
@@ -196,7 +213,14 @@ class ReviewWorkspace:
         if viewer is not None:
             files.pack_forget()
             self.buttons[1].pack_forget(); self.buttons[2].pack_forget()
+        self.route.bind_keys(self.profile.canvas)
+        if viewer is not None:self.route.bind_keys(viewer.canvas)
         self.poll_id=self.window.after(100,self.poll)
+
+    def toggle_details(self):
+        if self.details_visible.get():self.advanced.pack(fill='x',before=self.section_panes)
+        else:self.advanced.pack_forget()
+        if hasattr(self,'on_details'):self.on_details(self.details_visible.get())
 
     def error(self, exc):
         from tkinter import messagebox
@@ -214,6 +238,7 @@ class ReviewWorkspace:
         record=load_review(path)
         self.record=record; self.layers=cloud_layers(record)
         self.clear_scene(); self.refresh_files(); self.refresh()
+        if hasattr(self,"on_record"):self.on_record()
         self.status.set(f"{record['operation']} | {record.get('status')} | {record.get('elapsed_seconds',0):.1f} seconds | {path}")
 
     def refresh(self):
@@ -312,6 +337,7 @@ class ReviewWorkspace:
 
     def pick(self,xy):
         if self.busy: return
+        self.route.stop()
         self.tabs.select(self.inspect_tab)
         if self.endpoint is None:
             self.endpoint=xy
@@ -372,6 +398,7 @@ class ReviewWorkspace:
         from pyargus.sections import extract_section
         try:
             if not self.loaded_paths: raise ValueError("Load selected clouds before extracting a section.")
+            self.route.manual_changed()
             a,b,width=self.set_corridor(); paths=self.section_paths(); use_cache=self.use_cache.get()
             signatures=[self.loaded_identities[list(self.loaded_paths).index(p)] for p in paths]
             self.section=None; self.profile.set(np.empty((0,2)),np.empty((0,3)))
@@ -439,7 +466,7 @@ class ReviewWorkspace:
         from tkinter import filedialog
         from pyargus.sections import export_section
         if self.section is None: self.error("Extract a section first."); return
-        path=filedialog.asksaveasfilename(parent=self.window,filetypes=(("Section sample CSV","*.csv"),),defaultextension=".csv",confirmoverwrite=False)
+        path=filedialog.asksaveasfilename(parent=self.window,filetypes=(("Section sample CSV","*.csv"),),defaultextension=".csv")
         if path:
             try:
                 export_section(self.section,path)
@@ -494,7 +521,7 @@ class ReviewWorkspace:
 
 def open_review(app):
     if hasattr(app,"workspace"):
-        app.workspace.tabs.select(app.workspace.review_tab)
+        app.workspace.show_section_review()
         return app.workspace.review
     return ReviewWorkspace(app.root)
 

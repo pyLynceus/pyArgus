@@ -11,10 +11,6 @@ DEPENDENCIES = {"Initial QA": ["Inspect"], "Classification": ["Inspect"],
                 "Alignment": ["Initial QA", "Classification"], "Surface": ["Classification", "Alignment"],
                 "Contours": ["Surface"], "Colorization": ["Alignment"],
                 "Final QA": ["Alignment", "Surface", "Contours"], "Delivery": ["Final QA"]}
-# The Classify stage's default "Noise max fraction" as the stage records it
-# (text). A literal, so this module stays free of the numeric stack; a test
-# pins it to classify.noise.DEFAULT_MAX_FRACTION and to the stage's default.
-NOISE_MAX_FRACTION_TEXT = "0.001"
 
 
 def stamp(): return datetime.now(timezone.utc).isoformat()
@@ -82,21 +78,7 @@ class Tracker:
             settings=dict(settings)
             for key in ('cloud','trajectory','trj_time'): settings.pop(key,None)
             if isinstance(settings.get('stage'),dict):
-                # blank as the run reads it: prepare() and batch strip the
-                # text, so a field holding only spaces screens nothing
-                stage={k:v for k,v in settings['stage'].items() if k not in ('out_path','batch_dir') and not (k in ('noise_min','noise_max') and (v is None or not str(v).strip()))}
-                # The noise max fraction only decides whether a screening run
-                # refuses; it never changes what a completed run wrote. Without
-                # a window it cannot have mattered. Jobs recorded before the
-                # field existed ran with NO guard at all; they are compared at
-                # the default by choice, because calling every earlier windowed
-                # classification outdated would say its output changed, and it
-                # did not.
-                if 'noise_min' in stage or 'noise_max' in stage:
-                    stage.setdefault('noise_max_fraction',NOISE_MAX_FRACTION_TEXT)
-                else:
-                    stage.pop('noise_max_fraction',None)
-                settings['stage']=stage
+                settings['stage']={k:v for k,v in settings['stage'].items() if k not in ('out_path','batch_dir','workers','memory_mb') and not (k in ('noise_min','noise_max','tile_size') and v in ('',None)) and not (k=='processing' and v=='Whole cloud')}
         return settings
 
     def stale_reason(self, job, settings=None):

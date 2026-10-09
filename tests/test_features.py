@@ -68,6 +68,9 @@ def test_workspace_feature_pick_save_restore_and_tab_gating(application,tmp_path
     w.picked_point(value);value.update(x=1020.,z=101.);w.picked_point(value)
     assert len(f.model.items[0]['vertices'])==2
     fid=f.selected
+    w.layout.hide_dock();w.picked_point(value)
+    assert len(f.model.items[0]['vertices'])==2
+    w.show_panel(w.features_tab)
     w.tabs.select(w.review_tab);w.picked_point(value)
     assert len(f.model.items[0]['vertices'])==2
     f.status.set('Accepted');f.properties()

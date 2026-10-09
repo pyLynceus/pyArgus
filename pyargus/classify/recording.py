@@ -10,21 +10,13 @@ from pyargus.job_manifest import identity
 
 
 def recorded_classification(function):
-    """Keep failed writes away from the requested final path.
-
-    ``force=True`` lets an existing output be replaced -- only once the
-    new cloud has been written in full and verified, and in one atomic
-    step, so a failed or cancelled run still leaves the old file as it
-    was. The record says so (``replaced_existing``). The desktop stage
-    and batch never pass it; ``classify-ground --force`` does.
-    """
+    """Keep failed writes away from the requested final path."""
     @wraps(function)
-    def run(path, out, *, force=False, **kwargs):
+    def run(path, out, **kwargs):
         source, target = Path(path).resolve(), Path(out).resolve()
         if source == target:
             raise ValueError("refusing to overwrite the input cloud")
-        replacing = target.exists()
-        if replacing and not force:
+        if target.exists():
             raise FileExistsError(f"Output already exists: {target}")
         bound = signature(function).bind(path, out, **kwargs)
         bound.apply_defaults()
@@ -33,11 +25,16 @@ def recorded_classification(function):
         log = kwargs.get('log', print)
         with analysis_job(function.__name__.replace('_', '-'), target, settings,
                           inputs=[source], log=log) as record:
-            record.data["replaced_existing"] = replacing
             before = identity(source)
             with tempfile.TemporaryDirectory(prefix='.pyargus-classify-', dir=target.parent) as temp:
                 staged = Path(temp) / target.name
-                result = function(source, staged, **kwargs)
+                try:
+                    result = function(source, staged, **kwargs)
+                except InterruptedError as error:
+                    record._cancelled_exception=error
+                    record.data["cancellation"]=str(error)
+                    finish(record,{},status="cancelled")
+                    raise
                 metrics = {k: v for k, v in result.items() if k != 'points'}
                 stop = kwargs.get('should_stop')
                 if result.get('cancelled') or (stop is not None and stop()):
@@ -56,11 +53,7 @@ def recorded_classification(function):
                     finish(record, metrics, status='cancelled')
                     return {'cancelled': True}
                 # Windows rename refuses an existing target; POSIX link is exclusive.
-                # Replacing was asked for by name: os.replace is atomic on one
-                # volume, and the staged file sits in the target's own folder.
-                if replacing:
-                    os.replace(staged, target)
-                elif os.name == 'nt':
+                if os.name == 'nt':
                     os.rename(staged, target)
                 else:
                     os.link(staged, target)

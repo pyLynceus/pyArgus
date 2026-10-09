@@ -21,10 +21,7 @@ def noisy_cloud(path):
 
 def test_noise_excluded_and_preserved_whole_and_tiled(tmp_path):
     src=tmp_path/'src.las';noisy_cloud(src)
-    # 2 of 227 points screened is 0.9%: far above the 0.1% default budget
-    # that stops a window from catching the site, so raised here on purpose
-    params=dict(cell=1.,window=3.,threshold=.5,noise_min=90.,noise_max=110.,
-                noise_max_fraction=.02,log=lambda _:None)
+    params=dict(cell=1.,window=3.,threshold=.5,noise_min=90.,noise_max=110.,log=lambda _:None)
     a,b=tmp_path/'whole.las',tmp_path/'tiled.las'
     job.classify_ground_whole(src,a,**params)
     job.classify_ground_tiled(src,b,tile_size=1000,**params)
@@ -110,69 +107,3 @@ def test_batch_second_failure_retains_first_result(application,tmp_path,monkeypa
     assert __import__('pathlib').Path(first['output']).is_file()
     assert not __import__('pathlib').Path(second['output']).exists()
     assert w.project_panel.clouds==[first['output'],paths[1]]
-
-
-def test_the_three_fraction_defaults_are_one_number(application):
-    """noise-cut's --max-fraction, classify-ground's --noise-max-fraction,
-    the desktop field and the text the workspace compares against must
-    not drift apart."""
-    from pyargus import cli
-    from pyargus.classify import noise
-    from pyargus.workspace_state import NOISE_MAX_FRACTION_TEXT
-
-    stage=next(s for s in application.stages if type(s).__name__=='ClassifyStage')
-    parser=cli.build_parser()
-    assert parser.parse_args(['classify-ground','a','--out','b']).noise_max_fraction==noise.DEFAULT_MAX_FRACTION
-    assert parser.parse_args(['noise-cut','a','--out','b']).max_fraction==noise.DEFAULT_MAX_FRACTION
-    assert job.NOISE_MAX_FRACTION==noise.DEFAULT_MAX_FRACTION
-    assert stage.noise_max_fraction.get()==NOISE_MAX_FRACTION_TEXT
-    assert float(NOISE_MAX_FRACTION_TEXT)==noise.DEFAULT_MAX_FRACTION
-
-
-def test_classify_stage_passes_the_fraction_and_refuses_a_bad_one(application,tmp_path,monkeypatch):
-    from tests.test_gui import _FakeRunner
-
-    app=application
-    src=tmp_path/'src.las';cloud(src);app.cloud_path.set(str(src))
-    stage=next(s for s in app.stages if type(s).__name__=='ClassifyStage')
-    stage.out_path.set(str(tmp_path/'out.las'));stage.noise_max.set('500')
-    seen={}
-    def capture(path,out,**kwargs):
-        seen.update(kwargs);return {'cancelled':True}
-    monkeypatch.setattr(job,'classify_ground_whole',capture)
-    stage.noise_max_fraction.set('0.02')
-    stage.prepare()(_FakeRunner())
-    assert seen['noise_max_fraction']==0.02 and seen['noise_max']==500.
-    for bad in ('0','1.5','nan','lots'):
-        stage.noise_max_fraction.set(bad)
-        with pytest.raises(ValueError,match='[Ff]raction'):
-            stage.prepare()
-
-
-def test_batch_refuses_a_bad_fraction_before_making_its_folder(application,tmp_path,monkeypatch):
-    from pyargus import workspace_gui
-
-    app=application;w=app.workspace
-    path=tmp_path/'a.las';cloud(path);w.project_panel.clouds=[str(path)]
-    stage=next(s for s in app.stages if type(s).__name__=='ClassifyStage')
-    stage.batch_dir.set(str(tmp_path));stage.noise_max.set('500');stage.noise_max_fraction.set('0')
-    said=[]
-    monkeypatch.setattr(workspace_gui.messagebox,'showerror',lambda *a,**k:said.append(a))
-    w.start_classify_batch()
-    assert said and 'fraction' in said[0][1].lower()
-    assert not list(tmp_path.glob('classification_*'))
-
-
-def test_a_workspace_saved_before_the_fraction_field_restores_the_default(application,tmp_path):
-    """restore() set only the fields a saved workspace names, so a field
-    it predates kept whatever the previously open workspace held -- and
-    its windowed jobs then read as outdated against that value."""
-    app=application;w=app.workspace
-    stage=next(s for s in app.stages if type(s).__name__=='ClassifyStage')
-    w.path=tmp_path/'saved.json';w.persist()
-    data=json.loads(w.path.read_text(encoding='utf-8'))
-    data['settings']['ClassifyStage'].pop('noise_max_fraction')
-    w.path.write_text(json.dumps(data),encoding='utf-8')
-    stage.noise_max_fraction.set('0.5')      # what the last workspace left
-    w.restore(w.path)
-    assert stage.noise_max_fraction.get()=='0.001'

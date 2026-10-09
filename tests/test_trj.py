@@ -8,7 +8,7 @@ from pyargus.core import rotation
 
 def make_file(path, rows=None):
     if rows is None:
-        rows = [(400000000+i*.005, 100+i, 200, 400, h, 2, 3)
+        rows = [(436024721+i*.005, 100+i, 200, 400, h, 2, 3)
                 for i,h in enumerate((359, 1, 3))]
     h = bytearray(1376)
     struct.pack_into('<8s4i', h, 0, b'TSCANTRJ', 20010715, 1376, len(rows), 64)
@@ -56,7 +56,7 @@ def test_explicit_conventions_and_clock_required(tmp_path):
     assert week is None and frac == .5 and q[0] == times[0]
 
 def test_native_geometry_and_correction_share_time_base(tmp_path):
-    times = 400000000 + np.arange(101)*.1
+    times = 436024721 + np.arange(101)*.1
     rows = [(t, (t-times[0])*20, 200, 400, 90, 2, 3) for t in times]
     p = make_file(tmp_path/'line.trj', rows)
     d, (e,n,z), mode = trajectory.load_alignment(p,None,trj_time='same',trj_confirmed=True)

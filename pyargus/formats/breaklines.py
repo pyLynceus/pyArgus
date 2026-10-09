@@ -3,11 +3,7 @@ from pathlib import Path
 import numpy as np
 
 
-def read_breaklines(path, skip_degenerate=False):
-    """``skip_degenerate`` is for drawing: a polyline with no horizontal
-    length (a contour round a single peak cell) is skipped instead of
-    refusing the whole file. A surface built from breaklines keeps the
-    refusal."""
+def read_breaklines(path):
     if Path(path).suffix.lower() != '.dxf':
         from .geojson import read_breaklines_geojson
         return read_breaklines_geojson(path)
@@ -17,7 +13,6 @@ def read_breaklines(path, skip_degenerate=False):
         raise ImportError('DXF import requires pyArgus[cad] (ezdxf).') from exc
     document = ezdxf.readfile(path)
     result = []
-    skipped = 0
     ignored = {'TEXT','MTEXT','POINT','DIMENSION','HATCH'}
     for entity in document.modelspace():
         kind = entity.dxftype()
@@ -50,13 +45,7 @@ def read_breaklines(path, skip_degenerate=False):
             raise ValueError(context + ': needs at least two finite XYZ vertices.')
         if closed and not np.array_equal(xyz[0],xyz[-1]): xyz = np.vstack((xyz,xyz[0]))
         if not np.any(np.linalg.norm(np.diff(xyz[:,:2],axis=0),axis=1)>0):
-            if skip_degenerate:
-                skipped += 1
-                continue
             raise ValueError(context + ': has no horizontal length.')
         result.append(xyz)
-    if not result and skipped:
-        raise ValueError(f'{Path(path).name}: every line is a single point '
-                         f'({skipped} skipped); nothing to draw.')
     if not result: raise ValueError(f'{path}: no supported breaklines in model space.')
     return result

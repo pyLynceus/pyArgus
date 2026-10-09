@@ -242,7 +242,7 @@ def window_points(read, x_edges, y_edges, hx0, hy0, hx1, hy1):
 
 def tiled_surface(read, mins, maxs, *, cell=1.0, slope=0.15, window=18.0,
                   low_cut=None, tile_size=None, halo=None, progress=None,
-                  stats=None):
+                  stats=None, workers=1, memory_mb=4096, should_stop=None):
     """Build one project-wide ground surface, tile by tile.
 
     ``read(bounds)`` returns (x, y, z) for a box -- a COPC query, a
@@ -270,32 +270,108 @@ def tiled_surface(read, mins, maxs, *, cell=1.0, slope=0.15, window=18.0,
     dem_slope = np.full(shape, np.nan)
     object_cells = np.zeros(shape, dtype=bool)
     low_cells = np.zeros(shape, dtype=bool)
-    filled = 0
-    held = []
-    for n, tile in enumerate(tiles, start=1):
-        if progress is not None:
-            progress(n, len(tiles), tile)
-        # the tile's own lattice, in phase with the project's
-        hx0, hy0, hx1, hy1 = _cells(tile.halo, x_edges, y_edges)
-        x, y, z = window_points(read, x_edges, y_edges, hx0, hy0, hx1, hy1)
-        held.append(int(x.size))
-        if x.size == 0:
-            continue
-        local = ground_mod.ground_surface(
-            x, y, z, x_edges[hx0:hx1 + 1], y_edges[hy0:hy1 + 1],
-            cell=cell, slope=slope, window=window, low_cut=low_cut)
-        cx0, cy0, cx1, cy1 = _cells(tile.core, x_edges, y_edges)
-        sx, sy = cx0 - hx0, cy0 - hy0
-        ex, ey = sx + (cx1 - cx0), sy + (cy1 - cy0)
-        dem[cx0:cx1, cy0:cy1] = local.dem[sx:ex, sy:ey]
-        dem_slope[cx0:cx1, cy0:cy1] = local.dem_slope[sx:ex, sy:ey]
-        object_cells[cx0:cx1, cy0:cy1] = local.object_cells[sx:ex, sy:ey]
-        low_cells[cx0:cx1, cy0:cy1] = local.low_cells[sx:ex, sy:ey]
-        filled += 1
+    # SciPy morphology runs in native code and releases the GIL. Readers and
+    # raster assembly stay on the caller thread: no concurrent network scans,
+    # no concurrent writes, and no callbacks from pool threads into Tk.
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    if isinstance(workers,bool) or int(workers)!=workers or not 1<=workers<=32:
+        raise ValueError("workers must be an integer from 1 to 32")
+    if not np.isfinite(memory_mb) or memory_mb<=0:
+        raise ValueError("tile memory budget must be positive and finite")
+    parallel_requested=workers>1
+    workers=min(int(workers),len(tiles))
+    global_bytes=dem.nbytes+dem_slope.nbytes+object_cells.nbytes+low_cells.nbytes
+    budget=int(memory_mb*1024**2)
+    pending=deque()
+    held=[];filled=0;in_flight=0;peak_bytes=global_bytes;peak_tasks=0
+    executor=ThreadPoolExecutor(max_workers=workers,thread_name_prefix="argus-ground") if workers>1 else None
+
+    def stopped():
+        if should_stop is not None and should_stop():
+            raise InterruptedError("Tiled classification stopped")
+
+    def compute(x,y,z,hx0,hy0,hx1,hy1,cx0,cy0,cx1,cy1):
+        if not len(x):
+            return None
+        local=ground_mod.ground_surface(
+            x,y,z,x_edges[hx0:hx1+1],y_edges[hy0:hy1+1],
+            cell=cell,slope=slope,window=window,low_cut=low_cut)
+        sx,sy=cx0-hx0,cy0-hy0
+        ex,ey=sx+cx1-cx0,sy+cy1-cy0
+        # Return only the core; never retain the worker's full halo surface.
+        return tuple(array[sx:ex,sy:ey].copy() for array in
+                     (local.dem,local.dem_slope,local.object_cells,local.low_cells))
+
+    def assemble(result,core):
+        nonlocal filled
+        if result is None:
+            return
+        cx0,cy0,cx1,cy1=core
+        for target,values in zip((dem,dem_slope,object_cells,low_cells),result):
+            target[cx0:cx1,cy0:cy1]=values
+        filled+=1
+
+    def finish_first():
+        nonlocal in_flight
+        future,core,cost=pending[0]
+        while True:
+            stopped()
+            try:
+                result=future.result(timeout=.05)
+                break
+            except TimeoutError:
+                if future.done():
+                    raise
+                continue
+        pending.popleft()
+        in_flight-=cost
+        assemble(result,core)
+
+    try:
+        for n,tile in enumerate(tiles,start=1):
+            stopped()
+            while len(pending)>=workers:
+                finish_first()
+            if progress is not None:
+                progress(n,len(tiles),tile)
+            hx0,hy0,hx1,hy1=_cells(tile.halo,x_edges,y_edges)
+            cx0,cy0,cx1,cy1=_cells(tile.core,x_edges,y_edges)
+            x,y,z=window_points(read,x_edges,y_edges,hx0,hy0,hx1,hy1)
+            stopped()
+            held.append(int(x.size))
+            # Conservative scheduling estimate, not an OS RSS limit. Reading
+            # one tile and decoder/native-library buffers remain additional.
+            cost=96*int(x.size)+128*(hx1-hx0)*(hy1-hy0)
+            if parallel_requested and global_bytes+cost>budget:
+                raise ValueError("One halo tile exceeds the estimated tile memory budget; "
+                                 "increase the budget or reduce tile size")
+            while pending and global_bytes+in_flight+cost>budget:
+                finish_first()
+            peak_bytes=max(peak_bytes,global_bytes+in_flight+cost)
+            args=(x,y,z,hx0,hy0,hx1,hy1,cx0,cy0,cx1,cy1)
+            if executor is None:
+                assemble(compute(*args),(cx0,cy0,cx1,cy1))
+                peak_tasks=max(peak_tasks,1)
+            else:
+                pending.append((executor.submit(compute,*args),(cx0,cy0,cx1,cy1),cost))
+                in_flight+=cost
+                peak_tasks=max(peak_tasks,len(pending))
+            del x,y,z,args
+        while pending:
+            finish_first()
+    finally:
+        if executor is not None:
+            for future,*_ in pending:
+                future.cancel()
+            executor.shutdown(wait=True,cancel_futures=True)
+    stopped()
     if stats is not None:
-        stats.update(halo=halo, tile_size=tile_size, tiles=len(tiles),
-                     tile_points=held, points_read=int(sum(held)),
-                     max_tile_points=int(max(held, default=0)))
+        stats.update(halo=halo,tile_size=tile_size,tiles=len(tiles),
+                     tile_points=held,points_read=int(sum(held)),
+                     max_tile_points=int(max(held,default=0)),workers=workers,
+                     peak_tasks=peak_tasks,estimated_peak_bytes=peak_bytes,
+                     memory_mb=float(memory_mb))
     if filled == 0:
         raise ValueError("no tile held any points")
     if not np.isfinite(dem).any():

@@ -68,7 +68,9 @@ def test_undo_branch_class_limit_and_source_change(tmp_path):
     with pytest.raises(ValueError,match='31'):session.assign([0],32)
     session.assign([0,1],6);session.undo();session.assign([1],7)
     session.redo();assert session.classes[0]==2 and session.classes[1]==7
-    source.touch()
+    import os
+    stamp=source.stat()
+    os.utime(source,ns=(stamp.st_atime_ns,stamp.st_mtime_ns+2_000_000_000))
     with pytest.raises(ValueError,match='changed'):session.export(tmp_path/'out.las')
 
 

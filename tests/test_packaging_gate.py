@@ -7,6 +7,7 @@ whole suite stayed green and only a review panel noticed. A gate
 nothing runs is not a gate.
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -17,14 +18,20 @@ ROOT = Path(__file__).resolve().parent.parent
 GATE = ROOT / "packaging" / "launch_gui.py"
 
 
-def test_packaging_self_test_passes():
+def test_packaging_self_test_passes(tmp_path):
     pytest.importorskip("laspy")
-    # the display check retries: a bare Tk() straight after another test's
-    # window sometimes fails, and this gate then skipped without a word
-    from tests.test_gui import make_root
-
-    make_root().destroy()
-    result = subprocess.run([sys.executable, str(GATE), "--self-test"],
+    tkinter = pytest.importorskip("tkinter")
+    try:
+        window = tkinter.Tk()
+    except tkinter.TclError:
+        pytest.skip("no display for Tk")
+    window.destroy()
+    report=tmp_path/"self-test.json"
+    result = subprocess.run([sys.executable, str(GATE), "--self-test", "--self-test-report",str(report)],
                             capture_output=True, text=True, cwd=str(ROOT),
                             timeout=900)
     assert result.returncode == 0, (result.stdout + result.stderr)[-2000:]
+
+    evidence=json.loads(report.read_text(encoding="utf-8"))
+    assert evidence["passed"] and evidence["multicore"]["workers"]==2
+    assert evidence["multicore"]["peak_tasks"]==2 and "device" in evidence["gpu"]

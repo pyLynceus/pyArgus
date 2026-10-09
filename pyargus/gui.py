@@ -24,9 +24,6 @@ from pathlib import Path
 
 import numpy as np
 
-from pyargus.workspace_state import NOISE_MAX_FRACTION_TEXT
-from pyargus.handover import HandoverRefused, resolve
-
 try:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -129,12 +126,9 @@ def path_row(parent, label, variable, row, directory=False, save=False,
         else:
             types = filetypes() if callable(filetypes) else filetypes
             if save:
-                # no "replace it?": Run refuses an existing output, so the
-                # dialog must not offer to replace one
                 chosen = filedialog.asksaveasfilename(
                     parent=parent, initialdir=initial, filetypes=types,
-                    defaultextension=types[0][1].removeprefix("*"),
-                    confirmoverwrite=False)
+                    defaultextension=types[0][1].removeprefix("*"))
             else:
                 chosen = filedialog.askopenfilename(
                     parent=parent, initialdir=initial,
@@ -369,9 +363,9 @@ def _require_new_file(text, label):
 
 
 def _refuse_existing(path, label):
-    """The CLI refuses existing outputs without --force; the GUI has no
-    --force and refuses any path that already exists, typed or picked
-    (its save dialog does not offer to replace)."""
+    """The CLI refuses existing outputs without --force; the GUI
+    equivalent refuses typed-in paths that already exist (the save
+    dialog covers picked ones, a pasted path bypasses it)."""
     if Path(path).exists():
         raise ValueError(f"{label} already exists: {path} -- "
                          f"pick a new name, or remove it first")
@@ -399,11 +393,6 @@ class QaStage:
         app = self.app
         cloud = _require_cloud(app)
         out_dir = _require_new_file(self.out_dir.get(), "the report")
-        # the folder picker returns folders that exist; one holding a report
-        # is an earlier run's (an Initial QA a Final QA would replace)
-        if (Path(out_dir) / "report.html").exists():
-            raise ValueError(f"a report already exists in {out_dir} -- "
-                             f"pick a new folder")
         control_csv = self.control.get().strip()
         order = self.order.get()
         sbet_path = app.sbet_path.get().strip() or None
@@ -468,10 +457,11 @@ class ClassifyStage:
         self.threshold = tk.StringVar(value="1.5")
         self.noise_min = tk.StringVar()
         self.noise_max = tk.StringVar()
-        # the screen's guard, as noise-cut's --max-fraction: a window that
-        # would flag more than this share of the cloud is the site, not noise
-        self.noise_max_fraction = tk.StringVar(value=NOISE_MAX_FRACTION_TEXT)
         self.batch_dir = tk.StringVar()
+        self.processing = tk.StringVar(value="Whole cloud")
+        self.workers = tk.StringVar(value="2")
+        self.memory_mb = tk.StringVar(value="4096")
+        self.tile_size = tk.StringVar()
         box = ttk.Frame(parent)
         box.pack(fill="x")
         box.columnconfigure(1, weight=1)
@@ -481,20 +471,25 @@ class ClassifyStage:
                                           ("Window", self.window),
                                           ("Threshold", self.threshold),
                                           ("Noise min Z (optional)", self.noise_min),
-                                          ("Noise max Z (optional)", self.noise_max),
-                                          ("Noise max fraction", self.noise_max_fraction))):
+                                          ("Noise max Z (optional)", self.noise_max))):
             ttk.Label(box, text=label).grid(row=1 + i, column=0, sticky="w")
             ttk.Entry(box, textvariable=var, width=8).grid(
                 row=1 + i, column=1, sticky="w", padx=2)
 
-        ttk.Label(box,text="Limits use LAS elevation units; blank = preserve existing noise only. "
-                  "A window that would flag more than the max fraction of the cloud is refused.",wraplength=350).grid(row=8,column=0,columnspan=3,sticky="w")
-        ttk.Label(box,text="Batch output parent").grid(row=9,column=0,sticky="w")
-        ttk.Entry(box,textvariable=self.batch_dir).grid(row=9,column=1,sticky="ew")
+        ttk.Label(box,text="Limits use LAS elevation units; blank = preserve existing noise only.",wraplength=350).grid(row=7,column=0,columnspan=3,sticky="w")
+        ttk.Label(box,text="Batch output parent").grid(row=8,column=0,sticky="w")
+        ttk.Entry(box,textvariable=self.batch_dir).grid(row=8,column=1,sticky="ew")
         def choose_batch():
             folder=filedialog.askdirectory(parent=box,title="Batch output parent")
             if folder:self.batch_dir.set(folder)
-        ttk.Button(box,text="…",command=choose_batch).grid(row=9,column=2)
+        ttk.Button(box,text="…",command=choose_batch).grid(row=8,column=2)
+        options=ttk.LabelFrame(box,text="Processing");options.grid(row=9,column=0,columnspan=3,sticky="ew",pady=6)
+        ttk.Combobox(options,textvariable=self.processing,values=("Whole cloud","Tiled / multicore"),state="readonly",width=22).grid(row=0,column=0,columnspan=2,sticky="w")
+        for row,label,var in ((1,"CPU workers",self.workers),(2,"Tile memory budget (MiB)",self.memory_mb),(3,"Tile width (map units; blank = default)",self.tile_size)):
+            ttk.Label(options,text=label).grid(row=row,column=0,sticky="w")
+            ttk.Entry(options,textvariable=var,width=8).grid(row=row,column=1,sticky="w")
+        ttk.Label(options,text="Tile workers share a memory budget. File reads and writes stay serial; one tile uses one worker. Memory is estimated; decoder buffers are additional.",wraplength=340).grid(row=4,column=0,columnspan=2,sticky="w")
+
 
     def prepare(self):
         cloud = _require_cloud(self.app)
@@ -509,9 +504,14 @@ class ClassifyStage:
         threshold = _float(self.threshold.get(), "Threshold")
         noise_min = _float(self.noise_min.get(),"Noise min") if self.noise_min.get().strip() else None
         noise_max = _float(self.noise_max.get(),"Noise max") if self.noise_max.get().strip() else None
-        noise_max_fraction = _float(self.noise_max_fraction.get(), "Noise max fraction")
         from pyargus.classify.job import validate_noise_bounds
-        validate_noise_bounds(noise_min, noise_max, noise_max_fraction)
+        validate_noise_bounds(noise_min,noise_max)
+        tiled=self.processing.get()=="Tiled / multicore"
+        workers=int(self.workers.get()) if tiled else 1
+        memory_mb=_float(self.memory_mb.get(),"Tile memory budget") if tiled else 4096
+        tile_size=_float(self.tile_size.get(),"Tile width") if tiled and self.tile_size.get().strip() else None
+        if tiled and (not 1<=workers<=32 or not np.isfinite(memory_mb) or memory_mb<=0 or (tile_size is not None and (not np.isfinite(tile_size) or tile_size<=0))):
+            raise ValueError("Use 1-32 workers, a positive memory budget and a positive tile width")
 
         def work(runner):
             # the same job as `pyargus classify-ground`: one lattice, one
@@ -519,10 +519,18 @@ class ClassifyStage:
             from pyargus.classify import job as ground_job
 
             runner.log(f"reading {cloud}")
+            if tiled:
+                result=ground_job.classify_ground_tiled(
+                    cloud,out,cell=cell,slope=slope,window=window,threshold=threshold,
+                    noise_min=noise_min,noise_max=noise_max,workers=workers,memory_mb=memory_mb,
+                    tile_size=tile_size,log=runner.log,should_stop=runner.cancelled,
+                    progress=lambda n,total,tile:runner.log(f"Tile {n}/{total}: {tile.core}"))
+                if result.get("cancelled"):return
+                runner.products.append(("classified",Path(out)))
+                return
             result = ground_job.classify_ground_whole(
                 cloud, out, cell=cell, slope=slope, window=window,
-                threshold=threshold, noise_min=noise_min, noise_max=noise_max,
-                noise_max_fraction=noise_max_fraction, log=runner.log, keep_points=True,
+                threshold=threshold, noise_min=noise_min, noise_max=noise_max, log=runner.log, keep_points=True,
                 should_stop=lambda: cancelled_before(runner, "writing"))
             if result.get("cancelled"):
                 return
@@ -588,92 +596,61 @@ class AboveStage:
         if training and (not np.isfinite(cell) or cell <= 0):
             raise ValueError("training cell size must be positive and finite")
         units = self.units.get()
-        trained_classes = (3, 4, 5, 6)
 
         def work(runner):
             import laspy
-            from pyargus.analysis_records import analysis_job, defaults, finish
             from pyargus.classify import above, features
-            from pyargus.classify.job import NOISE_CLASSES
 
-            # the height-above-ground surface behind every point's features
-            hag = defaults(features.point_features)
-            settings = dict(xyz_units=units, ground_class=2,
-                            ignored_classes=list(NOISE_CLASSES),
-                            hag_dtm_cell=hag["dtm_cell"], hag_max_fill=hag["max_fill"])
+            if cancelled_before(runner, "reading"):
+                return
+            model = None if training else above.load(model_path)
+            if model is not None:
+                saved_cell = model.feature_cell
+                if saved_cell is None or not np.isfinite(saved_cell) or saved_cell <= 0:
+                    raise ValueError("This model has no valid saved cell size. "
+                                     "Retrain it with Train model before GUI use.")
+                if model.xyz_units != units:
+                    raise ValueError("Cloud XYZ units do not match the model's "
+                                     "recorded units. Select the training units.")
+                runner.log(f"Model: {model.notes}; cell {saved_cell:g}")
+            data = laspy.read(cloud)
+            points = {name: np.asarray(data[name]) for name in (
+                "x", "y", "z", "classification", "return_number", "number_of_returns")}
+            labels = points["classification"]
+            ground = labels == 2
+            noise = np.isin(labels, (7, 18))
+            if not ground.any():
+                raise ValueError("No class-2 ground. Classify ground first.")
             if training:
-                settings.update(cell=cell, classes_used=list(trained_classes))
-            with analysis_job("train-above" if training else "classify-above", out,
-                              settings, inputs=[cloud, None if training else model_path],
-                              log=runner.log) as record:
-                if cancelled_before(runner, "reading"):
-                    finish(record, {}, status="cancelled")
+                matrix, indices, valid = features.point_features(
+                    points, ground, ignore_mask=noise, cell=cell)
+                usable = valid & np.isin(labels[indices], (3, 4, 5, 6))
+                if cancelled_before(runner, "training"):
                     return
-                model = None if training else above.load(model_path)
-                if model is not None:
-                    saved_cell = model.feature_cell
-                    if saved_cell is None or not np.isfinite(saved_cell) or saved_cell <= 0:
-                        raise ValueError("This model has no valid saved cell size. "
-                                         "Retrain it with Train model before GUI use.")
-                    if model.xyz_units != units:
-                        raise ValueError("Cloud XYZ units do not match the model's "
-                                         "recorded units. Select the training units.")
-                    runner.log(f"Model: {model.notes}; cell {saved_cell:g}")
-                    record.data["settings"].update(cell=saved_cell,
-                                                   classes_used=list(model.classes),
-                                                   model_notes=model.notes)
-                    record.save()
-                data = laspy.read(cloud)
-                points = {name: np.asarray(data[name]) for name in (
-                    "x", "y", "z", "classification", "return_number", "number_of_returns")}
-
-                labels = points["classification"]
-                ground = labels == 2
-                noise = np.isin(labels, NOISE_CLASSES)
-                if not ground.any():
-                    raise ValueError("No class-2 ground. Classify ground first.")
-                if training:
-                    matrix, indices, valid = features.point_features(
-                        points, ground, ignore_mask=noise, cell=cell)
-                    usable = valid & np.isin(labels[indices], trained_classes)
-                    if cancelled_before(runner, "training"):
-                        finish(record, {}, status="cancelled")
-                        return
-                    model = above.train(matrix[usable], labels[indices][usable],
-                                        notes=f"XYZ units: {units}; trained on {Path(cloud).name}")
-                    model.feature_cell = cell
-                    model.xyz_units = units
-                    runner.log(f"Trained on {usable.sum():,} points; classes {model.classes}")
-                    if cancelled_before(runner, "saving model"):
-                        finish(record, {}, status="cancelled")
-                        return
-                    _refuse_existing(out, "output")
-                    above.save(model, out)
-                    runner.products.append(("above_model", Path(out)))
-                    results = dict(points_used=int(usable.sum()), classes=list(model.classes))
-                else:
-                    classification, missing = above.classify_above(
-                        points, ground, model, ignore_mask=noise, cell=saved_cell)
-                    classification[noise] = labels[noise]
-                    if cancelled_before(runner, "writing cloud"):
-                        finish(record, {}, status="cancelled")
-                        return
-                    _refuse_existing(out, "output")
-                    data.classification = classification
-                    # a COPC input is written back as a plain cloud
-                    from pyargus.formats.las import drop_copc_records
-
-                    drop_copc_records(data.header)
-                    data.write(out)
-                    runner.log(f"Without ground coverage: {missing:,} points left class 1")
-                    runner.products.append(("classified", Path(out)))
-                    from pyargus import stage_preview
-                    stage_preview.publish(runner, stage_preview.classification, points["x"], points["y"], points["z"], classification)
-                    values, counts = np.unique(classification, return_counts=True)
-                    results = dict(class_counts={int(v): int(c) for v, c in zip(values, counts)},
-                                   points_without_ground_coverage=int(missing))
-                runner.log(f"Wrote {out}")
-                finish(record, results, outputs=[out])
+                model = above.train(matrix[usable], labels[indices][usable],
+                                    notes=f"XYZ units: {units}; trained on {Path(cloud).name}")
+                model.feature_cell = cell
+                model.xyz_units = units
+                runner.log(f"Trained on {usable.sum():,} points; classes {model.classes}")
+                if cancelled_before(runner, "saving model"):
+                    return
+                _refuse_existing(out, "output")
+                above.save(model, out)
+                runner.products.append(("above_model", Path(out)))
+            else:
+                classification, missing = above.classify_above(
+                    points, ground, model, ignore_mask=noise, cell=saved_cell)
+                classification[noise] = labels[noise]
+                if cancelled_before(runner, "writing cloud"):
+                    return
+                _refuse_existing(out, "output")
+                data.classification = classification
+                data.write(out)
+                runner.log(f"Without ground coverage: {missing:,} points left class 1")
+                runner.products.append(("classified", Path(out)))
+                from pyargus import stage_preview
+                stage_preview.publish(runner, stage_preview.classification, points["x"], points["y"], points["z"], classification)
+            runner.log(f"Wrote {out}")
         return work
 
 
@@ -707,48 +684,32 @@ class DtmStage:
         if not Path(cloud).is_file():
             raise ValueError(f"no such cloud: {cloud}")
         out = _require_new_file(self.out_path.get(), "the surface")
-        _refuse_existing(out, "the surface")
         cell = _float(self.cell.get(), "Cell")
         want_dsm = bool(self.dsm.get())
 
         def work(runner):
-            from pyargus.analysis_records import analysis_job, finish, defaults
             from pyargus.formats import las
             from pyargus.surfaces import dtm
 
-            grid_of = dtm.dsm_grid if want_dsm else dtm.dtm_grid
-            max_fill = defaults(grid_of)["max_fill"]
-            # which points made the surface and how far it was filled
-            # across gaps: without them a surface cannot be reviewed
-            settings = dict(cell=cell, dsm=want_dsm, max_fill=max_fill,
-                            classes_used="all" if want_dsm else [2])
-            with analysis_job("dtm", out, settings, inputs=[cloud], log=runner.log) as record:
-                runner.log(f"reading {cloud}")
-                points = las.read_points(cloud,
-                                         fields=("x", "y", "z", "classification"))
-                if want_dsm:
-                    used = points["x"].size
-                    grid, xe, ye = dtm.dsm_grid(points["x"], points["y"],
-                                                points["z"], cell, max_fill=max_fill)
-                else:
-                    m = points["classification"] == 2
-                    if not m.any():
-                        raise ValueError("no class-2 points; classify first")
-                    used = int(m.sum())
-                    grid, xe, ye = dtm.dtm_grid(points["x"][m], points["y"][m],
-                                                points["z"][m], cell, max_fill=max_fill)
-                if cancelled_before(runner, "writing"):
-                    finish(record, {}, status="cancelled")
-                    return
-                dtm.write_esri_ascii(out, grid, xe, ye)
-                finite = grid[np.isfinite(grid)]
-                runner.log(f"z {finite.min():.2f}..{finite.max():.2f} over "
-                           f"{finite.size:,} cells")
-                runner.log(f"wrote: {out}")
-                # named as the .asc header names them: the grid is [x, y]
-                finish(record, dict(points_used=used, ncols=grid.shape[0], nrows=grid.shape[1],
-                                    cells_with_data=finite.size, z_min=finite.min(),
-                                    z_max=finite.max()), outputs=[out])
+            runner.log(f"reading {cloud}")
+            points = las.read_points(cloud,
+                                     fields=("x", "y", "z", "classification"))
+            if want_dsm:
+                grid, xe, ye = dtm.dsm_grid(points["x"], points["y"],
+                                            points["z"], cell)
+            else:
+                m = points["classification"] == 2
+                if not m.any():
+                    raise ValueError("no class-2 points; classify first")
+                grid, xe, ye = dtm.dtm_grid(points["x"][m], points["y"][m],
+                                            points["z"][m], cell)
+            if cancelled_before(runner, "writing"):
+                return
+            dtm.write_esri_ascii(out, grid, xe, ye)
+            finite = grid[np.isfinite(grid)]
+            runner.log(f"z {finite.min():.2f}..{finite.max():.2f} over "
+                       f"{finite.size:,} cells")
+            runner.log(f"wrote: {out}")
 
         return work
 
@@ -785,7 +746,6 @@ class ContourStage:
         if not Path(cloud).is_file():
             raise ValueError(f"no such cloud: {cloud}")
         out = _require_new_file(self.out_path.get(), "the contours")
-        _refuse_existing(out, "the contours")
         if Path(out).suffix.lower() not in (".dxf", ".geojson", ".json"):
             raise ValueError("contours go to .dxf or .geojson")
         interval = _float(self.interval.get(), "Interval")
@@ -793,64 +753,50 @@ class ContourStage:
         breakline_path = self.breaklines.get().strip()
 
         def work(runner):
-            from pyargus.analysis_records import analysis_job, finish, defaults
             from pyargus.core import gridding
             from pyargus.formats import dxf, geojson, las
             from pyargus.surfaces import contours as contours_mod
             from pyargus.surfaces import dtm, tin
 
-            # one gap-fill limit for both surfaces, as the CLI's --max-fill
-            max_fill = defaults(dtm.dtm_grid)["max_fill"]
-            settings = dict(defaults(contours_mod.contour_grid), interval=interval,
-                            cell=cell, max_fill=max_fill, classes_used=[2],
-                            surface="TIN with breaklines" if breakline_path
-                            else "mean-ground DTM")
-            with analysis_job("contours", out, settings, inputs=[cloud, breakline_path],
-                              log=runner.log) as record:
-                runner.log(f"reading {cloud}")
-                points = las.read_points(cloud,
-                                         fields=("x", "y", "z", "classification"))
-                m = points["classification"] == 2
-                if not m.any():
-                    raise ValueError("no class-2 points; classify first")
-                breaks = []
-                if breakline_path:
-                    from pyargus.formats.breaklines import read_breaklines
-                    breaks = read_breaklines(breakline_path)
-                    surface = tin.build_tin(
-                        np.column_stack([points["x"][m], points["y"][m],
-                                         points["z"][m]]),
-                        breaklines=breaks, cell_hint=cell)
-                    grid, xe, ye = surface.grid(cell)
-                    covered = gridding.coverage_mask(
-                        surface.points[:, 0], surface.points[:, 1], xe, ye,
-                        max_distance=max_fill)
-                    grid = np.where(covered, grid, np.nan)
-                    runner.log(f"TIN with {len(breaks)} breakline(s), "
-                               f"{surface.n_breakline_points:,} vertices")
-                else:
-                    grid, xe, ye = dtm.dtm_grid(points["x"][m], points["y"][m],
-                                                points["z"][m], cell, max_fill=max_fill)
-                lines = contours_mod.contour_grid(grid, xe, ye, interval)
-                if not lines:
-                    raise ValueError("relief is smaller than one interval; "
-                                     "no contours")
-                if cancelled_before(runner, "writing"):
-                    finish(record, {}, status="cancelled")
-                    return
-                if Path(out).suffix.lower() == ".dxf":
-                    dxf.write_contours_dxf(out, lines)
-                else:
-                    geojson.write_contours_geojson(out, lines)
-                levels = sorted({line.level for line in lines})
-                runner.log(f"{len(lines)} lines, {len(levels)} levels")
-                from pyargus import stage_preview
-                stage_preview.publish(runner, stage_preview.contours, lines, breaks)
-                runner.log(f"wrote: {out}")
-                finish(record, dict(ground_points=int(m.sum()), breaklines=len(breaks),
-                                    lines=len(lines), levels=len(levels),
-                                    lowest_level=levels[0], highest_level=levels[-1]),
-                       outputs=[out])
+            runner.log(f"reading {cloud}")
+            points = las.read_points(cloud,
+                                     fields=("x", "y", "z", "classification"))
+            m = points["classification"] == 2
+            if not m.any():
+                raise ValueError("no class-2 points; classify first")
+            breaks = []
+            if breakline_path:
+                from pyargus.formats.breaklines import read_breaklines
+                breaks = read_breaklines(breakline_path)
+                surface = tin.build_tin(
+                    np.column_stack([points["x"][m], points["y"][m],
+                                     points["z"][m]]),
+                    breaklines=breaks, cell_hint=cell)
+                grid, xe, ye = surface.grid(cell)
+                covered = gridding.coverage_mask(
+                    surface.points[:, 0], surface.points[:, 1], xe, ye,
+                    max_distance=10)
+                grid = np.where(covered, grid, np.nan)
+                runner.log(f"TIN with {len(breaks)} breakline(s), "
+                           f"{surface.n_breakline_points:,} vertices")
+            else:
+                grid, xe, ye = dtm.dtm_grid(points["x"][m], points["y"][m],
+                                            points["z"][m], cell)
+            lines = contours_mod.contour_grid(grid, xe, ye, interval)
+            if not lines:
+                raise ValueError("relief is smaller than one interval; "
+                                 "no contours")
+            if cancelled_before(runner, "writing"):
+                return
+            if Path(out).suffix.lower() == ".dxf":
+                dxf.write_contours_dxf(out, lines)
+            else:
+                geojson.write_contours_geojson(out, lines)
+            runner.log(f"{len(lines)} lines, "
+                       f"{len({line.level for line in lines})} levels")
+            from pyargus import stage_preview
+            stage_preview.publish(runner, stage_preview.contours, lines, breaks)
+            runner.log(f"wrote: {out}")
 
         return work
 
@@ -906,23 +852,6 @@ class AlignStage:
             raise ValueError("the corrected cloud must be a NEW file")
         if write:
             _refuse_existing(write, "the corrected cloud")
-        # a solve-only run has no output to sit beside: its record goes to
-        # the workspace's folder, never where the program was started
-        # (the install folder, for the exe)
-        record_dir = None if write else app.workspace.record_folder()
-        if record_dir is not None:
-            import tempfile
-
-            try:
-                record_dir.mkdir(parents=True, exist_ok=True)
-                # an existing folder may still refuse writes (a shared job
-                # folder with read-only rights): try one
-                with tempfile.TemporaryFile(dir=record_dir):
-                    pass
-            except OSError as exc:
-                raise ValueError(f"a solve-only run keeps its job record in {record_dir}, "
-                                 f"which cannot be created ({exc}) -- save the workspace "
-                                 f"in a writable folder, or name a corrected cloud") from None
 
         def work(runner):
             from pyargus.analysis_records import analysis_job, finish, alignment_result, defaults
@@ -930,8 +859,7 @@ class AlignStage:
             settings = dict(defaults(solve_alignment), cell=ALIGN_CELL, min_points=ALIGN_MIN_POINTS,
                             vertical=vertical, allow_network=network, trj_time=trj_time,
                             trj_confirmed=trj_confirmed, ground_class=2)
-            with analysis_job("align", write, settings, inputs=[cloud, sbet_path], log=runner.log,
-                              record_dir=record_dir) as record:
+            with analysis_job("align", write, settings, inputs=[cloud, sbet_path], log=runner.log) as record:
                 import laspy
 
                 from pyargus.align import attach, solve_alignment
@@ -1299,44 +1227,6 @@ class Application:
             + (f": {tail}" if tail else "")
             + f" -- full output in {log_path}")
 
-    def apply_launch(self, launch):
-        """Open on a launcher launch context: the handover's clouds become
-        project inputs (spec task 8's acceptance), the window wears the
-        job's own words, and anything the handover could not offer is
-        said in the log -- never guessed at."""
-        workspace = self.workspace
-        if launch.clouds:
-            clouds = [str(Path(c).resolve()) for c in launch.clouds]
-            workspace.project_panel.add_paths(clouds, False)
-            workspace.set_active_cloud(clouds[0])
-            workspace.load_project_clouds()
-        headline = (launch.job_id + " " + launch.title).strip()
-        said = "Opened on the launcher's handover"
-        if headline:
-            said += f": {headline}"
-        if launch.project_dir is not None:
-            said += f" \u2014 {launch.project_dir}"
-        if launch.units:
-            said += f" | {launch.units}"
-            if launch.datum:
-                said += f", heights on {launch.datum}"
-        workspace.here.set(said)
-        for note in launch.notes:
-            self.runner.log("handover: " + note)
-        if launch.control is not None:
-            # The column order is the operator's to choose (add_files asks;
-            # the contract's rule: never guess it), so the control is NOT
-            # loaded silently -- it is reported, with the action it needs
-            # (review finding: it vanished from sidebar, QA settings, log).
-            self.runner.log("handover: control file offered at "
-                            f"{launch.control} -- add it in Project files; "
-                            "its column order (pnez/penz) is yours to choose")
-        if launch.adjustment is not None:
-            self.runner.log("handover: adjustment {0} is recorded in the "
-                            "handover; pyArgus does not load it".format(launch.adjustment))
-        if headline:
-            self.root.title(f"pyArgus \u2014 {headline}")
-
     def _confirm_close(self):
         # A cancelled application exit must leave the editor session intact.
         if self.runner.running:
@@ -1475,91 +1365,15 @@ class Application:
         self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
 
 
-def _say_refusal(text):
-    """A refusal, said where it can be seen.
-
-    stderr when there is one (the CLI, a dev run -- the suite's habit).
-    A windowed exe has NONE: ``console=False`` leaves sys.stderr None, and
-    print() to None is a silent no-op, so a frozen launch would die in
-    silence (review finding). There, a message box; and if even a box
-    cannot be shown, a line in a temp log, so the refusal outlives the
-    press. Exit code 2 is the caller's, unchanged.
-    """
-    if sys.stderr is not None:
-        print(f"pyArgus: {text}", file=sys.stderr)
-        return
-    try:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("pyArgus", text, parent=root)
-        root.destroy()
-        return
-    except Exception:
-        pass
-    try:
-        import tempfile
-
-        with open(Path(tempfile.gettempdir()) / "pyArgus-refusal.log", "a",
-                  encoding="utf-8") as handle:
-            handle.write(f"pyArgus: {text}\n")
-    except OSError:
-        pass
-
-
-def _report_launch(launch):
-    """--check: what a launch context would open, said without opening
-    anything -- the launcher's own --selftest idea, this side of the seam."""
-    if launch is None:
-        print("no launch context (neither --handover nor --project): plain window")
-        return 0
-    print(f"job folder: {launch.project_dir}")
-    if launch.job_id or launch.title:
-        print(f"job: {(launch.job_id + ' ' + launch.title).strip()}")
-    if launch.units:
-        print(f"units: {launch.units}")
-    print(f"clouds: {len(launch.clouds)}")
-    for cloud in launch.clouds:
-        print(f"  {cloud}")
-    if launch.control is not None:
-        print(f"control: {launch.control} (add it and choose its column order)")
-    if launch.adjustment is not None:
-        print(f"adjustment: {launch.adjustment} (recorded; not loaded by pyArgus)")
-    for note in launch.notes:
-        print(f"note: {note}")
-    return 0
-
-
-def main(project=None, handover=None, check=False):
-    """The window, optionally opened on the launcher's launch context.
-
-    ``--project``/``--handover`` (or the launcher's environment,
-    ``PYLYNCEUS_PROJECT``/``PYLYNCEUS_HANDOVER``) name the job and the
-    envelope written for this launch; the handover's clouds open as
-    project inputs. A refusal says which file and why, on stderr, with
-    exit 2 -- the suite's user-facing error -- before Tk is asked for a
-    root. ``--check`` reports what would open and writes nothing.
-    """
-    try:
-        launch = resolve(handover=handover, project=project)
-    except HandoverRefused as exc:
-        _say_refusal(str(exc))
-        return 2
-    if check:
-        return _report_launch(launch)
+def main():
     if not TK_AVAILABLE:  # pragma: no cover
         raise SystemExit(
             "tkinter is not available in this Python; the GUI needs it "
             "(the library does not)")
-    if launch is not None and launch.project_dir is not None:
-        # The pickers start in the job folder (the launcher told pyLynceus's
-        # own Tools > pyArgus the same way: PYARGUS_DATA_DIR).
-        os.environ.setdefault("PYARGUS_DATA_DIR", str(launch.project_dir))
     root = tk.Tk()
     apply_theme(root)
     apply_branding(root)
-    app = Application(root)
-    if launch is not None:
-        app.apply_launch(launch)
+    Application(root)
     root.mainloop()
     return 0
 

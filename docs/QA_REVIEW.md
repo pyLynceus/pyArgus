@@ -55,10 +55,8 @@ Loading and extraction run in background workers with elapsed time and Stop.
 Sources are checked for size/time changes during loading and extraction.
 These checks are not cryptographic content identity. LAS/LAZ scans can still
 take time on a network drive; this first version has no spatial index.
-There is no automatic reprojection, registration or acceptance certification.
-The review pane itself changes nothing: the classification editor it can open
-(docs/MANUAL_CLASSIFICATION.md) writes a NEW cloud and never modifies its
-input. Survey accuracy still requires
+There is no automatic reprojection, registration, point editing, or acceptance
+certification. It is a read-only review tool. Survey accuracy still requires
 appropriate independent checks.
 
 ## Explicit section sources — September 23
