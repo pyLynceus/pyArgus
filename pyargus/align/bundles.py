@@ -1,7 +1,7 @@
-"""A strip with its trajectory attached: what the solver works on.
+"""Strip coordinates, with navigation state only when rotation is solved.
 
-The alignment unknowns act through the direct-georeferencing model
-(``core.georef``), so every point needs the navigation state it was
+Boresight unknowns act through the direct-georeferencing model
+(``core.georef``), so each rotational observation needs the navigation state it was
 shot from: position and attitude in the SAME map frame as the points.
 Building that from a real SBET (geographic, ellipsoidal heights) takes
 a projection and a geoid and is deliberately not this module's job --
@@ -14,6 +14,28 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from pyargus.core import rotation
+
+
+@dataclass
+class TranslationBundle:
+    """A strip for translation solving, without an assumed navigation state.
+
+    Times are optional; they allow vertical drift solving without attitude.
+    Boresight solving requires a StripBundle with verified navigation state.
+    """
+    xyz: np.ndarray
+    times: np.ndarray = None
+
+    def __post_init__(self):
+        self.xyz = np.asarray(self.xyz, dtype=float)
+        if self.xyz.ndim != 2 or self.xyz.shape[1] != 3:
+            raise ValueError(f"expected (N, 3) coordinates, got {self.xyz.shape}")
+        if not np.all(np.isfinite(self.xyz)):
+            raise ValueError("translation coordinates must be finite")
+        if self.times is not None:
+            self.times = np.asarray(self.times, dtype=float)
+            if self.times.shape != (len(self.xyz),) or not np.all(np.isfinite(self.times)):
+                raise ValueError("times must be finite (N,) matching the points")
 
 
 @dataclass
@@ -71,6 +93,11 @@ def corrected_xyz(bundle, boresight, offset):
     X' = X + R_nav (boresight x b) + offset -- the first-order effect of
     perturbing R_bore by [boresight]x in X = X_nav + R_nav R_bore b.
     """
+    if isinstance(bundle, TranslationBundle):
+        beta = np.asarray(boresight, dtype=float)
+        if beta.shape != (3,) or not np.all(np.isfinite(beta)) or np.any(beta != 0):
+            raise ValueError("boresight correction requires navigation state")
+        return bundle.xyz + np.asarray(offset, dtype=float)
     delta = np.cross(np.asarray(boresight, dtype=float), bundle.body_vecs)
     return (bundle.xyz + np.einsum("nij,nj->ni", bundle.r_nav, delta)
             + np.asarray(offset, dtype=float))

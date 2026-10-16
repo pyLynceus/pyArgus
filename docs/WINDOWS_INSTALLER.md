@@ -1,4 +1,4 @@
-# Windows installation package — October 8, 2026
+# Windows installation package — pyArgus 0.2.0
 
 The current package is built from the isolated Codex checkout. It includes the
 frozen application, its private native PDAL runtime, the narrated video and
@@ -8,7 +8,7 @@ Production LAS, control, imagery, and workspaces are not installation assets.
 
 ## Operator installation
 
-Run the dated windows-x64-setup.exe from dist-installer/2026-10-08.
+Run the dated windows-x64-setup.exe from dist-installer/0.2.0-2026-10-16.
 Windows 10/11 on x64 is required; this build is not validated on ARM.
 Installation is per user and defaults to:
 %LOCALAPPDATA%/Programs/pyArgus-Codex
@@ -42,10 +42,10 @@ Its alignment chapter explains setup; it does not claim a production alignment.
 Use the pinned environment described in WINDOWS_REBUILD.md. Build the frozen
 application before staging. Keep retained releases in separate dated folders.
 
-    .venv/Scripts/python.exe -m PyInstaller --noconfirm packaging/pyArgus.spec --distpath dist/2026-10-08-acceleration --workpath build/installer-20261008/pyinstaller
+    .venv/Scripts/python.exe -m PyInstaller --noconfirm packaging/pyArgus.spec --distpath dist/0.2.0-2026-10-16 --workpath build/release-020-20261016/pyinstaller
 
 Prepare a payload in an empty, local directory. stage_installer.py accepts
---release 2026-10-08, --app-dir, --native-prefix, --tutorial-zip, --example-dir, and --output-dir.
+--release 2026-10-16, --app-dir, --native-prefix, --tutorial-zip, --example-dir, and --output-dir.
 The native prefix is .venv/native-pdal; the tutorial ZIP is the completed
 dist/training-video-2026-10-05/pyArgus-Video-and-Guide.zip.
 The example directory is the generated Videos/pyArgus-training/2026-10-05 folder.
@@ -63,7 +63,7 @@ Sources/native-packages.json identifies exact native versions and source hashes.
 
 Compile packaging/windows/pyArgus.iss using the verified Inno Setup compiler:
 
-    ISCC.exe /DReleaseDate=2026-10-08 /DStageDir=<absolute prepared payload> /DInstallerOutputDir=<absolute release directory> packaging/windows/pyArgus.iss
+    ISCC.exe /DReleaseDate=2026-10-16 /DStageDir=<absolute prepared payload> /DInstallerOutputDir=<absolute release directory> packaging/windows/pyArgus.iss
 
 Inno Setup 7.1.0 x64 was obtained from the official release. Its Authenticode
 signature was validated as Pyrsys B.V. before execution. The compiler download
@@ -100,6 +100,14 @@ Ordinary --self-test permits a supported CPU fallback; normal application launch
 never requires a GPU. The official NOAA Geoid18 grid is included in Python PROJ.
 
 Exact installation results, payload counts/hashes, repair/uninstall and separate
-project preservation are recorded in dist-installer/2026-10-08/installer-validation.json.
+project preservation are recorded in dist-installer/0.2.0-2026-10-16/installer-validation.json.
 Windows 11 x64 is the tested OS; AMD/Intel GPUs and Windows 10 need separate hardware
 acceptance. See ACCELERATION.md for measured gains and execution limits.
+
+## Version 0.2.0 release
+
+The dated 0.2.0 build includes automatic alignment reports, LP360 processing,
+polygon cleanup, measured coverage and missing-data preservation. Its release
+verification records the current source suite and frozen GPU/multicore tests.
+The older installation/relocation results above remain historical. See
+RELEASE_NOTES.md and the new installer verification for the exact scope.

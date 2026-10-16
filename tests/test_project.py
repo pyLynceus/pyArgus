@@ -229,7 +229,7 @@ def test_changed_trajectory_during_alignment_refuses(scene,tmp_path,monkeypatch)
         return result
     monkeypatch.setattr(project.trajectory,'load_alignment',changed)
     with pytest.raises(ValueError,match='trajectory changed'):
-        project.align(scene,tmp_path/'changed',solve_boresight=False)
+        project.align(scene,tmp_path/'changed',solve_boresight=True)
     assert not (tmp_path/'changed').exists()
 
 
@@ -294,3 +294,36 @@ def test_unset_time_is_highlighted_and_bulk_apply_preserves_approval(scene,root)
     w.check_time_settings()
     assert len(w.track_box.curselection())==len(w.tracks)
     assert 'NEED TIME' not in w.counts.get()
+
+
+def test_offset_alignment_needs_no_attitude_confirmation(scene,tmp_path,monkeypatch):
+    spec=replace(scene,trajectories=[replace(t,confirmed=False) for t in scene.trajectories])
+    def forbidden(*args,**kwargs):
+        raise AssertionError("Translation solving must not attach navigation")
+    with monkeypatch.context() as m:
+        m.setattr(project.trajectory,'load_alignment',forbidden)
+        result=project.align(spec,tmp_path/'offset_only',solve_boresight=False,cell=6.,min_points=6)
+    assert result['parameters']['attitude_used'] is False
+    assert result['parameters']['trajectory_usage']=='time and strip matching only'
+    assert abs(result['offsets']['2'][2]+.25)<.002
+    for entry in result['outputs']:
+        source=laspy.read(entry['source']); dest=laspy.read(tmp_path/'offset_only'/entry['output'])
+        for name in source.points.array.dtype.names:
+            if name!='Z':
+                np.testing.assert_array_equal(source.points.array[name],dest.points.array[name])
+    with pytest.raises(ValueError,match='confirmed'):
+        project.align(spec,tmp_path/'unconfirmed_boresight',solve_boresight=True)
+    assert not (tmp_path/'unconfirmed_boresight').exists()
+
+
+def test_offset_alignment_refuses_track_changed_during_solve(scene,tmp_path,monkeypatch):
+    from pyargus import align
+    original=align.solve_alignment
+    def changed(*args,**kwargs):
+        result=original(*args,**kwargs)
+        p=Path(scene.trajectories[0].path); p.write_bytes(p.read_bytes()+b'!')
+        return result
+    monkeypatch.setattr(align,'solve_alignment',changed)
+    with pytest.raises(ValueError,match='trajectory changed'):
+        project.align(scene,tmp_path/'changed_offsets',solve_boresight=False)
+    assert not (tmp_path/'changed_offsets').exists()

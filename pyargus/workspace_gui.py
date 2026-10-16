@@ -146,6 +146,10 @@ class Workspace:
         for label,cmd in [('Accept',lambda:self.decide('Accepted')),('Needs review',lambda:self.decide('Needs review')),
                           ('Skip stage',lambda:self.decide('Skipped')),('Load selected result',self.load_result),
                           ('Import job record',self.import_record)]: ttk.Button(bar,text=label,command=cmd).pack(side='left',padx=2)
+        comment_frame=ttk.Frame(self.progress_tab);comment_frame.pack(fill='x',pady=4)
+        ttk.Label(comment_frame,text='Comment (optional):').pack(side='left',anchor='n',padx=(0,5))
+        self.review_comment=tk.Text(comment_frame,height=2,width=1,wrap='word',undo=True)
+        self.review_comment.pack(side='left',fill='x',expand=True)
         stage_frame=ttk.Frame(self.progress_tab);stage_frame.pack(fill='x')
         self.stage_tree=ttk.Treeview(stage_frame,columns=('status','next'),show='tree headings',height=6)
         self.stage_tree.heading('#0',text='Stage');self.stage_tree.column('#0',width=145)
@@ -297,9 +301,10 @@ class Workspace:
         try:self.activate_cloud_version(selected[0]['path'])
         except (OSError,ValueError) as exc:messagebox.showerror('Processing version',str(exc),parent=self.root)
 
-    def activate_cloud_version(self,path):
+    def activate_cloud_version(self,path,*,preserve_view=False):
         path=str(Path(path).resolve())
         if not Path(path).is_file():raise ValueError('Cloud version is missing: '+path)
+        camera=self.viewer.camera_state() if preserve_view and self.viewer.scene is not None else None
         panel=self.project_panel;root=self.tracker.cloud_root(path)
         previous=[p for p in panel.clouds if self.tracker.cloud_root(p)==root]
         bindings={panel.bindings[p] for p in previous if p in panel.bindings}
@@ -318,7 +323,12 @@ class Workspace:
         if self.viewer.busy:
             self.pending_version_view=True
         else:
-            self.viewer.load(list(panel.clouds))
+            if camera is None:self.viewer.load(list(panel.clouds))
+            else:
+                from pyargus.viewer3d import sample_clouds
+                paths=tuple(panel.clouds)
+                self.viewer.launch(lambda:('cloud',paths,sample_clouds(paths,cancel=self.viewer.cancel,
+                    progress=lambda s:self.viewer.messages.put(('progress',s))),camera))
         self.persist();self.refresh();self.refresh_layers()
 
     def toggle_layer(self):
@@ -407,6 +417,8 @@ class Workspace:
         self.update_scope()
 
     def run_task(self):
+        if self.layout.cleanup.busy:
+            messagebox.showinfo('Area cleanup','Finish or stop the cleanup scan/export before starting another job.',parent=self.root);return
         app=self.app;name=app.task_name.get()
         if app.task_scope.get()=='Entire project':
             if name=='Classify':
@@ -507,7 +519,9 @@ class Workspace:
     def begin_project(self,mode,spec,out):
         if self.active is not None and not self.app.runner.running:self.complete(self.app.runner)
         title={'inspect':'Inspect','qa':self.qa_phase.get(),'align':'Alignment'}[mode]
-        self.active=self.tracker.begin(title,self.project_settings(mode),list(spec.clouds)+[t.path for t in spec.trajectories])
+        inputs=list(spec.clouds)+[t.path for t in spec.trajectories]
+        if mode=='align' and spec.alignment_reporting.get('checkpoints'):inputs.append(spec.alignment_reporting['checkpoints'])
+        self.active=self.tracker.begin(title,self.project_settings(mode),inputs)
         self.active.update(source='project',mode=mode);self.expected=[out] if mode!='inspect' else []
         self.persist();self.refresh()
 
@@ -612,11 +626,11 @@ class Workspace:
     def decide(self,decision):
         selected=self.stage_tree.selection()
         if not selected:return
-        note=simpledialog.askstring('Review note','Why are you accepting, revisiting or skipping this stage?',parent=self.root)
-        if note is None:return
+        note=self.review_comment.get('1.0','end-1c').strip()
         try:
             job=self.selected_job()
             self.tracker.decide(selected[0],decision,note,self.current_settings(job) if job else None,job_id=job['id'] if job else None)
+            self.review_comment.delete('1.0','end')
             self.persist();self.refresh();self.history()
         except ValueError as exc:messagebox.showerror('Progress',str(exc),parent=self.root)
 
@@ -816,6 +830,8 @@ class Workspace:
         if target.exists():self.restore(target)
 
     def restore(self,path,*,load_view=True):
+        cleanup=getattr(getattr(self,'layout',None),'cleanup',None)
+        if cleanup is not None and not cleanup.close():return False
         self.viewer.cancel_corridor_drag()
         from pyargus.project import TrajectoryInput
         try:
@@ -842,6 +858,7 @@ class Workspace:
             for key,var in [('map_crs',p.crs),('vertical',p.vertical),('gps_week',p.week),('max_gap',p.gap),('max_points',p.limit)]:
                 value=proj.get(key);var.set('' if value is None else str(value))
             for key,var in [('same_vertical',p.same_vertical),('allow_network',p.network),('shared_strip_ids',p.shared_ids)]:var.set(proj.get(key,False))
+            p.reporting.restore(proj.get('alignment_reporting'))
             for key,value in data.get('project_options',{}).items():getattr(p,key).set(value)
             p.refresh()
             for stage in self.app.stages:

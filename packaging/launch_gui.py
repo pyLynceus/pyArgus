@@ -22,6 +22,8 @@ from pyargus.gui import main
 
 def self_test(*, require_gpu=False, report=None):
     if report is None: report={}
+    from pyargus import __version__, __release_date__
+    report["software"]={"version":__version__,"release_date":__release_date__}
     import tempfile
     from pathlib import Path
     import numpy as np
@@ -310,12 +312,73 @@ def self_test(*, require_gpu=False, report=None):
         sample.z=1000.+.02*x.ravel()
         sample.return_number=np.ones(x.size,dtype=np.uint8)
         sample.number_of_returns=np.ones(x.size,dtype=np.uint8)
+        sample.point_source_id=np.ones(x.size,dtype=np.uint16)
         src=Path(temp)/"input.las";out=Path(temp)/"classified.las";sample.write(src)
         result=classify_ground_tiled(src,out,cell=1.,window=2.,tile_size=10.,workers=2,
             memory_mb=512,log=lambda _:None)
         assert result["total"]==x.size and result["workers"]==2 and result["peak_tasks"]==2
         assert len(laspy.read(out).points)==x.size
         report["multicore"]={"workers":2,"peak_tasks":result["peak_tasks"],"points":int(x.size)}
+        from pyargus.lp360_jobs import Recipe,discover
+        from pyargus.lp360_workflow import run as lp360_run
+        assert app.workspace.layout.lp360 is not None
+        found=discover(temp)
+        assert str(src) in [p for group in found.cloud_groups.values() for p in group]
+        # Exercise missing coverage in the frozen workflow, not only a full grid.
+        hole=(x.ravel()>=10)&(x.ravel()<=20)&(y.ravel()>=10)&(y.ravel()<=20)
+        sparse=sample[~hole];lp360_src=Path(temp)/"lp360-input.las";sparse.write(lp360_src)
+        recipe=Recipe(str(temp),clouds=[str(lp360_src)],allow_no_control=True,align=False,
+                      same_vertical=True,gps_week=2200,cell=1.,window=2.,threshold=.5,
+                      contour_interval=.25,workers=2,memory_mb=512)
+        lp360=lp360_run(recipe,Path(temp)/"lp360-smoke")
+        assert lp360["status"]=="Completed — needs review"
+        assert len(lp360["final_clouds"])==1
+        assert len(laspy.read(lp360["final_clouds"][0]).points)==len(sparse.points)
+        with np.load(Path(temp)/"lp360-smoke/surface/grid.npz") as terrain:
+            missing=terrain["counts"]==0
+            assert missing.any() and np.array_equal(np.isnan(terrain["grid"]),missing)
+        assert Tracker.load(lp360["workspace"]).status("Delivery")=="Needs review"
+        coverage_result=lp360["final_qa"]["coverage_overlap"]
+        assert coverage_result["union_cells"]>0 and coverage_result["pairs"]==[]
+        assert (Path(temp)/"lp360-smoke/final_qa/coverage.png").is_file()
+        # Exercise the new report through an actual native alignment export.
+        import struct
+        from pyargus import project as project_mod
+        from pyargus.qa.alignment_report import settings as report_settings
+        alignment_sources=[];alignment_tracks=[]
+        for sid in (1,2):
+            flight=laspy.read(out);base=436024721.+20*(sid-1)
+            flight.header.global_encoding.gps_time_type=1
+            flight.gps_time=base+np.linspace(0,10,len(flight.points))
+            flight.point_source_id=np.full(len(flight.points),sid,dtype=np.uint16)
+            flight.z=np.asarray(flight.z)+.2*(sid-1)
+            source=Path(temp)/f"report-flight-{sid}.las";flight.write(source);alignment_sources.append(str(source))
+            records=[(base+i/10,2400000.+i*.3,400000.,1300.,90.,0.,0.) for i in range(101)]
+            header=bytearray(1376);struct.pack_into('<8s4i',header,0,b'TSCANTRJ',20010715,1376,len(records),64);struct.pack_into('<2d2i',header,104,base,base+10.,sid,sid)
+            trajectory_file=Path(temp)/f"report-flight-{sid}.trj"
+            with trajectory_file.open('wb') as stream:
+                stream.write(header)
+                for row in records:stream.write(struct.pack('<7d2i',*row,0,0))
+            alignment_tracks.append(project_mod.TrajectoryInput(str(trajectory_file),'same'))
+        checkpoint_csv=Path(temp)/'report-checks.csv';checkpoint_csv.write_text('check,400010,2400010,1000.2\n')
+        config=report_settings(dict(checkpoints=str(checkpoint_csv),role='independent',surface='pavement',material='Synthetic smoke-test surface'))
+        spec=project_mod.Project(alignment_sources,alignment_tracks,same_vertical=True,alignment_reporting=config)
+        report_folder=Path(temp)/'alignment-report-smoke'
+        project_mod.align(spec,report_folder,solve_boresight=False)
+        comparison=json.loads((report_folder/'alignment_comparison.json').read_text())
+        assert comparison['checkpoint_summary']['independent_paired_support']==1
+        assert comparison['checkpoint_summary']['after']['rmse']<.001
+        assert (report_folder/'report.html').is_file()
+        assert 'window.alignmentReportData=' in (report_folder/'report.html').read_text()
+        app.workspace.project_panel.reporting.restore(config)
+        assert app.workspace.project_panel.snapshot().alignment_reporting==config
+        app.workspace.project_panel.reporting.restore()
+        report['alignment_report']={'native_export':True,'packaged_viewer_asset':True,'independent_checks':1,'after_rmse':comparison['checkpoint_summary']['after']['rmse'],'settings_panel':True}
+        assert hasattr(app.workspace,"review_comment")
+        report["lp360"]={"discovery":True,"native_pipeline":True,"points":len(sparse.points),
+                          "missing_data_preserved":True,"coverage_reporting":True,
+                          "review_status":"Needs review","optional_comment_box":True}
+
     from pyargus.review_gui import ReviewWorkspace
     workspace = ReviewWorkspace(window)
     workspace.window.withdraw()

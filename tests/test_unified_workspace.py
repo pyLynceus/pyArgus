@@ -13,7 +13,12 @@ def test_history_acceptance_stale_settings_and_inputs(tmp_path):
     source=tmp_path/'source';source.write_text('one')
     t=Tracker();j=t.begin('Inspect',{'clock':'same'},[source]);t.finish(j,'Needs review')
     assert t.status('Inspect')=='Needs review'
-    with pytest.raises(ValueError):t.decide('Inspect','Accepted','')
+    t.decide('Inspect','Accepted')
+    assert t.status('Inspect')=='Accepted'
+    assert t.data['decisions'][-1]['note']==''
+    assert t.data['decisions'][-1]['job']==j['id'] and t.data['decisions'][-1]['time']
+    saved=tmp_path/'optional-comment.argus.json';t.save(saved)
+    assert Tracker.load(saved).data['decisions']==t.data['decisions']
     t.decide('Inspect','Accepted','Reviewed matching',{'clock':'same'})
     assert t.status('Inspect',{'clock':'week'})=='Outdated'
     source.write_text('changed')
@@ -224,12 +229,46 @@ def test_gui_review_targets_selected_flight_and_keeps_selection(application,tmp_
         jobs.append(job)
     w.stage_tree.selection_set('Classification');w.history()
     w.history_tree.selection_set(jobs[0]['id'])
-    monkeypatch.setattr(workspace_gui.simpledialog,'askstring',lambda *a,**k:'Reviewed first flight')
+    monkeypatch.setattr(workspace_gui.simpledialog,'askstring',lambda *a,**k:pytest.fail('Review must not open a note prompt'))
+    w.review_comment.insert('1.0','Reviewed first flight\nRoad and wall checked')
     w.decide('Accepted')
+    assert w.tracker.data['decisions'][-1]['note']=='Reviewed first flight\nRoad and wall checked'
+    assert w.review_comment.get('1.0','end-1c')==''
     assert jobs[0]['status']=='Accepted'
     assert jobs[1]['status']=='Needs review'
     assert w.history_tree.selection()==(jobs[0]['id'],)
     assert '1/2 recorded inputs accepted' in w.stage_tree.item('Classification','values')[1]
+
+
+@pytest.mark.parametrize('decision',['Accepted','Needs review','Skipped'])
+def test_gui_review_without_comment_records_decision_without_prompt(application,monkeypatch,decision):
+    from pyargus import workspace_gui
+    w=application.workspace
+    job=w.tracker.begin('Inspect',{},[]);w.tracker.finish(job,'Needs review')
+    w.refresh();w.stage_tree.selection_set('Inspect');w.history()
+    monkeypatch.setattr(workspace_gui.simpledialog,'askstring',lambda *a,**k:pytest.fail('Review must not open a note prompt'))
+    w.decide(decision)
+    assert w.tracker.status('Inspect')==decision
+    event=w.tracker.data['decisions'][-1]
+    assert event['decision']==decision and event['note']=='' and event['time']
+    assert event['job']==w.tracker.latest('Inspect')['id']
+    assert Tracker.load(w.path).data['decisions'][-1]==event
+
+
+def test_failed_gui_review_keeps_optional_comment_and_refuses_stale_work(application,tmp_path,monkeypatch):
+    from pyargus import workspace_gui
+    w=application.workspace;source=tmp_path/'source';source.write_text('original')
+    job=w.tracker.begin('Inspect',{},[source]);w.tracker.finish(job,'Needs review')
+    w.refresh();w.stage_tree.selection_set('Inspect');w.history()
+    source.write_text('changed input')
+    w.review_comment.insert('1.0','Keep this draft comment')
+    errors=[]
+    monkeypatch.setattr(workspace_gui.messagebox,'showerror',lambda title,message,**kwargs:errors.append(message))
+    monkeypatch.setattr(workspace_gui.simpledialog,'askstring',lambda *a,**k:pytest.fail('Review must not open a note prompt'))
+    w.decide('Accepted')
+    assert errors and w.tracker.status('Inspect')=='Outdated'
+    assert not w.tracker.data['decisions']
+    assert w.review_comment.get('1.0','end-1c')=='Keep this draft comment'
 
 
 def test_successful_classification_promotes_one_flight_and_preserves_binding(application,tmp_path):

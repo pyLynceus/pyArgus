@@ -163,3 +163,19 @@ def test_unreachable_control_refuses():
     control = np.array([[5000.0, 5000.0, 100.0]])
     with pytest.raises(ValueError, match="never touch"):
         solve_alignment(bundles, min_points=6, control=control)
+
+
+def test_translation_only_recovers_offsets_without_navigation():
+    from pyargus.align import TranslationBundle, corrected_xyz
+    attached, _ = three_line_block(1, offsets=((0, 0, 0), (0, 0, .05),
+                                             (0, 0, -.03)), terrain=flat)
+    bundles = [TranslationBundle(b.xyz, b.times) for b in attached]
+    result = solve_alignment(bundles, solve_boresight=False, min_points=6)
+    np.testing.assert_allclose(result.offsets[:, 2], [0, -.05, .03], atol=.005)
+    corrected = result.corrected(bundles)
+    assert dz_median(corrected[0], corrected[1]) < .005
+    assert result.rms_after < result.rms_before
+    with pytest.raises(ValueError, match="navigation state"):
+        solve_alignment(bundles, solve_boresight=True)
+    with pytest.raises(ValueError, match="navigation state"):
+        corrected_xyz(bundles[0], [0, .001, 0], [0, 0, 0])

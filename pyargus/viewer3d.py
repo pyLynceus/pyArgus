@@ -119,7 +119,7 @@ class Viewer:
         self.on_feature_draw=None; self.feature_geometry=None
         self.on_note_draw=None;self.note_geometry=None;self.on_note_click=None;self.on_issue_pick=None;self.issue_armed=lambda:False
         self.review_only_paths=set()
-        self.paths=(); self.on_point=None; self.on_section=None; self.corridor=None; self.corridor_editor=None
+        self.paths=(); self.on_point=None; self.on_section=None; self.corridor=None; self.corridor_editor=None; self.cleanup_tool=None
         self.class_filter=None; self.line_filter=None; self.extra_layers=[]; self.extra_points=[]
         self.cancel = threading.Event()
         self.messages = queue.Queue()
@@ -333,6 +333,7 @@ class Viewer:
         if self.corridor_editor:self.corridor_editor.cancel()
 
     def press(self,e):
+        if getattr(e,'num',1)==1 and self.cleanup_tool and self.cleanup_tool.press(e):return 'break'
         if getattr(e,'num',1)==1 and (self.choose_pivot or self.issue_armed()):return self.pick_point(e)
         if getattr(e,'num',1)==1 and self.corridor_editor and self.corridor_editor.press(e):return 'break'
         if getattr(e,'num',1)==1 and self.on_note_click and self.on_note_click(e):return 'break'
@@ -342,11 +343,14 @@ class Viewer:
         self.orbit_anchor=(e.x,e.y) if getattr(e,'num',1)==1 and not (getattr(e,'state',0)&5) else None
 
     def release(self,e):
+        if self.cleanup_tool and self.cleanup_tool.drawing:
+            self.orbit_anchor=None;return 'break'
         if self.corridor_editor and self.corridor_editor.release(e):
             self.orbit_anchor=None;return 'break'
         self.orbit_anchor=None
 
     def double_click(self,e):
+        if self.cleanup_tool and self.cleanup_tool.drawing:return 'break'
         self.orbit_anchor=None
         if self.corridor_editor and self.corridor_editor.hit(e):return 'break'
         if self.issue_armed():return 'break'
@@ -355,6 +359,7 @@ class Viewer:
         return 'break'
 
     def orbit(self,e):
+        if self.cleanup_tool and self.cleanup_tool.drawing:return 'break'
         if self.corridor_editor and self.corridor_editor.motion(e):return 'break'
         if getattr(e,'state',0)&5:
             self.orbit_anchor=None;return 'break'
@@ -511,6 +516,7 @@ class Viewer:
             from pyargus.linework import paint
             geometry=[(project_points(points,self.center,self.yaw,self.pitch),color,width,top) for points,color,width,top in self.linework_geometry()]
             if geometry:paint(pixels,project_points(pts[keep],self.center,self.yaw,self.pitch),geometry,scale,self.pan)
+        if self.cleanup_tool and not self.stereo.get():self.cleanup_tool.paint(pixels,scale,w,h)
         self.photo=ImageTk.PhotoImage(Image.fromarray(pixels),master=self.window)
         self.canvas.delete('all'); self.canvas.create_image(0,0,image=self.photo,anchor='nw')
         for segments,var in self.tracks:
@@ -538,6 +544,7 @@ class Viewer:
                 self.canvas.create_line(*coords.ravel(),fill='#ffd15b',width=2)
         if self.on_feature_draw:self.on_feature_draw(scale,w,h)
         if self.corridor_editor:self.corridor_editor.draw()
+        if self.cleanup_tool:self.cleanup_tool.draw()
         if self.on_note_draw:self.on_note_draw(scale,w,h)
         self.canvas.create_text(12,12,anchor='nw',fill='white',text=f'Yaw {self.yaw%360:.0f}Â°  Tilt {self.pitch:.0f}Â°  Zoom {self.zoom:.1f}Ã—\nTracks shown on top; '+('dataset colors repeat every 8 files' if self.mode.get()=='Dataset' else 'line colors repeat every 8 IDs'))
 
@@ -546,6 +553,9 @@ class Viewer:
         from pyargus.anaglyph import render
         project=lambda points:project_points(np.asarray(points),self.center,self.yaw,self.pitch)
         overlays=[]
+        if self.cleanup_tool:
+            selection=self.cleanup_tool.preview_points()
+            if len(selection):overlays.append((project(selection),0,True))
         for points,var in self.extra_points:
             if var.get():overlays.append((project(points),0,True))
         for segments,var in self.tracks:
@@ -645,6 +655,7 @@ class Viewer:
         self.launch(work);self.detail_job=True
 
     def pick_point(self,e):
+        if self.cleanup_tool and self.cleanup_tool.drawing:return 'break'
         self.orbit_anchor=None
         if self.stereo.get():
             self.status.set('Turn off Anaglyph for unambiguous point picking and feature tracing.'); return 'break'
@@ -676,6 +687,7 @@ class Viewer:
         return 'break'
 
     def pick_section(self,e):
+        if self.cleanup_tool and self.cleanup_tool.drawing:return 'break'
         self.cancel_corridor_drag()
         self.orbit_anchor=None
         if self.stereo.get():

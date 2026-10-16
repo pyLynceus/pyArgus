@@ -9,6 +9,11 @@
 # after building; it is cache and regenerates (the pyLynceus lesson).
 
 
+from pathlib import Path
+import runpy
+
+version_info = runpy.run_path(str(Path(SPECPATH) / "windows/version_info.py"))["version_info"]
+
 a = Analysis(
     ['launch_gui.py'],
     pathex=[],
@@ -36,6 +41,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='pyArgus',
+    version=version_info,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

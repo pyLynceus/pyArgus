@@ -70,3 +70,7 @@ can be edited without removing other clouds from the project.
 
 Ground-classification job records can also be opened in the review panel.
 Their ground fraction is a classification proportion, not an accuracy measure.
+
+## Version 0.2.0
+
+Version 0.2.0 adds automatic alignment comparisons with optional survey checks (ALIGNMENT_REPORTS.md) and measured occupied-cell coverage (COVERAGE_OVERLAP.md).

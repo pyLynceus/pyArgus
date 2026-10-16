@@ -31,11 +31,15 @@ class WorkspaceLayout:
         ttk.Button(self.statusbar,text='Jobs / log',command=lambda:self.show_panel(workspace.progress_tab)).pack(side='right')
         from pyargus.section_interaction import CorridorEditor
         self.corridor=CorridorEditor(workspace)
+        from pyargus.area_cleanup_gui import AreaCleanup
+        self.cleanup=AreaCleanup(workspace)
         self.preset=tk.StringVar(value='Custom');self.applying_layout=False
         handles=workspace.review.primary_controls
         ttk.Checkbutton(handles,text='Edit corridor',variable=self.corridor.enabled,command=self.corridor.toggle).pack(side='left',padx=6)
         ttk.Checkbutton(handles,text='Extract on release',variable=self.corridor.auto_extract).pack(side='left')
         self.deliver=ttk.Frame(self.root,padding=10,width=350)
+        from pyargus.lp360_gui import LP360Shortcut
+        self.lp360=LP360Shortcut(self)
         self.build_delivery();self.build_toolbar();self.build_menus();self.build_sidebar()
         workspace.tabs.tab(workspace.review_tab,text='Cross-section')
         workspace.tabs.tab(workspace.progress_tab,text='Job history')
@@ -109,6 +113,7 @@ class WorkspaceLayout:
                          ('Previous along route',lambda:self.route_step(-1)),('Next along route',lambda:self.route_step(1)),
                          ('Section controls',w.show_section_review),('Hide review pane',self.hide_dock)]:
             self.sections_menu.add_command(label=label,command=fn)
+        ttk.Button(extras,text='Cleanup…',command=self.cleanup.open).pack(side='left',padx=2)
         menu=self.dropdown(extras,'More')
         for label,fn in [('Cloud filters…',self.filters),('Refine current view',v.refine),('Build view cache',v.build_view_cache),
                          ('Reset detail',lambda:v.load(v.paths) if v.paths else None),('Stop loading',v.stop_loading)]:
@@ -130,6 +135,7 @@ class WorkspaceLayout:
         for name in ('File','View','Tools','Help'):
             menu=tk.Menu(self.menubar,tearoff=False);self.menubar.add_cascade(label=name,menu=menu);self.menus[name]=menu
         file=self.menus['File']
+        file.add_command(label='LP360 job…',command=self.lp360.open)
         for label,fn in [('Open workspace…',w.open),('Save workspace',w.persist),('Save workspace as…',w.save_as),('Resume last workspace',w.resume)]:file.add_command(label=label,command=fn)
         self.add_menu=tk.Menu(file,tearoff=False);file.add_cascade(label='Add data',menu=self.add_menu);self.add_commands(self.add_menu)
         file.add_separator()
@@ -148,8 +154,10 @@ class WorkspaceLayout:
         tools=self.menus['Tools'];tasks=tk.Menu(tools,tearoff=False);tools.add_cascade(label='Processing tasks',menu=tasks)
         for name in ('Inspect / match',*[s.title for s in self.app.stages]):tasks.add_command(label=name,command=lambda n=name:self.select_task(n))
         tools.add_command(label='Project / trajectory settings',command=self.project_settings)
+        tools.add_command(label='Alignment report settings…',command=self.alignment_report_settings)
         tools.add_cascade(label='Cross-sections',menu=self.sections_menu)
         tools.add_command(label='Open QA / alignment report…',command=w.review.choose_record)
+        tools.add_command(label='Area cleanup…',command=self.cleanup.open)
         tools.add_command(label='Optional feature tracing',command=self.tracing)
         tools.add_command(label='Open pyLynceus',command=self.app.open_pylynceus)
         self.menus['Help'].add_command(label='Viewing controls',command=lambda:messagebox.showinfo('Viewing controls',
@@ -169,6 +177,7 @@ class WorkspaceLayout:
         tools=ttk.Frame(w.sidebar);tools.pack(fill='x',before=w.layer_summary,pady=4)
         menu=self.dropdown(tools,'Add data');self.add_commands(menu)
         ttk.Button(tools,text='Settings',command=self.project_settings).pack(side='left')
+        ttk.Button(w.sidebar,text='LP360 job…',command=self.lp360.open).pack(fill='x',before=w.layer_summary,pady=(0,4))
         frame=ttk.LabelFrame(w.sidebar,text='Project progress',padding=4);frame.pack(fill='x',before=w.layer_help,pady=5)
         self.progress=ttk.Treeview(frame,columns=('status',),show='tree headings',height=6,selectmode='browse')
         self.progress.heading('#0',text='Stage');self.progress.column('#0',width=100,minwidth=70)
@@ -189,6 +198,8 @@ class WorkspaceLayout:
         self.outputs.heading('#0',text='Output');self.outputs.column('#0',width=215)
         self.outputs.heading('kind',text='Type');self.outputs.column('kind',width=70)
         self.outputs.pack(fill='x',pady=4)
+        ttk.Button(self.deliver,text='Open selected report',command=self.open_output_report).pack(fill='x',pady=4)
+        self.outputs.bind('<Double-1>',lambda event:self.open_output_report())
         ttk.Button(self.deliver,text='Open selected output folder',command=self.open_output_folder).pack(fill='x')
         self.export_choice=tk.StringVar(value='Section sample CSV')
         ttk.Label(self.deliver,text='Export action').pack(anchor='w',pady=(15,2))
@@ -204,6 +215,16 @@ class WorkspaceLayout:
         else:
             if not self.w.selected_layers():messagebox.showinfo('Deliver','Select project files in Layers first.',parent=self.root);return
             self.w.delivery()
+
+    def open_output_report(self):
+        chosen=self.outputs.selection()
+        if not chosen:return
+        path=Path(self.output_paths[chosen[0]])
+        if path.is_dir():path=path/'report.html'
+        if path.suffix.lower() not in ('.html','.htm') or not path.is_file():
+            messagebox.showinfo('Report','Select an HTML report or a run folder containing report.html.',parent=self.root);return
+        import webbrowser
+        webbrowser.open(path.resolve().as_uri())
 
     def open_output_folder(self):
         chosen=self.outputs.selection()
@@ -276,6 +297,10 @@ class WorkspaceLayout:
         # Legacy adapters selecting a page must also reveal a collapsed drawer.
         if self.w.tabs.select()==str(self.w.project_tab):self.set_mode('Process')
 
+    def alignment_report_settings(self):
+        self.show_panel(self.w.project_tab)
+        self.w.project_panel.tabs.select(self.w.project_panel.reporting.master)
+
     def project_settings(self):self.show_panel(self.w.project_tab)
     def select_task(self,name):self.set_mode('Process');self.app.task_name.set(name);self.w.select_task()
     def draw_section(self):
@@ -313,11 +338,18 @@ class WorkspaceLayout:
 
     def about(self):
         import sys,json
+        from pyargus import __version__, __release_date__
+        lines=['pyArgus '+__version__, 'Release '+__release_date__]
         detail='Source checkout'
         if getattr(sys,'frozen',False):
-            try:detail='Source '+json.loads((Path(sys.executable).parent/'build-info.json').read_text(encoding='utf-8-sig'))['source_commit']
-            except (OSError,KeyError,ValueError):detail='Packaged application'
-        messagebox.showinfo('pyArgus','pyArgus — lidar review and processing\n'+detail+'\n\nReview / Process / Deliver workspace',parent=self.root)
+            detail='Packaged application'
+            try:
+                info=json.loads((Path(sys.executable).parent/'build-info.json').read_text(encoding='utf-8-sig'))
+                if isinstance(info.get('release'),str):lines.append('Build '+info['release'])
+                if isinstance(info.get('source_commit'),str):detail='Source '+info['source_commit']
+            except (OSError,AttributeError,ValueError):pass
+        lines.extend([detail, '', 'Review / Process / Deliver workspace'])
+        messagebox.showinfo('About pyArgus', '\n'.join(lines), parent=self.root)
 
     def update(self):
         if hasattr(self,'shortcuts'):self.shortcuts.update()

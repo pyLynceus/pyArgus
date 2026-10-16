@@ -63,6 +63,10 @@ def test_pair_identity_crs_completion_and_settings_refusals(tmp_path):
     cloud(b);t=Tracker();j=lineage(t,a,b);j['status']='Failed'
     with pytest.raises(ValueError,match='finish successfully'):inspect_pair(t,str(a),str(b),True)
     j['status']='Needs review';cloud(b,.4)
+    # Rapid same-size rewrites can share a filesystem clock tick. This
+    # fixture exercises metadata identity changes, so make the change explicit.
+    import os
+    os.utime(b, ns=(b.stat().st_atime_ns, j['outputs'][0][2]+1_000_000_000))
     with pytest.raises(ValueError,match='changed'):inspect_pair(t,str(a),str(b),True)
     for bad in [dict(schema_version=9),dict(schema_version=1,confirmed='yes',role='Both')]:
         with pytest.raises(ValueError):preferences(bad)

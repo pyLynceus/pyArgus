@@ -109,8 +109,7 @@ class Tracker:
             if state in states: return state
         return 'Accepted' if 'Accepted' in states else states[-1]
 
-    def decide(self,stage,decision,note,settings=None,job_id=None):
-        if not note.strip(): raise ValueError('Add a review note explaining the decision.')
+    def decide(self,stage,decision,note='',settings=None,job_id=None):
         if decision not in ('Accepted','Needs review','Skipped'): raise ValueError('Invalid decision')
         job=(next((j for j in self.data['jobs'] if j['id']==job_id and j['stage']==stage),None)
              if job_id else self.latest(stage))

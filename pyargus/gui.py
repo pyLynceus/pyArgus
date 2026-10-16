@@ -1034,7 +1034,8 @@ class ColorizeStage:
 class Application:
     def __init__(self, root):
         self.root = root
-        root.title("pyArgus")
+        from pyargus import __version__
+        root.title("pyArgus " + __version__)
         root.geometry("1530x1000")
         root.protocol("WM_DELETE_WINDOW", self._confirm_close)
 
@@ -1163,6 +1164,10 @@ class Application:
         self._stage_open = True
 
     def run(self):
+        cleanup = getattr(getattr(self.workspace, 'layout', None), 'cleanup', None)
+        if cleanup is not None and cleanup.busy:
+            messagebox.showinfo('Area cleanup', 'Finish or stop the cleanup scan/export before starting another job.', parent=self.root)
+            return
         if self.runner.running:
             return
         stage = self.stages[self.notebook.index(self.notebook.select())]
@@ -1233,6 +1238,9 @@ class Application:
             if not messagebox.askyesno(
                     "pyArgus", "a stage is still running; close anyway?"):
                 return
+        cleanup = getattr(getattr(self.workspace, 'layout', None), 'cleanup', None)
+        if cleanup is not None and not cleanup.close():
+            return
         review = getattr(self.workspace, 'review', None)
         editor = getattr(review, 'editor', None)
         if editor is not None and editor.window.winfo_exists():

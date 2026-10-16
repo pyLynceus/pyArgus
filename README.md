@@ -1,4 +1,4 @@
-# pyArgus
+# pyArgus 0.2.0
 
 An open-source lidar workstation for importing, inspecting, classifying,
 aligning, reviewing and delivering point clouds. The long-term aim is an

@@ -70,7 +70,7 @@ import numpy as np
 
 from pyargus.align import drift as drift_mod
 from pyargus.align import patches as patches_mod
-from pyargus.align.bundles import corrected_xyz
+from pyargus.align.bundles import TranslationBundle, corrected_xyz
 
 _HUBER = 1.345
 _MAX_CONDITION = 200.0
@@ -187,6 +187,8 @@ def solve_alignment(bundles, *, solve_boresight=True, offsets="z", cell=5.0,
     chosen); it acts on the accumulated curve, not the per-iteration
     update. Both must be positive.
     """
+    if solve_boresight and any(isinstance(b, TranslationBundle) for b in bundles):
+        raise ValueError("boresight solving requires verified navigation state")
     if offsets not in ("z", "xyz", "none"):
         raise ValueError(f'offsets must be "z", "xyz" or "none", got {offsets!r}')
     n_strips = len(bundles)

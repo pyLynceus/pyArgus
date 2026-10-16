@@ -76,8 +76,8 @@ class ProjectWindow:
         ttk.Checkbutton(settings,text='All clouds share their vertical datum and XYZ linear units',variable=self.same_vertical).grid(row=7,column=0,columnspan=2,sticky='w',pady=6)
         ttk.Checkbutton(settings,text='Allow PROJ to download SBET geoid grids',variable=self.network).grid(row=8,column=0,columnspan=2,sticky='w')
         ttk.Checkbutton(settings,text='Solve boresight as well as per-line vertical offsets',variable=self.boresight).grid(row=9,column=0,columnspan=2,sticky='w')
-        ttk.Label(settings,wraplength=850,text='TRJ alignment requires clockwise heading from grid north, right-wing-down roll and nose-up pitch. Confirm these against the export convention before checking the TRJ box. Use one sensor/calibration per alignment project.').grid(row=10,column=0,columnspan=2,sticky='w',pady=12)
-        ttk.Label(settings,wraplength=850,text='CRS mismatches are refused; this importer does not reproject LAS files. Original flight-line IDs remain unchanged in exports. QA above the point limit uses disk-backed exact statistics. Allow roughly 160 bytes of scratch space per source point on the output drive, plus system temporary space. Alignment still uses arrays and the point limit.').grid(row=11,column=0,columnspan=2,sticky='w')
+        ttk.Label(settings,wraplength=850,text='Vertical offsets use ground overlaps; trajectory attitude is unused. Boresight requires verified TRJ clockwise heading from grid north, right-wing-down roll and nose-up pitch. Confirm the export convention before checking the TRJ box. Use one sensor/calibration per alignment project.').grid(row=10,column=0,columnspan=2,sticky='w',pady=12)
+        ttk.Label(settings,wraplength=850,text='CRS mismatches are refused; this importer does not reproject LAS files. Original flight-line IDs remain unchanged in exports. QA above the point limit uses disk-backed exact statistics. Allow roughly 256 bytes of scratch space per source point on the output drive, plus system temporary space. Alignment still uses arrays and the point limit.').grid(row=11,column=0,columnspan=2,sticky='w')
         ttk.Checkbutton(settings,text='Without trajectories: repeated line IDs across tiles identify the same flights',variable=self.shared_ids).grid(row=12,column=0,columnspan=2,sticky='w',pady=6)
         self.result_tree = ttk.Treeview(results,columns=('points','matched','unmatched','ambiguous'),show='tree headings')
         self.result_tree.heading('#0',text='Cloud / analysis strip → source line → trajectory')
@@ -108,6 +108,9 @@ class ProjectWindow:
             self.tabs.tab(inputs, text='Trajectory settings')
             for widget in body.winfo_children():
                 if isinstance(widget, ttk.Label): widget.pack_forget()
+        from pyargus.alignment_report_gui import AlignmentReportPanel
+        report_tab = ttk.Frame(self.tabs); self.tabs.add(report_tab, text='Alignment report')
+        self.reporting = AlignmentReportPanel(report_tab)
         self.refresh()
 
     def _files_panel(self,parent,title,is_track):
@@ -226,7 +229,8 @@ class ProjectWindow:
             except ValueError: pass
         return project.Project(list(self.clouds),copy.deepcopy(self.tracks),self.crs.get().strip() or None,
             self.same_vertical.get(),int(self.week.get()) if self.week.get().strip() else None,
-            vertical,self.network.get(),dict(self.bindings),float(self.gap.get()),int(self.limit.get()),self.shared_ids.get())
+            vertical,self.network.get(),dict(self.bindings),float(self.gap.get()),int(self.limit.get()),self.shared_ids.get(),
+            self.reporting.snapshot())
 
     def save_project(self):
         try:
@@ -246,6 +250,7 @@ class ProjectWindow:
                 var.set('' if value is None else str(value))
             self.same_vertical.set(p.same_vertical); self.network.set(p.allow_network)
             self.shared_ids.set(p.shared_strip_ids)
+            self.reporting.restore(p.alignment_reporting)
             self.refresh()
         except (ValueError,OSError,KeyError,TypeError) as exc: messagebox.showerror('Project',str(exc),parent=self.window)
 
@@ -284,6 +289,7 @@ class ProjectWindow:
                     project.qa(spec,out,**kw)
                     completed['inventory']=json.loads((Path(out)/'inventory.json').read_text(encoding='utf-8'))
                 else: completed['inventory']=project.align(spec,out,cell=cell,min_points=min_points,solve_boresight=boresight,**kw)['inventory']
+                if mode!='inspect': runner.products.append(('report',str(Path(out)/'report.html')))
                 if mode!='inspect':
                     try:
                         from PIL import Image

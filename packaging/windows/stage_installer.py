@@ -6,6 +6,7 @@ import html
 import importlib.metadata as metadata
 import json
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,9 @@ import zipfile
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[2]
+_RELEASE = runpy.run_path(str(ROOT / "pyargus/__init__.py"))
+APP_VERSION = _RELEASE["__version__"]
+RELEASE_DATE = _RELEASE["__release_date__"]
 GIT = shutil.which("git") or str(Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/native/git/cmd/git.exe")
 
 
@@ -154,7 +158,7 @@ def collect_python_licenses(stage):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--release",default="2026-10-08",help="Release date recorded in the payload")
+    parser.add_argument("--release",default=RELEASE_DATE,help="Release date recorded in the payload")
     parser.add_argument("--app-dir", type=Path, required=True)
     parser.add_argument("--native-prefix", type=Path, required=True)
     parser.add_argument("--tutorial-zip", type=Path, required=True)
@@ -221,7 +225,7 @@ def main():
         "The runtime omits development headers/static libraries, not runtime binaries or CRS data.\n", encoding="utf-8")
     (stage / "Launch pyArgus.cmd").write_text('@echo off\nsetlocal\nstart "" /D "%~dp0" "%~dp0pyArgus.exe"\n', encoding="ascii")
     (stage / "README.txt").write_text(
-        f"pyArgus 0.1.0 - Windows x64 - {args.release}\n\n"
+        f"pyArgus {APP_VERSION} - Windows x64 - {args.release}\n\n"
         "Start pyArgus.exe or the Start menu shortcut. Python, QGIS and Conda are not needed.\n"
         "Open Getting-started.html, or Training/Watch-pyArgus.html for the narrated walkthrough.\n"
         "Keep _internal and native-pdal with the executable when moving a portable copy.\n"
@@ -252,7 +256,7 @@ def main():
     fingerprint = hashlib.sha256()
     for p in sorted(list((ROOT / "pyargus").rglob("*.py")) + list((ROOT / "packaging").rglob("*.py")) + list((ROOT / "packaging").rglob("*.spec"))):
         fingerprint.update(p.relative_to(ROOT).as_posix().encode() + b"\0" + p.read_bytes())
-    build = {"schema_version": 1, "release": args.release, "version": "0.1.0",
+    build = {"schema_version": 1, "release": args.release, "version": APP_VERSION, "release_date": RELEASE_DATE,
              "source_commit": revision, "source_clean_at_build": not bool(dirty),
              "source_note": ("Working-tree changes are included; " if dirty else "Committed source; ")+"exact source is in Sources/pyArgus-source.zip.",
              "source_fingerprint": fingerprint.hexdigest(), "built_utc": datetime.now(timezone.utc).isoformat(),

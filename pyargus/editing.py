@@ -1,4 +1,4 @@
-"""Source-indexed, single-section classification edits and verified exports."""
+"""Source-indexed classification edits and verified, record-preserving exports."""
 from pathlib import Path
 import hashlib
 import json
@@ -9,7 +9,7 @@ from pyargus.job_manifest import identity, utc_now
 
 
 def polygon_mask(points, vertices):
-    """Inclusive even-odd selection in station/elevation coordinates."""
+    """Inclusive even-odd selection in any two map coordinates."""
     p, v = np.asarray(points, float), np.asarray(vertices, float)
     if v.ndim != 2 or v.shape[1] != 2 or len(v) < 3 or not np.isfinite(v).all():
         raise ValueError('Draw a polygon with at least three finite vertices.')
@@ -30,14 +30,14 @@ def polygon_mask(points, vertices):
 
 
 class EditSession:
-    def __init__(self, section):
+    def __init__(self, section, *, geometry=None, selection_axes=(3,2)):
         import laspy
         if len(section.inputs) != 1:
-            raise ValueError('Editing requires a section from exactly one cloud.')
+            raise ValueError('Editing requires a selection from exactly one cloud.')
         if section.matched != len(section.points):
             raise ValueError('This section is sampled. Narrow the corridor until all returns are displayed, then extract again.')
         if not len(section.points):
-            raise ValueError('The section is empty.')
+            raise ValueError('The selection is empty.')
         self.source = Path(section.inputs[0]['path'])
         self.identity = dict(section.inputs[0])
         self.check_source()
@@ -54,15 +54,20 @@ class EditSession:
                 raise ValueError('Invalid source point indices.')
         self.points = section.points.copy()
         self.original = section.classes.copy(); self.classes = self.original.copy()
-        self.start, self.end, self.width = section.start, section.end, section.width
+        self.selection_axes = selection_axes
+        if geometry is None:
+            self.start, self.end, self.width = section.start, section.end, section.width
+            geometry = dict(section=dict(start=self.start, end=self.end, full_width=self.width),
+                selection_scope='Full corridor depth; station/elevation selection; no hidden class or line filters')
+        self.geometry = geometry
         self.undo_stack, self.redo_stack, self.events = [], [], []
 
     def check_source(self):
         if identity(self.source) != self.identity:
-            raise ValueError('Source changed since section extraction. Reopen and extract again.')
+            raise ValueError('Source changed since extraction. Reopen and extract again.')
 
     def select(self, vertices):
-        return np.flatnonzero(polygon_mask(self.points[:, [3,2]], vertices))
+        return np.flatnonzero(polygon_mask(self.points[:, self.selection_axes], vertices))
 
     def assign(self, selected, classification):
         if not isinstance(classification, (int, np.integer)) or not 0 <= classification <= self.max_class:
@@ -158,8 +163,7 @@ class EditSession:
             self.check_source(); check()
             report = dict(schema_version=1, operation='manual-classification', status='verified', source=self.identity,
                 output=str(dst), created_utc=utc_now(), points=count, changed=len(ids),
-                section=dict(start=self.start,end=self.end,full_width=self.width),
-                selection_scope='Full corridor depth; station/elevation selection; no hidden class or line filters',
+                **self.geometry,
                 source_record_sha256=original.hexdigest(), output_record_sha256=actual.hexdigest(),
                 edits=[dict(point_index=int(i), before=int(b), after=int(a)) for i,b,a in zip(ids,before,after)],
                 history=list(self.events))

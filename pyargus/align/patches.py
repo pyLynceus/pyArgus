@@ -24,6 +24,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pyargus.core import gridding
+from pyargus.align.bundles import TranslationBundle
 
 
 @dataclass
@@ -42,6 +43,12 @@ class Correspondences:
 def _nearest_to_centroid(xyz, index):
     centroid = xyz[index].mean(axis=0)
     return index[np.argmin(np.sum((xyz[index] - centroid) ** 2, axis=1))]
+
+
+def _boresight_row(bundle, normal, anchor):
+    if isinstance(bundle, TranslationBundle):
+        return np.zeros(3)
+    return np.cross(bundle.r_nav[anchor].T @ normal, bundle.body_vecs[anchor])
 
 
 def correspondences(bundle_a, bundle_b, xyz_a, xyz_b, a, b, *, cell=5.0,
@@ -115,10 +122,8 @@ def correspondences(bundle_a, bundle_b, xyz_a, xyz_b, a, b, *, cell=5.0,
 
         ia = _nearest_to_centroid(xyz_a, pts_a)
         ib = _nearest_to_centroid(xyz_b, pts_b)
-        m_a = bundle_a.r_nav[ia].T @ normal
-        m_b = bundle_b.r_nav[ib].T @ normal
-        j_beta = (np.cross(m_b, bundle_b.body_vecs[ib])
-                  - np.cross(m_a, bundle_a.body_vecs[ia]))
+        j_beta = (_boresight_row(bundle_b, normal, ib)
+                  - _boresight_row(bundle_a, normal, ia))
 
         d_list.append(d)
         n_list.append(normal)
@@ -187,8 +192,7 @@ def control_observations(bundle, xyz, strip, control_enz, *, radius=6.0,
         if rms > max_rms or normal[2] < min_normal_z:
             continue
         anchor = _nearest_to_centroid(xyz, idx)
-        m_vec = bundle.r_nav[anchor].T @ normal
-        j_beta = -np.cross(m_vec, bundle.body_vecs[anchor])
+        j_beta = -_boresight_row(bundle, normal, anchor)
         d_list.append(float(normal @ (mark - centroid)))
         n_list.append(normal)
         j_list.append(j_beta)

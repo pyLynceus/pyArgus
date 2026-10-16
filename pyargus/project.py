@@ -4,7 +4,7 @@ LAS point_source_id values are never rewritten. Analysis uses separate internal
 strip keys so a reused line number on another trajectory cannot merge flights.
 Trajectory files are kept separate: interpolation never bridges file boundaries.
 """
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 import html
 import json
@@ -36,6 +36,7 @@ class Project:
     max_gap: float = 1.0
     max_points: int = 25_000_000
     shared_strip_ids: bool = False  # explicit namespace declaration without trajectories
+    alignment_reporting: dict = field(default_factory=dict)
 
     def save(self, path):
         path = Path(path)
@@ -46,6 +47,8 @@ class Project:
             item['path'] = str(Path(item['path']).resolve())
         payload['bindings'] = {str(Path(k).resolve()): str(Path(v).resolve())
                                for k, v in self.bindings.items()}
+        if self.alignment_reporting.get('checkpoints'):
+            payload['alignment_reporting']['checkpoints'] = str(Path(self.alignment_reporting['checkpoints']).resolve())
         with path.open('x', encoding='utf-8') as f:
             json.dump(payload, f, indent=2)
 
@@ -62,6 +65,8 @@ class Project:
         payload['trajectories'] = [TrajectoryInput(**dict(t, path=resolve(t['path'])))
                                    for t in payload.get('trajectories', [])]
         payload['bindings'] = {resolve(k): resolve(v) for k, v in payload.get('bindings', {}).items()}
+        if payload.get('alignment_reporting', {}).get('checkpoints'):
+            payload['alignment_reporting']['checkpoints'] = resolve(payload['alignment_reporting']['checkpoints'])
         try:
             return cls(**payload)
         except TypeError as exc:
@@ -401,9 +406,15 @@ def _qa_impl(project, out, *, control=None, log=lambda text: None, cancel=lambda
 
 
 def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
-          control=None, log=lambda text: None, cancel=lambda: False):
-    from pyargus.align import attach, solve_alignment
+          control=None, log=lambda text: None, cancel=lambda: False, checkpoint_identity=None):
+    from pyargus.align import attach, solve_alignment, TranslationBundle
+    from pyargus.qa import alignment_report as comparison
+    from pyargus.job_manifest import identity
     import laspy
+    reporting = comparison.settings(project.alignment_reporting)
+    checks = comparison.read_checks(reporting)
+    if checks is not None and checkpoint_identity is not None and checks['identity'] != checkpoint_identity:
+        raise ValueError('Report checkpoint CSV changed after job creation')
     out = _target(out)
     if not project.trajectories:
         raise ValueError('project alignment requires trajectories')
@@ -428,30 +439,54 @@ def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
     if missing:
         raise ValueError(f'no ground points in analysis strip(s) {sorted(missing)}; classify first')
     bundles, ids, attached_tracks = [], [], {}
-    for j,t in enumerate(data.tracks):
-        _check_cancel(cancel)
-        mask = (data.assignments==j) & ground
-        if not mask.any():
-            continue
-        records,xyz,_ = trajectory.load_alignment(t.input.path,data.crs,vertical=project.vertical,
-            allow_network=project.allow_network,trj_time=t.input.time_mode,trj_confirmed=t.input.confirmed)
-        path=Path(t.input.path)
-        if t.signature != (path.stat().st_size,path.stat().st_mtime_ns):
-            raise ValueError(f'{path.name}: trajectory changed after matching; restart the job')
-        records = records.copy(); records['time'] = t.time
-        sub = {k:v[mask] for k,v in pts.items() if k!='original_point_source_id'}
-        a = attach.bundles_from_cloud(sub,records,*xyz,time_mode='same')
-        bundles.extend(a.bundles); ids.extend(a.strip_ids)
-        attached_tracks[j] = records,xyz,a.heading_source
-        log(f"Attached {Path(t.input.path).name}: {len(a.bundles)} strips; track error {np.degrees(a.track_error):.2f} degrees")
+    def check_tracks():
+        for track in data.tracks:
+            path = Path(track.input.path)
+            if track.signature != (path.stat().st_size, path.stat().st_mtime_ns):
+                raise ValueError(f'{path.name}: trajectory changed after matching; restart the job')
+
+    if not solve_boresight:
+        # Translations act directly in map coordinates; no attitude or
+        # fabricated navigation state is needed for their observations.
+        for sid in np.unique(pts['point_source_id']):
+            _check_cancel(cancel)
+            mask = ground & (pts['point_source_id'] == sid)
+            bundles.append(TranslationBundle(
+                np.column_stack([pts[k][mask] for k in ('x', 'y', 'z')]),
+                pts['gps_time'][mask] if 'gps_time' in pts else None))
+            ids.append(int(sid))
+        check_tracks()
+        log('Vertical offsets only: trajectories used for time/strip matching; attitude unused')
+    else:
+        for j,t in enumerate(data.tracks):
+            _check_cancel(cancel)
+            mask = (data.assignments==j) & ground
+            if not mask.any():
+                continue
+            records,xyz,_ = trajectory.load_alignment(t.input.path,data.crs,vertical=project.vertical,
+                allow_network=project.allow_network,trj_time=t.input.time_mode,trj_confirmed=t.input.confirmed)
+            path=Path(t.input.path)
+            if t.signature != (path.stat().st_size,path.stat().st_mtime_ns):
+                raise ValueError(f'{path.name}: trajectory changed after matching; restart the job')
+            records = records.copy(); records['time'] = t.time
+            sub = {k:v[mask] for k,v in pts.items() if k!='original_point_source_id'}
+            a = attach.bundles_from_cloud(sub,records,*xyz,time_mode='same')
+            bundles.extend(a.bundles); ids.extend(a.strip_ids)
+            attached_tracks[j] = records,xyz,a.heading_source
+            log(f"Attached {Path(t.input.path).name}: {len(a.bundles)} strips; track error {np.degrees(a.track_error):.2f} degrees")
     if len(bundles)<2:
         raise ValueError('alignment requires at least two overlapping flight lines')
     _check_cancel(cancel)
     log('Solving all matched strips together')
     result = solve_alignment(bundles,cell=cell,min_points=min_points,solve_boresight=solve_boresight,
                              control=control)
+    check_tracks()
     offsets = {sid:result.offsets[i] for i,sid in enumerate(ids)}
     corrected = np.column_stack([pts[k] for k in ('x','y','z')])
+    if not solve_boresight:
+        for sid, offset in offsets.items():
+            _check_cancel(cancel)
+            corrected[pts['point_source_id'] == sid] += offset
     for j,(records,xyz,heading) in attached_tracks.items():
         _check_cancel(cancel)
         mask = data.assignments==j
@@ -464,7 +499,8 @@ def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
     with tempfile.TemporaryDirectory(prefix='.pyargus-align-',dir=out.parent) as temp:
         temp = Path(temp)
         log('Writing before-adjustment QA')
-        _report(data,temp/'before',control=None if control is None else
+        check_before = comparison.assess(pts, checks, reporting, data.crs.axis_info[0].unit_conversion_factor, fitting_control=control, cancel=cancel)
+        before_qa = _report(data,temp/'before',control=None if control is None else
                 (np.arange(len(control)),control[:,0],control[:,1],control[:,2]))
         for index,(metadata,rows) in enumerate(zip(inv['clouds'],data.sources),1):
             _check_cancel(cancel)
@@ -483,18 +519,36 @@ def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
             output_map.append(dict(source=str(Path(source).resolve()),output=name))
         _check_cancel(cancel)
         log('Writing after-adjustment QA from exported coordinates')
-        _report(data,temp/'after',control=None if control is None else
+        after_qa = _report(data,temp/'after',control=None if control is None else
                 (np.arange(len(control)),control[:,0],control[:,1],control[:,2]))
-        project.save(temp/'project.json')
-        summary = dict(outputs=output_map,boresight=result.boresight.tolist(),
+        check_after = comparison.assess(pts, checks, reporting, data.crs.axis_info[0].unit_conversion_factor, fitting_control=control, cancel=cancel)
+        replace(project, alignment_reporting=reporting).save(temp/'project.json')
+        summary = dict(report='report.html', outputs=output_map,boresight=result.boresight.tolist(),
             offsets={str(k):v.tolist() for k,v in offsets.items()},inventory=inv,
-            parameters=dict(cell=cell,min_points=min_points,solve_boresight=solve_boresight,offsets='z'),
+            parameters=dict(cell=cell,min_points=min_points,solve_boresight=solve_boresight,offsets='z',
+                attitude_used=bool(solve_boresight),
+                trajectory_usage='navigation and matching' if solve_boresight else 'time and strip matching only'),
             patch_rms_before=result.rms_before,patch_rms_after=result.rms_after,
+            observations=result.n_observations,iterations=result.iterations,control_anchored=result.absolute,
             accuracy='relative strip adjustment; absolute accuracy requires independent checkpoints')
         (temp/'alignment.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
+        log('Writing alignment comparison report')
+        input_ids = [identity(p) for p in project.clouds] + [identity(t.path) for t in project.trajectories]
+        if checks is not None:
+            input_ids.append(dict(checks['identity'], role='report_checkpoints', declared_role=reporting['role']))
+            (temp/'report_checkpoints.csv').write_bytes(Path(reporting['checkpoints']).read_bytes())
+            if identity(reporting['checkpoints'], hash_content=True) != checks['identity']:
+                raise ValueError('Report checkpoint CSV changed during alignment')
+        comparison.generate(temp, summary, before_qa, after_qa, check_before, check_after, reporting, data.crs, inputs=input_ids)
+        for metadata in inv['clouds']:
+            _unchanged(metadata)
+        if checks is not None and identity(reporting['checkpoints'], hash_content=True) != checks['identity']:
+            raise ValueError('Report checkpoint CSV changed during report generation')
         _check_cancel(cancel)
+        check_tracks()
         temp.rename(out)
     log(f'Wrote {len(output_map)} corrected clouds and before/after QA: {out}')
+    log(f'Alignment report: {out/"report.html"}')
     return summary
 
 
@@ -516,11 +570,22 @@ def align(project, out, *, cell=6., min_points=6, solve_boresight=True,
     from pyargus.align import solve_alignment
     settings = project_settings(project, control, solver_defaults=defaults(solve_alignment), cell=cell, min_points=min_points,
                                 solve_boresight=solve_boresight, offsets="z")
-    with analysis_job("project-align", out, settings, inputs=inputs, log=log) as record:
+    from pyargus.qa import alignment_report as comparison
+    reporting = comparison.settings(project.alignment_reporting)
+    settings['alignment_reporting'] = reporting
+    with analysis_job("project-align", out, settings, inputs=inputs, controls=[reporting['checkpoints']] if reporting['checkpoints'] else [], log=log) as record:
+        for item in record.data['inputs']:
+            if item.get('role')=='control':item.update(role='report_checkpoints',declared_role=reporting['role'])
+        record.save()
+        checkpoint_id = next(({k:v for k,v in item.items() if k not in ('role','declared_role')}
+                              for item in record.data['inputs'] if item.get('role')=='report_checkpoints'), None)
         result = _align_impl(project, out, cell=cell, min_points=min_points,
-                             solve_boresight=solve_boresight, control=control, log=log, cancel=cancel)
+                             solve_boresight=solve_boresight, control=control, log=log, cancel=cancel,
+                             checkpoint_identity=checkpoint_id)
         outputs = [Path(out)/item["output"] for item in result["outputs"]]
         outputs += [Path(out)/"alignment.json", Path(out)/"before"/"summary.json", Path(out)/"after"/"summary.json"]
+        outputs += [Path(out)/name for name in comparison.PRODUCTS]
+        if reporting['checkpoints']: outputs.append(Path(out)/'report_checkpoints.csv')
         finish(record, dict(result, corrections_written=True,
                            before_qa=json.loads((Path(out)/"before"/"summary.json").read_text()),
                            after_qa=json.loads((Path(out)/"after"/"summary.json").read_text())), outputs=outputs)

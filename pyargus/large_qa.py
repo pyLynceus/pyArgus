@@ -15,6 +15,7 @@ import tempfile
 import time
 
 import numpy as np
+from pyargus.qa import coverage
 
 
 def percentile(db, table, column, q, where='1', params=()):
@@ -43,6 +44,8 @@ class Store:
             CREATE TABLE ground(x INTEGER,y INTEGER,s INTEGER,z REAL);
             CREATE TABLE marks(k INTEGER,z REAL);
         ''')
+        coverage.create(self.db)
+        self.coverage_excluded=0
         self.cancel,self.log,self.control=cancel,log,control
         self.points=0; self.ground=0; self.ground_counts={}; self.last_log=0
         self.extent={k:[math.inf,-math.inf] for k in ('x','y','z')}
@@ -58,9 +61,12 @@ class Store:
         unique,counts=np.unique(cells,axis=0,return_counts=True)
         self.db.executemany('INSERT INTO density VALUES(?,?,?) ON CONFLICT(x,y) DO UPDATE SET n=n+excluded.n',
                             zip(unique[:,0].tolist(),unique[:,1].tolist(),counts.tolist()))
+        all_keys=(chosen.astype(np.int64)+2)*65536+p['point_source_id'].astype(np.int64)
+        _,excluded=coverage.ingest(self.db,p['x'],p['y'],p['classification'],all_keys)
+        self.coverage_excluded+=excluded
         keep=p['classification']==2
         self.ground+=int(keep.sum())
-        keys=(chosen[keep].astype(np.int64)+2)*65536+p['point_source_id'][keep].astype(np.int64)
+        keys=all_keys[keep]
         for key,n in zip(*np.unique(keys,return_counts=True)):
             self.ground_counts[int(key)]=self.ground_counts.get(int(key),0)+int(n)
         cells=np.floor(np.column_stack((p['x'][keep],p['y'][keep]))/6).astype(np.int64)
@@ -130,6 +136,8 @@ def write_report(store,data,out,cancel,log):
         units=data.crs.axis_info[0].unit_name,extent=store.extent,mode='disk-backed',
         grid_convention='World-aligned half-open cells; x/y exactly on an edge belong to the next cell.',
         strips=[dict(strip=s['id'],points=s['points'],ground=store.ground_counts.get((s['trajectory']+2)*65536+s['source_id'],0)) for s in inv['strips']])
+    log('Measuring per-strip occupied coverage and shared-area percentages')
+    summary['coverage_overlap']=coverage.write(db,out,mapping,units=summary['units'],excluded_returns=store.coverage_excluded,cancel=cancel,crs=data.crs)
     log('Writing project density and per-strip overlap maps')
     density=dict(cell=3,covered_cells=db.execute('SELECT count(*) FROM density').fetchone()[0])
     for name,q in [('median',.5),('p5',.05),('p95',.95)]: density[name]=percentile(db,'density','n',q)/9
@@ -146,7 +154,7 @@ def write_report(store,data,out,cancel,log):
     raster.write_png(out/'density.png',raster.sequential_rgba(overview))
     raster.write_world_file(out/'density.pgw',(x0+np.arange(overview.shape[0]+1)*step)*3,(y0+np.arange(overview.shape[1]+1)*step)*3)
     density['overview_cell']=3*step
-    tiles={'density':render_tiles(db,'density','n/9.0',3,out,'density',cancel=cancel)}
+    tiles={'coverage':summary['coverage_overlap']['tiles'],'density':render_tiles(db,'density','n/9.0',3,out,'density',cancel=cancel)}
     pairs=[]
     for a,b,n,mean_square in db.execute('SELECT a,b,count(*),avg(dz*dz) FROM dz GROUP BY a,b'):
         _check_cancel(cancel); aid,bid=mapping[a],mapping[b]
@@ -186,6 +194,7 @@ def write_report(store,data,out,cancel,log):
         f'<p>Trajectory matches: {inv["matched"]:,}; unmatched: {inv["unmatched"]:,}; ambiguous: {inv["ambiguous"]:,}.</p>' if data.tracks else '<p>No trajectories supplied; strip identity follows the confirmed shared LAS IDs.</p>',
         '<p>All points contribute; no sampling. Density uses 3-unit cells. Ground dZ uses exact medians in 6-unit cells, with at least 3 returns from each strip. Positive dZ means strip B is higher. Raw medians also reflect slope and surface texture; they are not an absolute accuracy test.</p>',
         '<p>Cells are aligned to world-coordinate multiples and are half-open, including the last boundary. This differs from the legacy report at points exactly on its maximum grid edge. Tiles partition completed cells, so file/tile edges cannot split statistics. No neighbor buffer is needed for these cell-local measures.</p>',
+        coverage.html_section(summary['coverage_overlap']),
         '<h2>Density</h2>',f'<p>Median {density["median"]:.3f}; p5 {density["p5"]:.3f}; p95 {density["p95"]:.3f} points per square unit across {density["covered_cells"]:,} occupied cells.</p>',
         f'<p>Overview pixel: {3*step:g} units. Full-resolution maps and exact cell values are linked below.</p><img src="density.png" alt="Project density overview">',
         '<h2>Ground strip differences</h2><table><tr><th>A</th><th>B</th><th>Cells</th><th>Median dZ</th><th>RMSE</th><th>p95 |dZ|</th></tr>']
@@ -218,7 +227,7 @@ def qa(project,out,*,control=None,log=lambda s:None,cancel=lambda:False):
     out=core._target(out)
     _,headers=core._cloud_headers(project)
     total=sum(h['points'] for h in headers)
-    estimate=total*160+64*1024**2
+    estimate=total*256+64*1024**2
     available=shutil.disk_usage(out.parent).free
     if available<estimate:
         raise ValueError(f'Large QA needs scratch disk space: conservatively allow {estimate/1024**3:.1f} GiB; output drive has {available/1024**3:.1f} GiB free. Choose an output folder on a larger drive.')

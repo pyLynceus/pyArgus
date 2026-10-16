@@ -2,15 +2,15 @@
 ; Compile with ISCC.exe /DStageDir=<prepared payload> pyArgus.iss.
 
 #define AppName "pyArgus"
-#define AppVersion "0.1.0"
+#define AppVersion "0.2.0"
 #ifndef ReleaseDate
-  #define ReleaseDate "2026-10-08"
+  #define ReleaseDate "2026-10-16"
 #endif
 #ifndef StageDir
-  #define StageDir SourcePath + "..\..\build\installer-20261008\payload"
+  #define StageDir SourcePath + "..\..\dist\0.2.0-2026-10-16\pyArgus"
 #endif
 #ifndef InstallerOutputDir
-  #define InstallerOutputDir SourcePath + "..\..\dist-installer\2026-10-08"
+  #define InstallerOutputDir SourcePath + "..\..\dist-installer\0.2.0-2026-10-16"
 #endif
 
 [Setup]
@@ -41,7 +41,7 @@ UninstallDisplayName=pyArgus {#AppVersion} (Codex; {#ReleaseDate})
 UninstallFilesDir={app}\Uninstall
 LicenseFile={#StageDir}\LICENSE.txt
 InfoAfterFile={#StageDir}\README.txt
-VersionInfoVersion=0.1.0.1008
+VersionInfoVersion={#AppVersion}.0
 CloseApplications=no
 RestartApplications=no
 ChangesEnvironment=no

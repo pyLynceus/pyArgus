@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 import pyargus
-from pyargus.qa import checkpoints, density, overlap, raster
+from pyargus.qa import checkpoints, coverage, density, overlap, raster
 
 
 def generate(points, out_dir, *, title, control=None, traj_time=None,
@@ -69,6 +69,9 @@ def generate(points, out_dir, *, title, control=None, traj_time=None,
     raster.write_png(out_dir / "density.png", rgba)
     raster.write_world_file(out_dir / "density.pgw", dx_edges, dy_edges)
     sections.append(("density", "Density", rgba))
+
+    # Coverage counts occupied cells, independently of ground-only dZ.
+    summary['coverage_overlap']=coverage.generate(points,out_dir,cell=density_cell,units=units)
 
     # --- strip-to-strip dZ on ground returns ---------------------------
     strips = {int(s["strip"]): None for s in per_strip}
@@ -201,6 +204,10 @@ def _write_html(path, summary, sections, *, dz_limit, density_cell, dz_cell,
                 f'{d["median"]:.2f} pts/{u}&sup2;, p5 {d["p5"]:.2f}, '
                 f'p95 {d["p95"]:.2f} over {d["covered_cells"]:,} covered '
                 f"cells. Uncovered cells are transparent.</p>")
+
+    coverage_path=Path(path).parent/'coverage.png'
+    coverage_image='data:image/png;base64,'+base64.b64encode(coverage_path.read_bytes()).decode()
+    rows.append(coverage.html_section(summary['coverage_overlap'],image_src=coverage_image))
 
     if not summary["strip_dz"]:
         # Saying nothing here reads as "no disagreement found", which is

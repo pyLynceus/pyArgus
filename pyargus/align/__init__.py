@@ -20,8 +20,8 @@ into the map frame (projection + geoid); that plumbing is Phase 4.5
 and lives outside these modules on purpose. See HANDOFF.md.
 """
 
-from pyargus.align.bundles import StripBundle, corrected_xyz
+from pyargus.align.bundles import StripBundle, TranslationBundle, corrected_xyz
 from pyargus.align.solve import AlignmentResult, solve_alignment
 
-__all__ = ["StripBundle", "corrected_xyz", "AlignmentResult",
+__all__ = ["StripBundle", "TranslationBundle", "corrected_xyz", "AlignmentResult",
            "solve_alignment"]

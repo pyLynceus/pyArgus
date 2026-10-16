@@ -149,3 +149,7 @@ Cross-sections now offer Build section cache, Use cache when available and
 Clear all section caches. Builds are explicit; selective queries reuse valid
 local data and other queries fall back to a full scan. See
 [section cache workflow](SECTION_CACHE_GUI.md).
+
+## Version 0.2.0
+
+Version 0.2.0 includes File > LP360 job, Tools > Area cleanup, and Tools > Alignment report settings. See LP360_JOBS.md, AREA_CLEANUP.md and ALIGNMENT_REPORTS.md.

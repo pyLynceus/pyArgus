@@ -60,3 +60,7 @@ A real-data edit/export/reopen acceptance check remains pending; synthetic
 record preservation does not establish the correctness of an operator's class
 choices. Direct 3D lasso selection, multifile edits, persistent sessions, class
 filters, and integrated workflow-tracker updates remain future work.
+
+## Version 0.2.0
+
+Polygon cleanup is included in 0.2.0; see AREA_CLEANUP.md for full-resolution selection, verified export and dependent-product staleness.

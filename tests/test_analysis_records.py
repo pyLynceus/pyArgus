@@ -38,7 +38,9 @@ def test_project_alignment_records_exported_qa_and_corrections(scene, tmp_path):
     assert result["corrections_written"]
     assert result["offsets"] == summary["offsets"]
     assert result["before_qa"]["strip_dz"][0]["rmse"] > result["after_qa"]["strip_dz"][0]["rmse"]
-    assert len(record["outputs"]) == 5
+    from pyargus.qa.alignment_report import PRODUCTS
+    assert len(record["outputs"]) == 5 + len(PRODUCTS)
+    assert {str(out / name) for name in PRODUCTS} <= {item["path"] for item in record["outputs"]}
 
 
 @pytest.mark.parametrize("operation", [project.qa, project.align])
