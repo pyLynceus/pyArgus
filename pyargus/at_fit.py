@@ -79,7 +79,8 @@ def export_cloud(source,destination,x,y,grid,*,expected_size=None,expected_mtime
         if reader.header.point_format.id in (4,5,9,10):
             raise ValueError('Waveform LAS requires a separate waveform-preservation workflow')
         header=reader.header.copy()
-        with laspy.open(destination,mode='w',header=header) as writer:
+        from pyargus.formats.las import preserving_writer
+        with preserving_writer(destination, header) as writer:
             for points in reader.chunk_iterator(200000):
                 original_hash.update(points.array.tobytes())
                 delta=evaluate_grid(x,y,grid,np.asarray(points.x),np.asarray(points.y))
@@ -95,6 +96,8 @@ def export_cloud(source,destination,x,y,grid,*,expected_size=None,expected_mtime
     log(f'{destination.name}: verifying all output point records')
     actual=hashlib.sha256(); verified=0
     with laspy.open(destination) as reader:
+        from pyargus.formats.las import assert_extra_bytes_preserved
+        assert_extra_bytes_preserved(header, reader.header)
         if not np.array_equal(reader.header.scales,header.scales) or not np.array_equal(reader.header.offsets,header.offsets):
             raise ValueError('Output scale/offset mismatch')
         if reader.header.point_format!=header.point_format or reader.header.parse_crs()!=header.parse_crs():

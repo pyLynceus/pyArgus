@@ -4,6 +4,7 @@ from inspect import signature
 import os
 from pathlib import Path
 import tempfile
+from pyargus.publication import staging_directory, publish_new
 
 from pyargus.analysis_records import analysis_job, finish
 from pyargus.job_manifest import identity
@@ -26,7 +27,7 @@ def recorded_classification(function):
         with analysis_job(function.__name__.replace('_', '-'), target, settings,
                           inputs=[source], log=log) as record:
             before = identity(source)
-            with tempfile.TemporaryDirectory(prefix='.pyargus-classify-', dir=target.parent) as temp:
+            with staging_directory(target.parent, prefix='.pyargus-classify-') as temp:
                 staged = Path(temp) / target.name
                 try:
                     result = function(source, staged, **kwargs)
@@ -44,7 +45,9 @@ def recorded_classification(function):
                     raise ValueError('Input changed during classification; output not published')
                 import laspy
                 # Read every point to catch incomplete/truncated writes before publication.
-                with laspy.open(staged) as cloud:
+                with laspy.open(source) as original, laspy.open(staged) as cloud:
+                    from pyargus.formats.las import assert_extra_bytes_preserved
+                    assert_extra_bytes_preserved(original.header, cloud.header)
                     expected = cloud.header.point_count
                     count = sum(len(chunk) for chunk in cloud.chunk_iterator(500_000))
                 if count != expected or count != result['total']:
@@ -52,12 +55,9 @@ def recorded_classification(function):
                 if stop is not None and stop():
                     finish(record, metrics, status='cancelled')
                     return {'cancelled': True}
-                # Windows rename refuses an existing target; POSIX link is exclusive.
-                if os.name == 'nt':
-                    os.rename(staged, target)
-                else:
-                    os.link(staged, target)
-                    staged.unlink()
+                if identity(source) != before:
+                    raise ValueError('Input changed during classification verification; output not published')
+                publish_new(staged, target)
                 finish(record, metrics, outputs=[target])
                 log(f'Published classified cloud: {target}')
                 return result

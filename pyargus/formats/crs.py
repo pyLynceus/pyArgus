@@ -107,3 +107,37 @@ def sbet_to_map(sbet, map_crs, *, vertical=None, allow_network=False):
                 "is missing the geoid grid. Pass allow_network=True to let "
                 "it fetch one, or supply vertical=<geoid shift in meters>.")
     return np.asarray(e), np.asarray(n), np.asarray(z)
+
+
+GEOID18_GRID = "us_noaa_g2018u0.tif"
+GEOID18_SHA256 = "fa9a407ac7ee3f5a3694008e4bcd09ce9cc250452f0c3b11700a4960340abce2"
+
+
+def geoid18_grid():
+    """The published NOAA Geoid18 grid where PROJ will find it: (path, sha256).
+
+    Raises ValueError when the grid is in none of PROJ's data directories or
+    its bytes differ from the published file, so a rebuilt environment or a
+    payload that lost the grid fails at the gate rather than at the first
+    vertical transform of a real job.
+    """
+    import hashlib
+    import os
+    from pathlib import Path
+    import pyproj.datadir
+    folders = [pyproj.datadir.get_data_dir(), pyproj.datadir.get_user_data_dir()]
+    for folder in folders:
+        for candidate in str(folder).split(os.pathsep):
+            path = Path(candidate) / GEOID18_GRID
+            if not path.is_file():
+                continue
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 ** 2), b""):
+                    digest.update(block)
+            if digest.hexdigest() != GEOID18_SHA256:
+                raise ValueError(f"{path} is not the published Geoid18 grid "
+                                 f"(sha256 {digest.hexdigest()})")
+            return path, digest.hexdigest()
+    raise ValueError(f"the Geoid18 grid {GEOID18_GRID} is in none of PROJ's data "
+                     f"directories: " + "; ".join(str(f) for f in folders))

@@ -74,11 +74,11 @@ class ReviewShortcuts:
     def update(self):
         c=self.context();name=Path(c['workspace']).name.removesuffix('.argus.json').removesuffix('.json')
         self.project.set('Workspace: '+name)
-        self.dataset.set('Processing input: '+(Path(c['active']).name if c['active'] else 'None'))
+        self.dataset.set('Task input: '+(Path(c['active']).name if c['active'] else 'None'))
         self.coordinates.set(c['crs']+' | '+c['units'])
         self.location.set('Workspace directory: '+c['directory']+'   |   '+c['version'])
 
     def details(self):
         c=self.context()
         messagebox.showinfo('Project context',
-            f"Workspace: {c['workspace']}\nWorkspace directory: {c['directory']}\n\nProcessing input: {c['active'] or 'None'}\nVersion: {c['version']}\n\nLoaded cloud CRS: {c['crs']}\nAxis units: {c['units']}\nVertical datum: verify source metadata/project declaration.\n\nVisible clouds and section source are independent of the processing input.",parent=self.layout.root)
+            f"Workspace: {c['workspace']}\nWorkspace directory: {c['directory']}\n\nTask input (single-cloud tasks): {c['active'] or 'None'}\nVersion: {c['version']}\n\nLoaded cloud CRS: {c['crs']}\nAxis units: {c['units']}\nVertical datum: verify source metadata/project declaration.\n\nProject tasks read every Project input. Selecting, showing or hiding a cloud never changes either input.",parent=self.layout.root)

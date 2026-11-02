@@ -9,16 +9,31 @@ import time
 import uuid
 
 from pyargus import __version__
+from pyargus.publication import atomic_write_json
 
 
-def identity(path, *, hash_content=False):
+SMALL_TEXT_LIMIT = 8 * 1024**2
+SMALL_TEXT_SUFFIXES = frozenset({'.csv', '.tsv', '.txt', '.json', '.cal',
+                                 '.yaml', '.yml', '.wkt', '.prj'})
+
+
+def identity(path, *, hash_content=None):
     path = Path(path).resolve()
     stat = path.stat()
     result = dict(path=str(path), size_bytes=stat.st_size,
                   mtime_ns=stat.st_mtime_ns, identity_method="size_and_mtime")
+    if hash_content is None:
+        hash_content = (path.suffix.lower() in SMALL_TEXT_SUFFIXES and
+                        stat.st_size <= SMALL_TEXT_LIMIT)
     if hash_content:
-        result.update(sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                      identity_method="sha256_and_metadata")
+        digest = hashlib.sha256()
+        with path.open('rb') as stream:
+            for chunk in iter(lambda: stream.read(1024**2), b''):
+                digest.update(chunk)
+        after = path.stat()
+        if (stat.st_size, stat.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            raise ValueError(f'Input changed while hashing: {path}')
+        result.update(sha256=digest.hexdigest(), identity_method="sha256_and_metadata")
     return result
 
 
@@ -43,16 +58,7 @@ class JobRecord:
                          intended_output=str(output), inputs=[], results={})
 
     def save(self):
-        temporary = self.path.with_suffix(".tmp")
-        try:
-            with temporary.open("w", encoding="utf-8") as stream:
-                json.dump(self.data, stream, indent=2, allow_nan=False)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        atomic_write_json(self.path, self.data)
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +71,8 @@ class JobRecord:
         self.data.update(status=status, results=results)
 
     def __exit__(self, kind, error, traceback):
+        if error is not None and hasattr(error, "recovery_path"):
+            self.data["recovery_path"] = str(error.recovery_path)
         if error is not None and error is not getattr(self, "_cancelled_exception", None):
             self.data.update(status="failed", error=dict(type=kind.__name__, message=str(error)))
         elif self.data["status"] == "running":
@@ -75,5 +83,10 @@ class JobRecord:
         except OSError as save_error:
             if error is None:
                 raise
-            error.add_note(f"Could not update job record {self.path}: {save_error}")
+            message = f"Could not update job record {self.path}: {save_error}"
+            if hasattr(error, 'add_note'):
+                error.add_note(message)
+            else:  # Python 3.10 supports the application, but not exception notes.
+                import logging
+                logging.getLogger(__name__).warning(message)
         return False

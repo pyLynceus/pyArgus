@@ -18,8 +18,8 @@ changed/activated cloud version does not silently trigger a rebuild.
 
 Default location: `%LOCALAPPDATA%/pyArgus-Codex/section-cache-v2` on Windows.
 The build checks available space conservatively (128 bytes per source point
-plus a 256 MiB reserve). Actual cache size depends on the source.
-No automatic eviction occurs;
+plus a 256 MiB reserve). Actual caches usually use less; the Example_Project
+experiment used 0.81 GiB for 24.8 million points. No automatic eviction occurs;
 use Clear all section caches to reclaim space. Unknown files in that directory
 are retained. Abandoned recognized staging folders can also be cleared.
 

@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -56,6 +58,20 @@ def test_compound_target_uses_the_vertical_units_for_the_shift():
     _, _, z_m = crs.sbet_to_map(summerville_sbet(), "EPSG:6447+5703",
                                 vertical=-29.077)
     assert abs(z_m[0] - 229.077) < 1e-6
+
+
+def test_geoid18_grid_is_present_and_used():
+    """A rebuilt environment or payload that lost the grid fails here, not at the first boresight run.
+
+    The only way out is the explicit PYARGUS_NO_GEOID declaration an
+    environment without the grid (such as CI) must make for itself.
+    """
+    if os.environ.get("PYARGUS_NO_GEOID"):
+        pytest.skip("PYARGUS_NO_GEOID is set: this environment declares it has no Geoid18 grid")
+    path, digest = crs.geoid18_grid()
+    assert path.name == crs.GEOID18_GRID and digest == crs.GEOID18_SHA256
+    _, _, z = crs.sbet_to_map(summerville_sbet(), "EPSG:6447", vertical="EPSG:6360")
+    assert abs(z[0] - 751.56) < 0.5
 
 
 def test_grid_vertical_never_returns_ballpark_heights():

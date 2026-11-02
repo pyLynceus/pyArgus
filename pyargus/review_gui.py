@@ -127,7 +127,10 @@ class ReviewWorkspace:
         self.tree.heading("#0",text="Measure"); self.tree.column("#0",width=230)
         for key,width in (("before",130),("after",170),("note",450)):
             self.tree.heading(key,text=key.title()); self.tree.column(key,width=width)
-        self.tree.tag_configure("flag",background="#fff0c7",foreground="#582f00")
+        from pyargus.suite_theme import active as suite_theme_active, COLORS
+        self.tree.tag_configure("flag",
+            background=COLORS["field"] if suite_theme_active() else "#fff0c7",
+            foreground=COLORS["warning"] if suite_theme_active() else "#582f00")
         scroll=ttk.Scrollbar(review,orient="vertical",command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set); scroll.pack(side="right",fill="y"); self.tree.pack(fill="both",expand=True)
         files=ttk.Frame(inspect); files.pack(fill="x")

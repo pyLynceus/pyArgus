@@ -56,7 +56,9 @@ apply manual cleanup. Elevated structures or vegetation can still require review
 
 The result folder contains `report.html`, `run.json`, `project.argus.json`, native
 per-attempt records, stage outputs and `final_clouds/manifest.json`. The GUI loads
-the new workspace when the full sequence completes. Every completed stage is
+the new workspace when the full sequence completes and shows the delivered clouds
+from `final_clouds/`, keeping the camera when a view of the area is already on
+screen (since October 22, 2026). Every completed stage is
 **Needs review**, or explicitly **Skipped**; automatic processing never records
 an accuracy approval. Review actual overlap/control maps before using products.
 

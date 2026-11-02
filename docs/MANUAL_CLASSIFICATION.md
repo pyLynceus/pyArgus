@@ -1,5 +1,9 @@
 # Manual classification editing
 
+For full-resolution plan polygons with automatic version promotion and tracker
+invalidation, use [Area cleanup](AREA_CLEANUP.md). The section editor described
+below retains its separate, manual import workflow.
+
 Open the QA / cross-sections workspace with one cloud loaded. In the main 3D
 Top view, Ctrl-click A and B, set the corridor's full width, and extract the
 section. Choose **Edit classifications…**.
@@ -58,9 +62,6 @@ source changes, deliberately corrupted output, and the editor GUI.
 The recorded Summerville source path was unavailable during implementation.
 A real-data edit/export/reopen acceptance check remains pending; synthetic
 record preservation does not establish the correctness of an operator's class
-choices. Direct 3D lasso selection, multifile edits, persistent sessions, class
-filters, and integrated workflow-tracker updates remain future work.
-
-## Version 0.2.0
-
-Polygon cleanup is included in 0.2.0; see AREA_CLEANUP.md for full-resolution selection, verified export and dependent-product staleness.
+choices. Perspective 3D lasso selection, multifile edits, persistent undo sessions and
+section-editor tracker integration remain future work. The area cleanup tool
+provides explicit class/line/height filters and integrated version promotion.

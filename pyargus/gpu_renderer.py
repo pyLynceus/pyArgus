@@ -5,6 +5,8 @@ before uploading float32 coordinates; never upload State Plane XYZ directly.
 The returned image is copied to Tk, so readback/presentation still cost CPU time.
 """
 import threading
+import sys
+from contextlib import contextmanager
 import numpy as np
 
 _VERTEX = """#version 330
@@ -65,13 +67,37 @@ void main() { frag = vec4(line_color, 1.0); }
 """
 
 
+@contextmanager
+def _preserve_x11_error_handler():
+    """glcontext's GLX backend resets the process-wide handler on creation.
+
+    Tk owns that handler and uses it during Xft font/window cleanup. Preserve
+    it across both successful and failed context creation, on the UI thread.
+    """
+    if not sys.platform.startswith("linux"):
+        yield
+        return
+    import ctypes
+    x11 = ctypes.CDLL("libX11.so.6")
+    change = x11.XSetErrorHandler
+    change.argtypes = [ctypes.c_void_p]
+    change.restype = ctypes.c_void_p
+    previous = change(None)
+    change(previous)
+    try:
+        yield
+    finally:
+        change(previous)
+
+
 class Renderer:
     """One UI-thread-owned context with resident point buffers."""
     def __init__(self):
         import moderngl
         self.gl = moderngl
         self.owner = threading.get_ident()
-        self.ctx = moderngl.create_standalone_context(require=330)
+        with _preserve_x11_error_handler():
+            self.ctx = moderngl.create_standalone_context(require=330)
         self.resources = []
         self.cloud = None
         self.cloud_key = None
@@ -80,6 +106,7 @@ class Renderer:
         self.uploads = 0
         try:
             self.device = str(self.ctx.info["GL_RENDERER"])
+            self.buffered_readback = sys.platform.startswith("linux") and "d3d12" in self.device.lower()
             if any(word in self.device.lower() for word in
                    ("llvmpipe", "softpipe", "software", "gdi generic")):
                 raise RuntimeError("OpenGL is using a software renderer: "+self.device)
@@ -110,6 +137,8 @@ class Renderer:
         depth = self.ctx.depth_renderbuffer((width,height))
         fbo = self.ctx.framebuffer([color],depth)
         self.frame = (fbo,color,depth)
+        if self.buffered_readback:
+            self.frame += (self.ctx.buffer(reserve=width*height*3),)
         self.size = (width,height)
 
     def _upload(self, points, rgb, keep, key):
@@ -204,7 +233,15 @@ class Renderer:
                         else:
                             program['point_size'].value=line_width
                             vao.render(self.gl.POINTS)
-                    pixels=np.frombuffer(fbo.read(components=3,alignment=1),dtype=np.uint8)
+                    if self.buffered_readback:
+                        # Mesa D3D12 can deadlock on repeated client-memory reads.
+                        # A GPU transfer buffer plus explicit completion avoids it.
+                        transfer=self.frame[3]
+                        fbo.read_into(transfer,components=3,alignment=1)
+                        self.ctx.finish()
+                        pixels=np.frombuffer(transfer.read(),dtype=np.uint8)
+                    else:
+                        pixels=np.frombuffer(fbo.read(components=3,alignment=1),dtype=np.uint8)
                     result.append(pixels.reshape(height,width,3)[::-1].copy())
                 if stereo_depth is None:
                     return result[0]

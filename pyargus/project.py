@@ -9,10 +9,12 @@ from pathlib import Path
 import html
 import json
 import tempfile
+from pyargus.publication import staging_directory, publish_new
 
 import numpy as np
 
 from pyargus.formats import sbet, trajectory, trj
+from pyargus.formats import las as las_mod
 
 
 @dataclass
@@ -47,8 +49,9 @@ class Project:
             item['path'] = str(Path(item['path']).resolve())
         payload['bindings'] = {str(Path(k).resolve()): str(Path(v).resolve())
                                for k, v in self.bindings.items()}
-        if self.alignment_reporting.get('checkpoints'):
-            payload['alignment_reporting']['checkpoints'] = str(Path(self.alignment_reporting['checkpoints']).resolve())
+        for key in ('checkpoints', 'control_points'):
+            if self.alignment_reporting.get(key):
+                payload['alignment_reporting'][key] = str(Path(self.alignment_reporting[key]).resolve())
         with path.open('x', encoding='utf-8') as f:
             json.dump(payload, f, indent=2)
 
@@ -65,8 +68,9 @@ class Project:
         payload['trajectories'] = [TrajectoryInput(**dict(t, path=resolve(t['path'])))
                                    for t in payload.get('trajectories', [])]
         payload['bindings'] = {resolve(k): resolve(v) for k, v in payload.get('bindings', {}).items()}
-        if payload.get('alignment_reporting', {}).get('checkpoints'):
-            payload['alignment_reporting']['checkpoints'] = resolve(payload['alignment_reporting']['checkpoints'])
+        for key in ('checkpoints', 'control_points'):
+            if payload.get('alignment_reporting', {}).get(key):
+                payload['alignment_reporting'][key] = resolve(payload['alignment_reporting'][key])
         try:
             return cls(**payload)
         except TypeError as exc:
@@ -395,24 +399,27 @@ def _qa_impl(project, out, *, control=None, log=lambda text: None, cancel=lambda
         raise ValueError('project QA refused: unresolved trajectory matches; use Inspect / match '
                          'and resolve missing or ambiguous matches before comparing strips')
     _check_cancel(cancel)
-    with tempfile.TemporaryDirectory(prefix='.pyargus-qa-',dir=out.parent) as temp:
+    with staging_directory(out.parent, prefix='.pyargus-qa-') as temp:
         result = _report(data,temp,control=control)
         project.save(Path(temp)/'project.json')
         _check_cancel(cancel)
-        Path(temp).rename(out)
+        publish_new(temp, out)
     result['report'] = str(out/'report.html')
     log(f"Project QA: {out/'report.html'}")
     return result
 
 
 def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
-          control=None, log=lambda text: None, cancel=lambda: False, checkpoint_identity=None):
+          control=None, log=lambda text: None, cancel=lambda: False, checkpoint_identity=None, control_identity=None):
     from pyargus.align import attach, solve_alignment, TranslationBundle
     from pyargus.qa import alignment_report as comparison
     from pyargus.job_manifest import identity
     import laspy
     reporting = comparison.settings(project.alignment_reporting)
     checks = comparison.read_checks(reporting)
+    references = comparison.read_references(reporting)
+    if references is not None and control_identity is not None and references['identity'] != control_identity:
+        raise ValueError('Audit control/PID CSV changed after job creation')
     if checks is not None and checkpoint_identity is not None and checks['identity'] != checkpoint_identity:
         raise ValueError('Report checkpoint CSV changed after job creation')
     out = _target(out)
@@ -496,10 +503,14 @@ def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
         if skipped:
             raise ValueError('correction coverage changed after matching; refusing partial export')
     output_map = []
-    with tempfile.TemporaryDirectory(prefix='.pyargus-align-',dir=out.parent) as temp:
+    with staging_directory(out.parent, prefix='.pyargus-align-') as temp:
         temp = Path(temp)
         log('Writing before-adjustment QA')
         check_before = comparison.assess(pts, checks, reporting, data.crs.axis_info[0].unit_conversion_factor, fitting_control=control, cancel=cancel)
+        log('Auditing original control/PID coverage by analysis flight')
+        coverage_audit = comparison.control_coverage.collect(pts, dict(inv,units=data.crs.axis_info[0].unit_name),
+            reporting, data.crs.axis_info[0].unit_conversion_factor, references=references,
+            fitting_control=control, checks=check_before, cancel=cancel)
         before_qa = _report(data,temp/'before',control=None if control is None else
                 (np.arange(len(control)),control[:,0],control[:,1],control[:,2]))
         for index,(metadata,rows) in enumerate(zip(inv['clouds'],data.sources),1):
@@ -511,9 +522,10 @@ def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
             log(f'Writing {name}')
             cloud = laspy.read(source)
             cloud.x,cloud.y,cloud.z = corrected[rows].T
-            cloud.write(dest)
+            las_mod.write_preserving(cloud, dest)
             # Evaluate the actual quantized exported coordinates, not solver predictions.
             written = laspy.read(dest)
+            las_mod.assert_extra_bytes_preserved(cloud.header, written.header)
             for k in ('x','y','z'):
                 pts[k][rows] = np.asarray(written[k])
             output_map.append(dict(source=str(Path(source).resolve()),output=name))
@@ -539,14 +551,22 @@ def _align_impl(project, out, *, cell=6., min_points=6, solve_boresight=True,
             (temp/'report_checkpoints.csv').write_bytes(Path(reporting['checkpoints']).read_bytes())
             if identity(reporting['checkpoints'], hash_content=True) != checks['identity']:
                 raise ValueError('Report checkpoint CSV changed during alignment')
-        comparison.generate(temp, summary, before_qa, after_qa, check_before, check_after, reporting, data.crs, inputs=input_ids)
+        if references is not None:
+            input_ids.append(dict(references['identity'], role='audit_control_reference'))
+            (temp/'report_controls.csv').write_bytes(Path(reporting['control_points']).read_bytes())
+            if identity(reporting['control_points'], hash_content=True) != references['identity']:
+                raise ValueError('Audit control/PID CSV changed during alignment')
+        comparison.generate(temp, summary, before_qa, after_qa, check_before, check_after, reporting, data.crs,
+                            inputs=input_ids, coverage_audit=coverage_audit)
         for metadata in inv['clouds']:
             _unchanged(metadata)
         if checks is not None and identity(reporting['checkpoints'], hash_content=True) != checks['identity']:
             raise ValueError('Report checkpoint CSV changed during report generation')
+        if references is not None and identity(reporting['control_points'], hash_content=True) != references['identity']:
+            raise ValueError('Audit control/PID CSV changed during report generation')
         _check_cancel(cancel)
         check_tracks()
-        temp.rename(out)
+        publish_new(temp, out)
     log(f'Wrote {len(output_map)} corrected clouds and before/after QA: {out}')
     log(f'Alignment report: {out/"report.html"}')
     return summary
@@ -573,19 +593,24 @@ def align(project, out, *, cell=6., min_points=6, solve_boresight=True,
     from pyargus.qa import alignment_report as comparison
     reporting = comparison.settings(project.alignment_reporting)
     settings['alignment_reporting'] = reporting
-    with analysis_job("project-align", out, settings, inputs=inputs, controls=[reporting['checkpoints']] if reporting['checkpoints'] else [], log=log) as record:
-        for item in record.data['inputs']:
-            if item.get('role')=='control':item.update(role='report_checkpoints',declared_role=reporting['role'])
+    with analysis_job("project-align", out, settings, inputs=inputs, controls=[reporting[key] for key in ('checkpoints','control_points') if reporting[key]], log=log) as record:
+        survey_inputs = [item for item in record.data['inputs'] if item.get('role')=='control']
+        for key, item in zip([key for key in ('checkpoints','control_points') if reporting[key]], survey_inputs):
+            item.update(role='report_checkpoints' if key=='checkpoints' else 'audit_control_reference',
+                        declared_role=reporting['role'] if key=='checkpoints' else 'reference')
         record.save()
         checkpoint_id = next(({k:v for k,v in item.items() if k not in ('role','declared_role')}
                               for item in record.data['inputs'] if item.get('role')=='report_checkpoints'), None)
+        control_id = next(({k:v for k,v in item.items() if k not in ('role','declared_role')}
+                           for item in record.data['inputs'] if item.get('role')=='audit_control_reference'), None)
         result = _align_impl(project, out, cell=cell, min_points=min_points,
                              solve_boresight=solve_boresight, control=control, log=log, cancel=cancel,
-                             checkpoint_identity=checkpoint_id)
+                             checkpoint_identity=checkpoint_id, control_identity=control_id)
         outputs = [Path(out)/item["output"] for item in result["outputs"]]
         outputs += [Path(out)/"alignment.json", Path(out)/"before"/"summary.json", Path(out)/"after"/"summary.json"]
         outputs += [Path(out)/name for name in comparison.PRODUCTS]
         if reporting['checkpoints']: outputs.append(Path(out)/'report_checkpoints.csv')
+        if reporting['control_points']: outputs.append(Path(out)/'report_controls.csv')
         finish(record, dict(result, corrections_written=True,
                            before_qa=json.loads((Path(out)/"before"/"summary.json").read_text()),
                            after_qa=json.loads((Path(out)/"after"/"summary.json").read_text())), outputs=outputs)

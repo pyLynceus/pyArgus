@@ -9,14 +9,15 @@ from pyargus.analysis_records import plain
 from pyargus.job_manifest import identity, utc_now, JobRecord
 from pyargus.lp360_jobs import inspect_recipe
 from pyargus.workspace_state import Tracker
+from pyargus.publication import atomic_write_json, staging_directory, publish_new
+from urllib.parse import quote
 
 
 class Cancelled(Exception):pass
 
 
 def _save(path,value):
-    path=Path(path);tmp=path.with_name(path.name+'.tmp')
-    tmp.write_text(json.dumps(plain(value),indent=2,allow_nan=False)+'\n',encoding='utf-8');os.replace(tmp,path)
+    atomic_write_json(path, plain(value))
 
 
 def _digest(path,cancel):
@@ -94,7 +95,7 @@ def run(recipe,out,*,log=lambda s:None,cancel=lambda:False,on_stage=lambda state
     recipe=replace(recipe,control_order=info['control_order'])
     out=Path(out).resolve();root=Path(recipe.root).resolve()
     if out==root or out.exists():raise ValueError('Choose a new output folder; existing files are preserved.')
-    sources=recipe.clouds+[t['path'] for t in recipe.trajectories]+[p for p in (recipe.control,recipe.alignment_reporting.get('checkpoints',''),recipe.eo if recipe.colorize else '',recipe.calibration if recipe.colorize else '') if p]
+    sources=recipe.clouds+[t['path'] for t in recipe.trajectories]+[p for p in (recipe.control,recipe.alignment_reporting.get('checkpoints',''),recipe.alignment_reporting.get('control_points',''),recipe.eo if recipe.colorize else '',recipe.calibration if recipe.colorize else '') if p]
     for p in sources:
         if Path(p).resolve().is_relative_to(out):raise ValueError('An input is inside the proposed output folder.')
     volume=out.parent
@@ -110,6 +111,8 @@ def run(recipe,out,*,log=lambda s:None,cancel=lambda:False,on_stage=lambda state
     tracker.data['lp360_job']=str(out/'run.json');started=time.monotonic();record_path=None
     def check():
         if cancel():raise Cancelled('Stop requested')
+        check_inputs()
+    def check_inputs():
         for item in identities:
             if identity(item['path'])!=item:raise ValueError('Input changed during the job: '+item['path'])
     def persist():
@@ -120,7 +123,7 @@ def run(recipe,out,*,log=lambda s:None,cancel=lambda:False,on_stage=lambda state
         if stage_class:job['stage_class']=stage_class
         begin=time.monotonic();persist();on_stage(dict(entry));log('LP360: '+name)
         try:
-            result,products=action();check()
+            result,products=action();check_inputs()
             tracker.finish(job,'Needs review',products,elapsed=time.monotonic()-begin)
             job['records']=[str(p) for folder in {Path(p).parent for p in products} for p in folder.glob('*.job-*.json') if p.stat().st_mtime>=time.time()-(time.monotonic()-begin)-1]
             entry.update(status='Completed — needs review',elapsed=round(time.monotonic()-begin,2),outputs=[str(p) for p in products])
@@ -150,7 +153,7 @@ def run(recipe,out,*,log=lambda s:None,cancel=lambda:False,on_stage=lambda state
         for item in state['steps']:
             links=[]
             for p in item.get('outputs',[]):
-                path=Path(p);href=path.relative_to(out).as_posix() if path.is_relative_to(out) else path.as_uri()
+                path=Path(p);href=quote(path.relative_to(out).as_posix(),safe='/') if path.is_relative_to(out) else path.as_uri()
                 links.append(f'<a href="{html.escape(href,quote=True)}">{html.escape(path.name)}</a>')
             rows.append(f"<tr><td>{html.escape(item['stage'])}</td><td>{html.escape(item['status'])}</td><td>{'<br>'.join(links)}</td><td>{html.escape(item.get('error',item.get('reason','')))}</td></tr>")
         body=f'<!doctype html><html><meta charset="utf-8"><title>LP360 job results</title><style>body{{font:16px system-ui;max-width:1150px;margin:32px auto;color:#17382e}}td,th{{padding:10px;border-bottom:1px solid #ccc;text-align:left}}table{{width:100%}}</style><h1>LP360 job: {html.escape(root.name)}</h1><p>Status: {html.escape(state["status"])}. {html.escape(state["review"])}</p><p>Source: {html.escape(str(root))}. Original files are preserved. Alignment, when enabled, solves relative vertical offsets with the first strip fixed; survey marks are used for QA, not fitted as control. Existing colors and noise classes are preserved unless recoloring or explicit height bounds were selected.</p><table><tr><th>Stage</th><th>Status</th><th>Outputs</th><th>Details</th></tr>{"".join(rows)}</table><p><a href="project.argus.json">pyArgus workspace</a> · <a href="run.json">Settings and processing history</a></p></html>'
@@ -177,12 +180,14 @@ def run(recipe,out,*,log=lambda s:None,cancel=lambda:False,on_stage=lambda state
                 def align():
                     from pyargus.qa.alignment_report import settings, PRODUCTS
                     reporting=settings(recipe.alignment_reporting)
+                    if not reporting['control_points'] and recipe.control:
+                        reporting.update(control_points=recipe.control,control_order=recipe.control_order)
                     if not reporting['checkpoints'] and recipe.control:
                         reporting.update(checkpoints=recipe.control,order=recipe.control_order,role='reference',surface='unspecified')
                     alignment_spec=replace(spec,alignment_reporting=reporting)
                     result=project.align(alignment_spec,out/'alignment',cell=recipe.alignment_cell,min_points=recipe.min_points,solve_boresight=False,log=log,cancel=cancel)
                     return result,[out/'alignment'/'alignment.json']+[out/'alignment'/name for name in PRODUCTS]+[out/'alignment'/item['output'] for item in result['outputs']]
-                result,job=stage('Alignment',spec.clouds+[t.path for t in spec.trajectories]+[p for p in (recipe.alignment_reporting.get('checkpoints'),recipe.control) if p],align,dict(solve_boresight=False,cell=recipe.alignment_cell))
+                result,job=stage('Alignment',spec.clouds+[t.path for t in spec.trajectories]+[p for p in (recipe.alignment_reporting.get('checkpoints'),recipe.alignment_reporting.get('control_points'),recipe.control) if p],align,dict(solve_boresight=False,cell=recipe.alignment_cell))
                 mapping={item['source']:str(out/'alignment'/item['output']) for item in result['outputs']}
                 for source,dest in mapping.items():tracker.register_cloud_result(source,dest,job['id'])
                 spec=_transfer(spec,mapping);persist()
@@ -201,7 +206,10 @@ def run(recipe,out,*,log=lambda s:None,cancel=lambda:False,on_stage=lambda state
                 spec=_transfer(spec,mapping);persist()
             else:skip('Colorization','Preserve existing cloud colors; EO and camera files remain available for optional recoloring.')
             def surface():
-                values=_surface(spec.clouds,out/'surface',recipe,cancel)
+                with staging_directory(out, prefix='.pyargus-surface-') as temp:
+                    staged=temp/'surface'
+                    values=_surface(spec.clouds,staged,recipe,cancel)
+                    check();publish_new(staged,out/'surface')
                 return values,[out/'surface'/'dtm.asc',out/'surface'/'dtm.dxf',out/'surface'/'summary.json']
             values,_=stage('Surface',spec.clouds,surface,dict(cell=recipe.cell,gap_fill=False))
             grid,xe,ye,crs=values
@@ -210,25 +218,32 @@ def run(recipe,out,*,log=lambda s:None,cancel=lambda:False,on_stage=lambda state
                 from pyargus.formats.dxf import write_contours_dxf
                 finite=grid[np.isfinite(grid)]
                 if (finite.max()-finite.min())/recipe.contour_interval>1000:raise ValueError('More than 1000 contour levels; review ground elevations or increase contour interval.')
-                lines=contour_grid(grid,xe,ye,recipe.contour_interval);folder=out/'contours';folder.mkdir();cad=folder/'contours.dxf'
-                if lines:write_contours_dxf(cad,lines)
-                else:
-                    import ezdxf
-                    ezdxf.new('R2010').saveas(cad)
-                cad.with_suffix('.prj').write_text(crs.to_wkt()+'\n',encoding='utf-8')
-                _save(folder/'summary.json',dict(lines=len(lines),vertices=sum(len(l.xy) for l in lines),interval=recipe.contour_interval,smoothing=False,source=str(out/'surface'/'dtm.asc')))
-                return dict(lines=len(lines)),[cad,folder/'summary.json']
+                with staging_directory(out, prefix='.pyargus-contours-') as temp:
+                    lines=contour_grid(grid,xe,ye,recipe.contour_interval)
+                    folder=temp/'contours';folder.mkdir();cad=folder/'contours.dxf'
+                    if lines:write_contours_dxf(cad,lines)
+                    else:
+                        import ezdxf
+                        ezdxf.new('R2010').saveas(cad)
+                    cad.with_suffix('.prj').write_text(crs.to_wkt()+'\n',encoding='utf-8')
+                    _save(folder/'summary.json',dict(lines=len(lines),vertices=sum(len(l.xy) for l in lines),interval=recipe.contour_interval,smoothing=False,source=str(out/'surface'/'dtm.asc')))
+                    check();publish_new(folder,out/'contours')
+                return dict(lines=len(lines)),[out/'contours'/'contours.dxf',out/'contours'/'summary.json']
             stage('Contours',[str(out/'surface'/'dtm.asc')],contours,dict(interval=recipe.contour_interval))
             final_qa,_=stage('Final QA',spec.clouds,lambda:qa_action(out/'final_qa'),dict(control=recipe.control))
             def delivery():
-                folder=out/'final_clouds';folder.mkdir();products=[];receipts=[]
-                for index,source in enumerate(spec.clouds,1):
-                    check();dest=folder/f'{index:03d}_{Path(recipe.clouds[index-1]).stem}_final{Path(source).suffix.lower()}'
-                    before=identity(source);expected_hash=_digest(source,cancel);shutil.copy2(source,dest)
-                    if identity(source)!=before or _digest(dest,cancel)!=expected_hash:raise ValueError('Final cloud copy failed verification')
-                    receipts.append(dict(source=source,output=str(dest),sha256=expected_hash,size_bytes=dest.stat().st_size));products.append(dest)
-                _save(folder/'manifest.json',dict(clouds=receipts,points=final_qa['points'],ground_points=final_qa['ground_points'],qa=str(out/'final_qa'/'report.html'),review='Needs review; output creation is not accuracy acceptance.'))
-                return receipts,products+[folder/'manifest.json']
+                products=[];receipts=[]
+                with staging_directory(out, prefix='.pyargus-delivery-') as temp:
+                    folder=temp/'final_clouds';folder.mkdir()
+                    for index,source in enumerate(spec.clouds,1):
+                        check();name=f'{index:03d}_{Path(recipe.clouds[index-1]).stem}_final{Path(source).suffix.lower()}'
+                        dest=folder/name;published=out/'final_clouds'/name
+                        before=identity(source);expected_hash=_digest(source,cancel);shutil.copy2(source,dest)
+                        if identity(source)!=before or _digest(dest,cancel)!=expected_hash:raise ValueError('Final cloud copy failed verification')
+                        receipts.append(dict(source=source,output=str(published),sha256=expected_hash,size_bytes=dest.stat().st_size));products.append(published)
+                    _save(folder/'manifest.json',dict(clouds=receipts,points=final_qa['points'],ground_points=final_qa['ground_points'],qa=str(out/'final_qa'/'report.html'),review='Needs review; output creation is not accuracy acceptance.'))
+                    check();publish_new(folder,out/'final_clouds')
+                return receipts,products+[out/'final_clouds'/'manifest.json']
             exported,_=stage('Delivery',spec.clouds,delivery,dict(export='verified separate final flight files'))
             # Reference the current processing versions; delivery copies are output layers.
             # Completed-stage output layers were added as each stage finished.

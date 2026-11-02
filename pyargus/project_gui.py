@@ -313,6 +313,8 @@ class ProjectWindow:
             for b in self.actions: b.configure(state='normal')
             if runner.error is None and not runner.cancelled() and 'inventory' in completed:
                 self.inventory=completed['inventory']; self.show_inventory()
+                # Matching results live in the dock, which Process keeps closed by default.
+                if mode=='inspect' and hasattr(self.app,'workspace'):self.app.workspace.show_panel(self.app.workspace.project_tab)
         self.app.root.after(150,finish)
 
     def show_inventory(self):

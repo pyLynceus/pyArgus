@@ -1,0 +1,24 @@
+# Package an already verified native PyInstaller onedir payload.
+pkgname=pyargus
+pkgver=0.2.0
+pkgrel=2
+pkgdesc='LiDAR QA, flight-line alignment and desktop review'
+arch=('x86_64')
+url='https://github.com/pyLynceus/pyArgus'
+license=('Apache-2.0')
+depends=('glibc>=2.44' 'gcc-libs' 'zlib' 'tk' 'libglvnd' 'libx11' 'freetype2' 'fontconfig' 'xdg-utils' 'bash' 'hicolor-icon-theme' 'mpdecimal')
+optdepends=('pdal: COPC export' 'mesa: OpenGL graphics driver')
+options=('!strip' '!debug')
+source=("pyargus-${pkgver}-linux-x86_64.tar.gz")
+# The release builder replaces this with the payload's recorded SHA256.
+sha256sums=('PAYLOAD_SHA256')
+package() {
+    install -d "$pkgdir/usr/lib/pyargus" "$pkgdir/usr/bin"
+    cp -a "$srcdir/pyArgus/." "$pkgdir/usr/lib/pyargus/"
+    printf '#!/bin/sh\nexec /usr/lib/pyargus/launch.sh --cli "$@"\n' > "$pkgdir/usr/bin/pyargus"
+    printf '#!/bin/sh\nexec /usr/lib/pyargus/launch.sh "$@"\n' > "$pkgdir/usr/bin/pyargus-gui"
+    chmod 755 "$pkgdir/usr/bin/pyargus" "$pkgdir/usr/bin/pyargus-gui"
+    install -Dm644 "$pkgdir/usr/lib/pyargus/pyargus.desktop" "$pkgdir/usr/share/applications/pyargus.desktop"
+    install -Dm644 "$pkgdir/usr/lib/pyargus/pyargus.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/pyargus.png"
+    install -Dm644 "$pkgdir/usr/lib/pyargus/LICENSE" "$pkgdir/usr/share/licenses/pyargus/LICENSE"
+}

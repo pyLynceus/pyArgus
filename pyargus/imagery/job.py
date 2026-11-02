@@ -172,9 +172,18 @@ def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
         record.data["matched_images"] = [identity(r["image"]) for r in calibration_provenance]
         record.save()
 
+        def check_inputs():
+            for item in record.data['inputs'] + record.data['matched_images']:
+                if identity(item['path'], hash_content='sha256' in item) != item:
+                    raise ValueError('Input changed during colorization: ' + item['path'])
+            for item in calibration_provenance:
+                if identity(item['calibration'], hash_content=True)['sha256'] != item['sha256']:
+                    raise ValueError('Calibration changed during colorization: ' + item['calibration'])
+
         points = las_mod.read_points(cloud, fields=("x", "y", "z"))
         xyz = np.column_stack([points["x"], points["y"], points["z"]])
         del points
+        check_inputs()
         agl = check_datum(eo, xyz)
         log(f"eo:      {len(eo['filename'])} rows, flying height "
             f"~{agl:.0f} above the cloud median")
@@ -219,6 +228,7 @@ def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
             record.finish("cancelled", stats)
             return stats
 
+        check_inputs()
         source_format = las_mod.cloud_info(cloud)["point_format"]
         target_format = None
         if source_format not in RGB_POINT_FORMATS:
@@ -232,7 +242,7 @@ def colorize_cloud(cloud, eo_path, images, out, *, cal=None,
                     "blue": block[:, 2]}
 
         las_mod.stream_update(cloud, out, paint, fields=("x",),
-                              point_format=target_format)
+                              point_format=target_format, before_publish=check_inputs)
         stats["point_format"] = target_format or source_format
         record.data["output"] = identity(out)
         record.finish("completed", stats)

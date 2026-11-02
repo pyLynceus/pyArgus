@@ -8,6 +8,9 @@ otherwise, so the delivery's Amplitude/Reflectance/Deviation would
 vanish with no error at all.
 """
 
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -49,6 +52,33 @@ def test_find_pdal_reports_absence_rather_than_guessing(tmp_path,
     assert copc_mod.find_pdal() is None
     with pytest.raises(ValueError, match="needs pdal"):
         copc_mod.write_copc(tmp_path / "a.las", tmp_path / "b.copc.laz")
+
+
+def test_pdal_subprocess_does_not_inherit_a_frozen_library_path(tmp_path, monkeypatch):
+    """On a frozen Linux build the system pdal must not load PyInstaller's bundled libraries (review F-23)."""
+    src = tmp_path / "src.las"
+    make_cloud(src, n=50)
+    fake = tmp_path / "pdal"
+    fake.write_text("")
+    seen = {}
+
+    def run(command, **kwargs):
+        seen.update(kwargs, command=command)
+        return subprocess.CompletedProcess(command, 1, "", "stopped by the test")
+
+    monkeypatch.setattr(copc_mod.subprocess, "run", run)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/pyargus/_internal")
+    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG", raising=False)
+    with pytest.raises(ValueError, match="pdal failed"):
+        copc_mod.write_copc(src, tmp_path / "out.copc.laz", pdal=str(fake))
+    assert seen["command"][0] == str(fake)
+    assert "LD_LIBRARY_PATH" not in seen["env"]           # the bundled library path is dropped
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/local/lib")
+    with pytest.raises(ValueError, match="pdal failed"):
+        copc_mod.write_copc(src, tmp_path / "out.copc.laz", pdal=str(fake))
+    assert seen["env"]["LD_LIBRARY_PATH"] == "/usr/local/lib"   # the host's own path is restored
 
 
 def test_copc_naming_is_enforced(tmp_path):

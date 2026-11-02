@@ -1,7 +1,10 @@
 # QA review and cross-sections
 
 Launch the GUI from this worktree's environment (`python -m pyargus gui`).
-In Data, select **QA review / cross-sections…**.
+QA review lives in the lower dock: in Job history, **Load selected result**
+opens a job record on the QA results tab, and the Cross-section tab extracts
+sections from the loaded clouds. (The Data menu entry of earlier builds no
+longer exists.)
 
 ## Review a job
 
@@ -18,6 +21,13 @@ records. Older HTML-only reports need a new tracked run; HTML is not parsed.
 Project QA may read trajectory counts from the associated inventory.json,
 and labels this secondary source. Aggregate strip flags do not locate an
 individual bad overlap cell. Solver-only records have no independent QA.
+
+## Coverage overlap
+
+New QA reports include measured occupied-area overlap percentages and a
+coverage multiplicity map. Read [Measured coverage overlap](COVERAGE_OVERLAP.md)
+for both directional denominators, noise exclusions, exact cell files and
+limits. These percentages do not infer planned flight sidelap or accuracy.
 
 ## Inspect a section
 
@@ -70,7 +80,3 @@ can be edited without removing other clouds from the project.
 
 Ground-classification job records can also be opened in the review panel.
 Their ground fraction is a classification proportion, not an accuracy measure.
-
-## Version 0.2.0
-
-Version 0.2.0 adds automatic alignment comparisons with optional survey checks (ALIGNMENT_REPORTS.md) and measured occupied-cell coverage (COVERAGE_OVERLAP.md).

@@ -21,21 +21,50 @@ ROOT = Path(__file__).resolve().parents[1]
 def git(*args):
     return subprocess.check_output(['git', *args], cwd=ROOT).decode().strip()
 
+def git_or_note(*args):
+    """Git's answer, or a note when git is not on PATH; the fingerprint does not need git."""
+    try:
+        return git(*args)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return f'git unavailable: {type(exc).__name__}'
+
 def source_identity():
-    """Hash working contents, including nonignored new files and deletions."""
-    names = subprocess.check_output(
-        ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-        cwd=ROOT).decode().split('\0')
-    digest = hashlib.sha256()
-    for name in sorted(set(filter(None, names))):
-        path = ROOT / name
-        digest.update(name.encode() + b'\0')
-        if path.is_file():
-            digest.update(hashlib.sha256(path.read_bytes()).digest())
-        else:
-            digest.update(b'MISSING')
-    return dict(commit=git('rev-parse', 'HEAD'),
-                status=git('status', '--porcelain'), sha256=digest.hexdigest())
+    """Fingerprint the source with the scheme review packets use (devtools.fingerprint).
+
+    Before October 22, 2026 this hashed every nonignored file known to git while
+    the packet hashed a fixed set of roots, so a validation record could not be
+    tied to a packet. Both now share one scheme; git adds only commit and status.
+    """
+    from devtools.fingerprint import SCHEME, source_fingerprint
+    return dict(commit=git_or_note('rev-parse', 'HEAD'), status=git_or_note('status', '--porcelain'),
+                sha256=source_fingerprint(ROOT), scheme=SCHEME)
+
+def lock_directory():
+    """The shared Git directory when git can name it, so sibling worktrees serialize; else the checkout."""
+    try:
+        common = Path(git('rev-parse', '--git-common-dir'))
+    except (OSError, subprocess.CalledProcessError):
+        return ROOT
+    if not common.is_absolute(): common = ROOT / common
+    return common.resolve()
+
+def distribution_inventory(distributions=None):
+    """Keep malformed installed metadata visible without crashing validation."""
+    packages, warnings = [], []
+    for dist in metadata.distributions() if distributions is None else distributions:
+        location = str(getattr(dist, '_path', '(metadata location unavailable)'))
+        try:
+            name, version = dist.metadata.get('Name'), dist.version
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError('missing distribution Name')
+            if not isinstance(version, str) or not version.strip():
+                raise ValueError('missing distribution Version')
+            packages.append(dict(name=name, version=version))
+        except Exception as exc:
+            warnings.append(dict(location=location, error=f'{type(exc).__name__}: {exc}'))
+    return dict(packages=sorted(packages, key=lambda row: row['name'].casefold()),
+                environment_warnings=warnings)
+
 
 def junit_summary(path):
     root = ET.parse(path).getroot()
@@ -55,7 +84,7 @@ def junit_summary(path):
                 for s in ('passed', 'skipped', 'failure', 'error')},
                 nonpassing=[r for r in rows if r['outcome']!='passed'])
 
-def decision(steps, tests, before, after):
+def decision(steps, tests, before, after, environment_warnings=()):
     if before != after:
         return 'invalid_source_changed'
     if any(s['returncode'] != 0 for s in steps):
@@ -66,6 +95,8 @@ def decision(steps, tests, before, after):
         return 'failed'
     if tests['counts']['skipped']:
         return 'needs_skip_review'
+    if environment_warnings:
+        return 'needs_environment_review'
     return 'passed_requested_checks'
 
 def main(argv=None):
@@ -75,9 +106,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     # Place the lock in the shared Git directory so sibling worktrees using
     # this runner cannot start heavy checks concurrently.
-    common = Path(git('rev-parse', '--git-common-dir'))
-    if not common.is_absolute(): common = ROOT / common
-    lock = common.resolve() / 'pyargus-validation.lock'
+    lock = lock_directory() / 'pyargus-validation.lock'
     try:
         handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
@@ -93,8 +122,7 @@ def main(argv=None):
         folder.mkdir(parents=True, exist_ok=False)
         report.update(started_utc=stamp, checkout=str(ROOT), source_before=source_identity(),
                       python=sys.version, interpreter=sys.executable, platform=platform.platform(),
-                      packages=sorted([dict(name=d.metadata['Name'],version=d.version)
-                                       for d in metadata.distributions()],key=lambda d:d['name'].lower()))
+                      **distribution_inventory())
         def run(name, command):
             print(f'{name}: running serially; log {folder / (name + ".log")}', flush=True)
             with (folder / (name+'.log')).open('w', encoding='utf-8') as log:
@@ -119,7 +147,8 @@ def main(argv=None):
                     provenance='Supplied executable tested; source-to-build provenance NOT established by this hash.')
                 run('packaged-self-test',[str(exe),'--self-test'])
         report['source_after']=source_identity()
-        report['status']=decision(report['steps'],report['tests'],report['source_before'],report['source_after'])
+        report['status']=decision(report['steps'],report['tests'],report['source_before'],report['source_after'],
+                                  report.get('environment_warnings', ()))
         return 0 if report['status']=='passed_requested_checks' else 1
     except Exception as exc:
         report['status']='runner_error';report['error']=repr(exc)

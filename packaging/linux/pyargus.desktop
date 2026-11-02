@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=pyArgus
+Comment=LiDAR QA, flight-line alignment and review
+Exec=pyargus-gui
+Icon=pyargus
+Terminal=false
+Categories=Science;Geography;
+StartupNotify=false

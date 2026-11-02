@@ -123,3 +123,23 @@ def test_gpu_picking_filters_and_stereo_share_camera(root):
         v.stereo_swap.set(True);v.draw()
     finally:
         v.close()
+
+
+def test_linux_context_preserves_tk_x11_error_handler(root):
+    import sys
+    if not sys.platform.startswith("linux"):
+        pytest.skip("X11 handler ownership is Linux-specific")
+    import ctypes
+    pytest.importorskip("moderngl")
+    x11=ctypes.CDLL("libX11.so.6")
+    change=x11.XSetErrorHandler;change.argtypes=[ctypes.c_void_p];change.restype=ctypes.c_void_p
+    def current():
+        value=change(None);change(value);return value
+    before=current()
+    try:renderer=Renderer()
+    except Exception as exc:
+        assert current()==before
+        pytest.skip("Hardware OpenGL unavailable: "+str(exc))
+    try:assert current()==before
+    finally:renderer.close()
+    assert current()==before

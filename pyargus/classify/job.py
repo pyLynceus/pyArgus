@@ -213,7 +213,7 @@ def classify_ground_whole(path, out, *, cell=1.0, slope=0.15, window=18.0,
     if should_stop is not None and should_stop():
         return {"cancelled": True}
     las.classification = classification
-    las.write(str(out))
+    las_mod.write_preserving(las, out)
 
     n_ground = int(np.count_nonzero(classification == GROUND_CLASS))
     which = ("all non-noise returns eligible" if any_return

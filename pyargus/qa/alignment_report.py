@@ -8,12 +8,14 @@ import math
 import numpy as np
 from pyargus.analysis_records import plain
 from pyargus.job_manifest import identity
+from pyargus.qa import control_coverage
 
 FT_US = 1200 / 3937
 DEFAULTS = dict(checkpoints='', order='pnez', role='reference', surface='unspecified', material='',
-                pavement_tolerance_ft=.10, other_ground_tolerance_ft=.50, radius_ft=2., min_points=8)
+                pavement_tolerance_ft=.10, other_ground_tolerance_ft=.50, radius_ft=2., min_points=8,
+                control_points='', control_order='pnez', coverage_min_sites=3, coverage_max_gap_ft=1000.)
 PRODUCTS = ('report.html', 'alignment_comparison.json', 'overlap_comparison.csv', 'corrections.csv',
-            'checkpoint_comparison.csv', 'checkpoint_flights.csv')
+            'checkpoint_comparison.csv', 'checkpoint_flights.csv') + control_coverage.PRODUCTS
 
 
 def settings(value=None):
@@ -23,21 +25,24 @@ def settings(value=None):
     if unknown:
         raise ValueError('Unknown alignment report settings: ' + ', '.join(sorted(unknown)))
     result = dict(DEFAULTS, **(value or {}))
-    for key in ('checkpoints', 'material'):
+    for key in ('checkpoints', 'material', 'control_points'):
         if not isinstance(result[key], str):
             raise ValueError(f'Alignment report {key} must be text')
-    for key, choices in [('order', ('pnez', 'penz')), ('role', ('reference', 'independent')),
+    for key, choices in [('order', ('pnez', 'penz')), ('control_order', ('pnez', 'penz')), ('role', ('reference', 'independent')),
                          ('surface', ('unspecified', 'pavement', 'other_ground'))]:
         if result[key] not in choices:
             raise ValueError(f'Alignment report {key} must be one of {choices}')
-    for key in ('pavement_tolerance_ft', 'other_ground_tolerance_ft', 'radius_ft'):
+    for key in ('pavement_tolerance_ft', 'other_ground_tolerance_ft', 'radius_ft', 'coverage_max_gap_ft'):
         value = result[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f'Alignment report {key} must be finite and positive')
     if type(result['min_points']) is not int or result['min_points'] < 3:
         raise ValueError('Alignment report minimum points must be an integer of at least 3')
-    if result['checkpoints']:
-        result['checkpoints'] = str(Path(result['checkpoints']).resolve())
+    if type(result['coverage_min_sites']) is not int or result['coverage_min_sites'] < 1:
+        raise ValueError('Control coverage minimum sites must be a positive integer')
+    for key in ('checkpoints', 'control_points'):
+        if result[key]:
+            result[key] = str(Path(result[key]).resolve())
     return result
 
 
@@ -55,6 +60,14 @@ def read_checks(config):
     if identity(config['checkpoints'], hash_content=True) != before:
         raise ValueError('Alignment report checkpoint CSV changed while reading')
     return dict(ids=ids, xyz=xyz, identity=before)
+
+
+def read_references(config):
+    """Read audit-only PIDs; never forwards them to the alignment solver."""
+    try:
+        return read_checks(dict(config, checkpoints=config['control_points'], order=config['control_order']))
+    except ValueError as exc:
+        raise ValueError(str(exc).replace('checkpoint', 'control/PID')) from exc
 
 
 def _plane(xy, z, minimum, radius):
@@ -143,11 +156,21 @@ def _csv(path, headers, rows):
         writer = csv.writer(f); writer.writerow(headers); writer.writerows(rows)
 
 
-def generate(folder, alignment, before_qa, after_qa, before_checks, after_checks, config, crs, *, inputs):
+def generate(folder, alignment, before_qa, after_qa, before_checks, after_checks, config, crs, *, inputs, coverage_audit=None):
     """Write one portable HTML comparison plus machine-readable evidence in an unpublished run folder."""
     folder = Path(folder)
+    if coverage_audit is None:
+        coverage_audit = dict(schema_version=1, units=crs.axis_info[0].unit_name, flights=[], points=[],
+            basis=None, summary=dict(flights_with_warnings=0),
+            limitations=['Control coverage unavailable: original point geometry was not supplied to this report.'])
+    control_coverage.write(folder, coverage_audit)
     rows = compare_checks(before_checks, after_checks)
-    paired = [r for r in rows if r['paired_support'] and r['role'] != 'fitting_control_neighborhood']
+    conflicts = {m['id'] for m in coverage_audit['points']
+                 if m.get('role_conflict') and m['source']=='report_checkpoints'}
+    for row in rows:
+        if row['id'] in conflicts:
+            row['role'] = 'survey_role_conflict'
+    paired = [r for r in rows if r['paired_support'] and r['role'] not in ('fitting_control_neighborhood','survey_role_conflict')]
     independent = [r for r in paired if r['role'] == 'independent']
     tol = rows[0]['tolerance'] if rows else None
     pairs_before = {(p['a'], p['b']): p for p in before_qa.get('strip_dz', [])}
@@ -160,7 +183,7 @@ def generate(folder, alignment, before_qa, after_qa, before_checks, after_checks
         settings=config, inputs=inputs, corrections=corrections, boresight_radians=alignment['boresight'],
         solver=dict(patch_rms_before=alignment['patch_rms_before'], patch_rms_after=alignment['patch_rms_after'],
                     observations=alignment['observations'], control_anchored=alignment['control_anchored']),
-        overlap=overlap, checkpoints=rows,
+        overlap=overlap, checkpoints=rows, control_coverage=coverage_audit,
         checkpoint_summary=dict(supplied=len(rows), paired_support=len(paired), independent_paired_support=len(independent),
             before=_statistics([r['before']['error'] for r in paired], tol),
             after=_statistics([r['after']['error'] for r in paired], tol),
@@ -199,25 +222,31 @@ def generate(folder, alignment, before_qa, after_qa, before_checks, after_checks
     if raised:findings.append(f'{raised} flight pair(s) have higher cell RMSE after export. Review the overlap maps and changed cell counts.')
     if rows:
         findings.append(f"{len(rows)-sum(r['paired_support'] for r in rows)} supplied checks lack support in one or both states; these are retained as unavailable.")
+        if conflicts:findings.append(f'{len(conflicts)} checks have conflicting reference/control and independent roles; they remain visible but are excluded from accuracy summaries pending role resolution.')
         fitting_count=sum(r['role']=='fitting_control_neighborhood' for r in rows)
         if fitting_count:findings.append(f'{fitting_count} checks overlap supplied fitting-control neighborhoods and are excluded from summary accuracy statistics.')
         if a['exceeding'] is not None:findings.append(f"{a['exceeding']} of {a['n']} paired {config['role']} comparisons exceed the declared {config['surface']} tolerance after export.")
         else:findings.append('No tolerance assessment is available without both paired support and a declared surface category.')
         if a['rmse'] is not None and b['rmse'] is not None and a['rmse']>b['rmse']+1e-12:findings.append('RMSE at the same supported survey IDs is higher after export; review before accepting the adjustment.')
+    if coverage_audit['summary']['flights_with_warnings']:
+        findings.append(f"Control coverage screening flags {coverage_audit['summary']['flights_with_warnings']} analysis flight(s); inspect the control/PID map and separate fitting, reference and check counts.")
     if not findings:findings.append('Review the overlap results and correction magnitudes. No survey accuracy acceptance is inferred.')
     findings_html='<ul>'+''.join('<li>'+esc(t)+'</li>' for t in findings)+'</ul>'
     missing='No survey checks supplied; absolute vertical accuracy has not been evaluated.' if not rows else ('No independent checkpoints have paired support; absolute vertical accuracy is not established.' if not independent else f'{len(independent)} declared independent checkpoints have support before and after; review their residuals and survey provenance.')
     data=json.dumps(evidence,separators=(',',':'),allow_nan=False).replace('<',chr(92)+'u003c').replace('>',chr(92)+'u003e').replace('&',chr(92)+'u0026')
     script=(Path(__file__).parents[1]/'assets'/'alignment_report.js').read_text(encoding='utf-8')
+    coverage_script=(Path(__file__).parents[1]/'assets'/'control_coverage.js').read_text(encoding='utf-8')
+    coverage_html=control_coverage.section(coverage_audit)
     page=f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>pyArgus alignment comparison</title><style>
-body{{font:15px/1.55 'Segoe UI',system-ui,sans-serif;color:#193548;background:#f3f6f8;margin:0}}main{{max-width:1160px;margin:auto;padding:28px 22px}}h1{{font-size:30px;margin:5px 0}}h2{{font-size:21px;margin-top:32px}}.eyebrow,.muted{{color:#526c7e}}.notice{{padding:14px 18px;border-left:4px solid #b58132;background:#fff4df}}.cards{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.card,section{{background:white;padding:16px;border:1px solid #d8e2e8;border-radius:7px}}.card strong{{display:block;font-size:25px}}section{{margin-top:18px}}.scroll{{overflow:auto}}table{{border-collapse:collapse;width:100%;font-size:13px}}th,td{{padding:8px;text-align:left;border-bottom:1px solid #d9e2e8}}td{{overflow-wrap:anywhere}}th{{background:#edf2f5}}.toolbar{{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:12px 0}}button,select,input{{font:inherit;padding:5px}}a{{color:#145d8b}}canvas{{width:100%;height:310px;background:#f5f8fa}}.plots{{display:grid;grid-template-columns:1fr 1fr;gap:15px}}.downloads{{display:flex;flex-wrap:wrap;gap:14px}}@media(max-width:760px){{.cards,.plots{{grid-template-columns:1fr 1fr}}main{{padding:16px 10px}}}}@media(max-width:500px){{.cards,.plots{{grid-template-columns:1fr}}}}
+body{{font:15px/1.55 'Segoe UI',system-ui,sans-serif;color:#193548;background:#f3f6f8;margin:0}}main{{max-width:1160px;margin:auto;padding:28px 22px}}h1{{font-size:30px;margin:5px 0}}h2{{font-size:21px;margin-top:32px}}.eyebrow,.muted{{color:#526c7e}}.notice{{padding:14px 18px;border-left:4px solid #b58132;background:#fff4df}}.cards{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.card,section{{background:white;padding:16px;border:1px solid #d8e2e8;border-radius:7px}}.card strong{{display:block;font-size:25px}}section{{margin-top:18px}}.scroll{{overflow:auto}}table{{border-collapse:collapse;width:100%;font-size:13px}}th,td{{padding:8px;text-align:left;border-bottom:1px solid #d9e2e8}}td{{overflow-wrap:anywhere}}th{{background:#edf2f5}}.toolbar{{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:12px 0}}button,select,input{{font:inherit;padding:5px}}a{{color:#145d8b}}#coveragePointTable table{{min-width:1250px}}#coveragePointTable td{{overflow-wrap:normal}}#coveragePointTable td:nth-child(5),#coveragePointTable td:nth-child(6),#coveragePointTable td:nth-child(7){{white-space:nowrap}}#coverageAudit th{{white-space:normal}}#coverageAudit td:first-child{{min-width:85px}}canvas{{width:100%;height:310px;background:#f5f8fa}}.plots{{display:grid;grid-template-columns:1fr 1fr;gap:15px}}.downloads{{display:flex;flex-wrap:wrap;gap:14px}}@media(max-width:760px){{.cards,.plots{{grid-template-columns:1fr 1fr}}main{{padding:16px 10px}}}}@media(max-width:500px){{.cards,.plots{{grid-template-columns:1fr}}}}
 </style></head><body><main><div class="eyebrow">pyArgus · automatic alignment comparison · {esc(evidence['created_utc'])}</div><h1>Alignment before and after</h1><p>Exported cloud comparison · units: <strong>{unit}</strong> · surface declaration: <strong>{esc(config['surface'])}</strong></p><p class="notice"><strong>Needs review.</strong> {esc(missing)} Flight-line agreement and survey accuracy are separate assessments.</p>
 <div class="cards"><div class="card"><strong>{num(alignment['patch_rms_before'])} → {num(alignment['patch_rms_after'])}</strong>solver patch RMS ({unit}); fitting evidence</div><div class="card"><strong>{len(overlap)}</strong>flight pairs with QA support in either state</div><div class="card"><strong>{stats['paired_support']} / {stats['supplied']}</strong>paired survey comparisons / supplied records</div><div class="card"><strong>{num(b['rmse'])} → {num(a['rmse'])}</strong>paired survey RMSE ({unit}); role: {esc(config['role'])}</div></div>
 <section><h2>Items to review</h2>{findings_html}</section>
+{coverage_html}
 <section><h2>Flight-line agreement</h2><p>Ground-cell comparisons from the before and after QA reports. Each state can contain different cells; counts remain visible. Missing overlap is unavailable evidence.</p>{pair_table if overlap else '<p>No flight pair has qualifying ground-cell overlap.</p>'}<p><a href="before/report.html">Before QA and maps</a> · <a href="after/report.html">After QA and maps</a></p></section>
 <section><h2>Corrections applied</h2>{correction_table}<p>Boresight [roll, pitch, heading], radians: {esc(alignment['boresight'])}. Analysis flight IDs map to original LAS line IDs, trajectories and files in <a href="alignment.json">alignment.json</a>. Original LAS line IDs remain preserved.</p></section>
-<section id="checks"><h2>Survey checks at the same locations</h2><p>All supplied records remain visible, including unsupported checks. Positive error means cloud above survey. Summary RMSE uses the same supported IDs before and after; fitting-control neighborhoods are excluded. A declared reference comparison does not establish independent accuracy.</p><p>Radius: {config['radius_ft']:g} US survey ft; minimum {config['min_points']} ground returns; surveyed XY must lie inside the local ground hull. Pavement tolerance: ±{config['pavement_tolerance_ft']:g} US survey ft; other ground: ±{config['other_ground_tolerance_ft']:g} US survey ft. Only the declared surface tolerance is evaluated. Material: {esc(config['material'] or 'Not declared')}.</p>
+<section id="checks"><h2>Survey checks at the same locations</h2><p>All supplied records remain visible, including unsupported checks. Positive error means cloud above survey. Summary RMSE uses the same supported IDs before and after; fitting-control neighborhoods and conflicting survey roles are excluded. A declared reference comparison does not establish independent accuracy.</p><p>Radius: {config['radius_ft']:g} US survey ft; minimum {config['min_points']} ground returns; surveyed XY must lie inside the local ground hull. Pavement tolerance: ±{config['pavement_tolerance_ft']:g} US survey ft; other ground: ±{config['other_ground_tolerance_ft']:g} US survey ft. Only the declared surface tolerance is evaluated. Material: {esc(config['material'] or 'Not declared')}.</p>
 <div class="toolbar"><label>Find ID <input id="findId" size="10"></label><label>Show <select id="rowFilter"><option value="all">All supplied checks</option><option value="exceeding">Exceeding after tolerance</option><option value="unsupported">Unsupported before or after</option></select></label><span id="rowCount"></span></div><div class="plots"><div><h3>Check locations</h3><canvas id="checkMap"></canvas></div><div><h3>Before and after height errors</h3><canvas id="errorPlot"></canvas></div></div><div id="selectedCheck" class="notice"></div><div id="flightTable" class="scroll"></div><div id="checkTable" class="scroll"></div></section>
-<section><h2>Inputs, settings and evidence</h2><div class="downloads"><a href="alignment_comparison.json">Full comparison JSON</a><a href="checkpoint_comparison.csv">Check residuals CSV</a><a href="checkpoint_flights.csv">Per-flight checks CSV</a><a href="overlap_comparison.csv">Flight-pair comparison CSV</a><a href="corrections.csv">Corrections CSV</a><a href="project.json">Saved project and report settings</a></div><details><summary>Source identities</summary>{source_table}</details><details><summary>Methods and limitations</summary><ul>{''.join('<li>'+esc(t)+'</li>' for t in evidence['limitations'])}</ul></details></section><footer><p>Keep this run folder together. Reports are retained per run; generating a report does not approve the adjustment.</p></footer></main><script>window.alignmentReportData={data};</script><script>{script}</script></body></html>'''
+<section><h2>Inputs, settings and evidence</h2><div class="downloads"><a href="alignment_comparison.json">Full comparison JSON</a><a href="control_coverage.json">Control coverage JSON</a><a href="control_coverage_flights.csv">Control coverage by flight CSV</a><a href="control_coverage_points.csv">Control support / rejected points CSV</a><a href="control_coverage.svg">Control map SVG</a><a href="checkpoint_comparison.csv">Check residuals CSV</a><a href="checkpoint_flights.csv">Per-flight checks CSV</a><a href="overlap_comparison.csv">Flight-pair comparison CSV</a><a href="corrections.csv">Corrections CSV</a><a href="project.json">Saved project and report settings</a></div><details><summary>Source identities</summary>{source_table}</details><details><summary>Methods and limitations</summary><ul>{''.join('<li>'+esc(t)+'</li>' for t in evidence['limitations'])}</ul></details></section><footer><p>Keep this run folder together. Reports are retained per run; generating a report does not approve the adjustment.</p></footer></main><script>window.alignmentReportData={data};</script><script>{script}</script><script>{coverage_script}</script></body></html>'''
     (folder/'report.html').write_text(page,encoding='utf-8')
     return evidence

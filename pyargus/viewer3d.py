@@ -171,7 +171,8 @@ class Viewer:
         self.canvas = tk.Canvas(body,bg='#101925',highlightthickness=0)
         self.canvas.pack(side='left',fill='both',expand=True)
         self.visible = []
-        self.canvas.bind('<Configure>',lambda e:self.schedule())
+        self.canvas_size=(2,2)
+        self.canvas.bind('<Configure>',self.resize)
         self.canvas.bind('<Shift-Button-1>',self.pick_point)
         self.canvas.bind('<Control-Button-1>',self.pick_section)
         self.canvas.bind('<ButtonPress-1>',self.press)
@@ -320,13 +321,14 @@ class Viewer:
         for path in paths:
             var=self.tk.BooleanVar(value=True);self.visible.append(var)
             ttk.Checkbutton(self.layers,text=Path(path).name,variable=var,command=self.draw).pack(anchor='w')
+        self.canvas_size=(max(2,self.canvas.winfo_width()),max(2,self.canvas.winfo_height()))
         if camera is None:
             points=scene[0];self.center=(points.min(axis=0)+points.max(axis=0))/2
             self.span=max(float(np.linalg.norm(np.ptp(points,axis=0))),1.);self.fit()
         else:
             self.center=np.array(camera['center'],dtype=float)
             for key in ('yaw','pitch','zoom','span'):setattr(self,key,camera[key])
-            scale=min(max(2,self.canvas.winfo_width()),max(2,self.canvas.winfo_height()))*.85/self.span*self.zoom
+            scale=min(self.canvas_size)*.85/self.span*self.zoom
             self.pan=np.array(camera['pan_units'])*scale;self.draw()
 
     def cancel_corridor_drag(self):
@@ -405,6 +407,33 @@ class Viewer:
     def view(self,yaw,pitch):
         self.cancel_corridor_drag()
         self.remember_view();self.yaw=yaw;self.pitch=pitch;self.draw()
+
+    def resize(self,e):
+        """Keep the world point under the canvas centre when the canvas changes size.
+
+        The draw scale follows the smaller canvas dimension, so a pan held in
+        pixels would drift when a dock opens or the window is resized. Scaling
+        it with the canvas keeps the pan in map units, as camera_state records
+        it; the magnification still follows the canvas, as Fit defines it.
+        """
+        size=(max(2,e.width),max(2,e.height))
+        previous=self.canvas_size
+        if size!=previous and self.scene is not None:
+            self.pan=self.pan*(min(size)/min(previous))
+        self.canvas_size=size
+        self.schedule()
+
+    def reset_detail(self):
+        """Return to the overview sample already in memory; the camera and view history stay."""
+        self.cancel_corridor_drag()
+        if self.overview_scene is None:
+            if self.paths and not self.busy:self.load(self.paths)
+            return
+        if self.detail_job:self.cancel.set()
+        self.auto_attempted=self.view_key()
+        if self.scene is not self.overview_scene:
+            self.scene=self.overview_scene;self.draw()
+        self.detail_note.set('Overview sample; Refine view or Auto detail adds local detail again.')
     def schedule(self):
         if self.pending is None: self.pending=self.window.after(30,self.draw)
     @property

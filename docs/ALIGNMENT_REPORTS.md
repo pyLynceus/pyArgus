@@ -1,5 +1,10 @@
 # Automatic alignment comparison reports
 
+For diagnosis of existing clouds without an adjustment, use
+[Flightline diagnostics](FLIGHTLINE_DIAGNOSTICS.md). It compares relative
+ground agreement and coverage, including common-cell baseline/candidate views;
+it does not measure survey residuals or independent absolute accuracy.
+
 Every new **multi-file project alignment** and enabled **LP360 alignment** now
 writes one `report.html` in its alignment output folder. A new run requires a
 new output folder; earlier reports and original clouds remain preserved.
@@ -39,6 +44,15 @@ If LP360 has an existing Control CSV but no separate report-check CSV, it is
 included as a **reference**, with surface unspecified. It is not silently
 reclassified as independent check evidence or fitted as alignment control.
 
+## Control coverage
+
+The **Control coverage** subtab accepts reference PIDs separately from independent
+checks. New reports include an interactive, read-only control-coverage map,
+per-flight counts, rejected locations, and advisory geometry/gap warnings. See
+[Control coverage instructions](CONTROL_COVERAGE.md) for roles, editable screening
+thresholds and straight-axis extent limitations. Audit-only PIDs never enter the
+solve.
+
 ## What the numbers mean
 
 - Solver patch RMS describes the fitting observations. It is not an independent
@@ -75,6 +89,8 @@ The alignment folder contains:
   and each available per-flight observation.
 - `overlap_comparison.csv` and `corrections.csv`: flight-pair metrics and offsets.
 - `report_checkpoints.csv`: exact copy of the supplied CSV, when provided.
+- `control_coverage.json`, per-flight and per-mark coverage CSVs, and a static SVG
+  map; `report_controls.csv` retains an optional audit-only reference source.
 - `alignment.json`, `project.json`, `before/`, `after/`, and adjusted clouds.
 
 The native per-attempt job record includes these products and the checkpoint CSV
@@ -84,7 +100,7 @@ LP360 retains earlier completed stages according to its existing workflow.
 
 This feature covers project and LP360 alignment exports. Legacy single-cloud
 `align` solve/export paths retain their existing job records; they have not been
-converted to this comparison page. The deeper project scan-angle, timing,
+converted to this comparison page. The deeper Example_Project Redo scan-angle, timing,
 reflectance and trajectory investigation remains a separate diagnostic workflow.
 No such diagnosis is implied by this routine report. Existing reports are not
 retroactively rewritten, and no fitting algorithm or automatic acceptance policy

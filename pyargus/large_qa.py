@@ -9,6 +9,7 @@ import html
 import json
 import math
 from pathlib import Path
+from pyargus.publication import staging_directory, publish_new
 import shutil
 import sqlite3
 import tempfile
@@ -233,7 +234,7 @@ def qa(project,out,*,control=None,log=lambda s:None,cancel=lambda:False):
         raise ValueError(f'Large QA needs scratch disk space: conservatively allow {estimate/1024**3:.1f} GiB; output drive has {available/1024**3:.1f} GiB free. Choose an output folder on a larger drive.')
     log(f'Large-project QA: streaming {total:,} points; scratch allowance {estimate/1024**3:.1f} GiB. No full-cloud arrays.')
     # Scratch is separate from publishable output. Windows closes SQLite before cleanup.
-    with tempfile.TemporaryDirectory(prefix='.pyargus-large-qa-',dir=out.parent) as temp:
+    with staging_directory(out.parent, prefix='.pyargus-large-qa-') as temp:
         temp=Path(temp); result_dir=temp/'result'; result_dir.mkdir()
         store=None
         try:
@@ -253,7 +254,7 @@ def qa(project,out,*,control=None,log=lambda s:None,cancel=lambda:False):
             project.save(result_dir/'project.json')
             core._check_cancel(cancel)
             store.db.close(); store=None
-            result_dir.rename(out)
+            publish_new(result_dir, out)
         except sqlite3.OperationalError as exc:
             core._check_cancel(cancel)
             raise ValueError(f'Disk-backed QA failed: {exc}. Check free space on the output and system temporary drives.') from exc

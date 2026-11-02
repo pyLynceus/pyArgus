@@ -180,8 +180,20 @@ class LP360Shortcut:
         elif self.result:
             if self.result['status']=='Needs input':self.status.set('Needs input: '+' | '.join(i['message'] for i in self.result['issues']));return
             self.status.set(self.result['status']+'. '+self.result.get('error','')+' Results: '+self.result['workspace']);self.report_button.configure(state='normal')
-            if self.result['status'].startswith('Completed'):
-                self.w.restore(self.result['workspace']);self.w.layout.set_mode('Review');self.w.layout.show_panel(self.w.progress_tab);self.w.stage_tree.selection_set('Delivery');self.w.history();self.w.viewer.mode.set('Classification')
+            if self.result['status'].startswith('Completed'):self.show_results(self.result)
+
+    def show_results(self,result):
+        """Open a finished job for review: its workspace, Job history at Delivery, and the delivered clouds on screen.
+
+        The job's workspace records no view, so the delivered clouds are loaded
+        here; a view already on screen keeps its camera, since the job covered
+        the same area.
+        """
+        w=self.w
+        if not w.restore(result['workspace']):return
+        w.layout.set_mode('Review');w.layout.show_panel(w.progress_tab);w.stage_tree.selection_set('Delivery');w.history();w.viewer.mode.set('Classification')
+        final=[p for p in result.get('final_clouds',[]) if Path(p).is_file()]
+        if final and not w.viewer.busy:w.load_clouds(final,keep_camera=True)
 
     def open_report(self):
         if self.result and self.result.get('workspace'):

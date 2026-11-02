@@ -36,7 +36,10 @@ against a true 50.01. Not worth it here.
 """
 
 import copy
+from contextlib import contextmanager
+from pyargus.publication import replace_retry, PublicationError
 import os
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -177,15 +180,73 @@ def _output_header(laspy, src_header, point_format):
             [v for v in header.vlrs if v.user_id != "copc"])
     if point_format is None or point_format == header.point_format.id:
         return header
+    descriptors = [copy.deepcopy(v) for v in header.vlrs
+                   if v.user_id == "LASF_Spec" and v.record_id == 4]
     empty = laspy.LasData(
         header=header,
         points=laspy.ScaleAwarePointRecord.zeros(0, header=header))
-    return laspy.convert(empty, point_format_id=point_format).header
+    converted = laspy.convert(empty, point_format_id=point_format).header
+    # Format conversion rebuilds the ExtraBytes VLR from dimension metadata.
+    # Extra values/schema are unchanged, so retain the source descriptors too.
+    _restore_extra_descriptors(converted, descriptors)
+    return converted
+
+
+
+def _restore_extra_descriptors(header, descriptors):
+    positions = [i for i, v in enumerate(header.vlrs)
+                 if v.user_id == "LASF_Spec" and v.record_id == 4]
+    if len(positions) != len(descriptors):
+        raise ValueError("ExtraBytes descriptor count changed during export")
+    for index, original in zip(positions, descriptors):
+        header.vlrs[index] = copy.deepcopy(original)
+
+
+def extra_bytes_metadata(header):
+    """Exact descriptors for unchanged extra dimensions, including validity bits."""
+    return [bytes(v.record_data_bytes()) for v in header.vlrs
+            if v.user_id == "LASF_Spec" and v.record_id == 4]
+
+
+def assert_extra_bytes_preserved(source_header, output_header):
+    if extra_bytes_metadata(source_header) != extra_bytes_metadata(output_header):
+        raise ValueError("ExtraBytes descriptor metadata changed during export")
+
+
+@contextmanager
+def preserving_writer(path, header, *, do_compress=None):
+    """Write unchanged extra dimensions without laspy rewriting their descriptors.
+
+    Coordinate, classification and RGB updates do not change extra-dimension
+    values. laspy's extrema updates can nevertheless replace valid vendor
+    statistics with chunk-first values or sentinels. Restore the independent
+    descriptor snapshot before the final header is written. Callers that change
+    extra dimensions must instead compute descriptors for the changed values.
+    EVLR publication remains the caller's responsibility.
+    """
+    descriptors = [copy.deepcopy(v) for v in header.vlrs
+                   if v.user_id == "LASF_Spec" and v.record_id == 4]
+    with _laspy().open(path, mode="w", header=header,
+                       do_compress=do_compress) as writer:
+        try:
+            yield writer
+        finally:
+            _restore_extra_descriptors(writer.header, descriptors)
+
+
+def write_preserving(data, path):
+    """Whole-cloud equivalent of the preserving chunk writer."""
+    header = _output_header(_laspy(), data.header, None)
+    evlrs = [v for v in (data.evlrs or []) if v.user_id != "copc"]
+    with preserving_writer(path, header) as writer:
+        writer.write_points(data.points)
+        if evlrs and header.version.minor >= 4:
+            writer.write_evlrs(_laspy().vlrs.vlrlist.VLRList(evlrs))
 
 
 def stream_update(src, dst, update, *, fields=("x", "y", "z"),
                   chunk_size=DEFAULT_CHUNK, point_format=None,
-                  progress=None):
+                  progress=None, before_publish=None):
     """Copy a cloud chunk by chunk, letting ``update`` rewrite fields.
 
     ``update(points, start)`` receives a dict of the requested
@@ -208,7 +269,9 @@ def stream_update(src, dst, update, *, fields=("x", "y", "z"),
     into place only after the last chunk. A failure partway therefore
     leaves no output at all, rather than a truncated cloud that opens
     perfectly and is quietly missing its tail. Returns the number of
-    points written.
+    points written. An optional ``before_publish`` callback checks the caller's
+    input snapshot after the writer closes, immediately before replacement.
+    Persistent publication failures retain a unique partial path for recovery.
     """
     laspy = _laspy()
     src_path, dst_path = Path(src), Path(dst)
@@ -223,7 +286,9 @@ def stream_update(src, dst, update, *, fields=("x", "y", "z"),
             f"so this would destroy the cloud it is reading")
 
     written = 0
-    partial = dst_path.with_name(dst_path.name + ".partial")
+    fd, name = tempfile.mkstemp(prefix=dst_path.name + '.', suffix='.partial', dir=dst_path.parent)
+    os.close(fd)
+    partial = Path(name)
     try:
         with laspy.open(src_path) as reader:
             _check_fields(reader.header, fields, src_path)
@@ -231,7 +296,8 @@ def stream_update(src, dst, update, *, fields=("x", "y", "z"),
             header = _output_header(laspy, reader.header, point_format)
             converting = header.point_format.id != reader.header.point_format.id
             evlrs = [v for v in (reader.evlrs or []) if v.user_id != "copc"]
-            with laspy.open(partial, mode="w", header=header) as writer:
+            with preserving_writer(partial, header,
+                                   do_compress=dst_path.suffix.lower() == ".laz") as writer:
                 for chunk in reader.chunk_iterator(chunk_size):
                     size = len(chunk)
                     if converting:
@@ -265,7 +331,13 @@ def stream_update(src, dst, update, *, fields=("x", "y", "z"),
                 # the point writer.
                 if evlrs and header.version.minor >= 4:
                     writer.write_evlrs(laspy.vlrs.vlrlist.VLRList(evlrs))
-        os.replace(partial, dst_path)
+        if before_publish is not None:
+            before_publish()
+        replace_retry(partial, dst_path)
+    except PublicationError as exc:
+        if exc.recovery_path != partial.resolve():
+            Path(partial).unlink(missing_ok=True)
+        raise
     except BaseException:
         Path(partial).unlink(missing_ok=True)
         raise

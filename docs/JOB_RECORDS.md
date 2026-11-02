@@ -78,7 +78,11 @@ full cryptographic identity or independent numerical validation.
 
 Publication refuses an existing destination, including one created during the
 run. Windows uses exclusive rename; POSIX uses an exclusive hard link followed
-by removing the staging name. Failures and cancellation clean the staging area.
+by removing the staging name. Failed computation and cancellation clean the staging
+area. Final publication retries temporary access/sharing locks; if publication
+still fails, the complete staged cloud is retained and its recovery path is saved
+in the attempt record. The existing destination remains unchanged. A cleanup
+lock is logged separately and does not change a successful publication outcome.
 An abrupt process termination can leave staging files and a running record,
 but does not expose the partial cloud under the requested final filename.
 The final cloud and JSON still are not a single crash-atomic transaction.
@@ -91,3 +95,31 @@ settings, per-flight outputs/status, job IDs and record paths. The individual
 classification records remain the per-flight evidence. Batch completion does
 not accept the classifications; interrupted batches are not auto-resumed.
 Noise bounds are recorded as parameters; results include a noise point count.
+
+
+## October 21 output and input safeguards
+
+Project QA (both engines), project alignment, ground classification, and LP360
+surface, contours and delivery publish complete staged outputs. Persistent final
+rename failures retain complete work with a recovery path; retrying a streaming
+LAS write uses a fresh partial name and cannot overwrite an earlier recovery
+copy. Cancellation before publication removes partial work. Stop arriving after
+an LP360 stage commits leaves that stage complete; the next stage honors Stop.
+Record JSON and workspace saves use unique temporary files and bounded replacement
+retries. Cloud publication and record updates remain separate transactions.
+
+Unchanged LAS extra dimensions retain the exact ExtraBytes descriptor bytes,
+including vendor statistics/validity flags, through the shared whole/stream
+writers. Coordinate, classification and RGB updates retain these descriptors;
+a caller deliberately changing extra-dimension values must compute suitable
+new metadata. This is distinct from a classification policy: ground classification
+still recomputes non-noise labels according to its existing policy.
+
+Small text inputs (CSV, TSV, TXT, JSON, CAL, YAML, WKT and PRJ, up to 8 MiB) now
+include a content SHA-256 by default. Explicit hashing still works for larger
+text inputs. Large clouds and binary trajectories retain size/mtime identities,
+so edits deliberately preserving those metadata are not detected. Older saved
+text identities may conservatively become stale when compared with new hashed
+identities. Colorization checks cloud/EO/image/calibration identities after the
+coordinate read, before copying, and immediately before final publication.
+This detects ordinary concurrent changes, not an exclusive filesystem snapshot.

@@ -129,7 +129,9 @@ class EditSession:
             check()
             with laspy.open(self.source) as reader:
                 header = reader.header.copy()
-                with laspy.open(tmp, mode='w', header=header) as writer:
+                from pyargus.formats.las import preserving_writer
+                with preserving_writer(tmp, header,
+                        do_compress=dst.suffix.lower() == '.laz') as writer:
                     for chunk in reader.chunk_iterator(chunk_size):
                         check(); original.update(chunk.array.tobytes())
                         lo, hi = np.searchsorted(ids, [count, count+len(chunk)])
@@ -140,13 +142,6 @@ class EditSession:
                         chunk.classification = values
                         expected.update(chunk.array.tobytes()); writer.write_points(chunk)
                         count += len(chunk); progress(f'Writing {count:,}/{header.point_count:,} points')
-                    # laspy recomputes extra-dimension extrema while writing.
-                    # Classification-only edits must retain their original metadata.
-                    from copy import deepcopy
-                    for i, vlr in enumerate(writer.header.vlrs):
-                        if vlr.user_id == 'LASF_Spec' and vlr.record_id == 4:
-                            original_vlr = next(v for v in header.vlrs if v.user_id == 'LASF_Spec' and v.record_id == 4)
-                            writer.header.vlrs[i] = deepcopy(original_vlr)
                     if header.evlrs: writer.write_evlrs(header.evlrs)
             check(); self.check_source(); progress('Verifying every output point record')
             actual = hashlib.sha256(); verified = 0

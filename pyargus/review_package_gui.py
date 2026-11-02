@@ -246,4 +246,7 @@ class ReviewPackageExport:
 
     def open_folder(self):
         if self.last_path and Path(self.last_path).is_file():
-            os.startfile(str(Path(self.last_path).parent))
+            from pyargus.desktop import open_folder
+            from tkinter import messagebox
+            try:open_folder(Path(self.last_path).parent)
+            except OSError as exc:messagebox.showerror('Review package',str(exc),parent=self.app.root)

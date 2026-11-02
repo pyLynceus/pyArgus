@@ -76,5 +76,5 @@ overwrite the workspace or registered source files. The export is a review
 record, not a point-cloud deliverable or a numerical QA report.
 
 Validated with synthetic LAS/DXF data, GUI regression tests and the frozen
-application smoke test. Review on a representative project remains the next operator
+application smoke test. Review on Example_Project remains the next operator
 check for comfortable pin placement and returning between locations.

@@ -20,10 +20,10 @@ class WorkspaceLayout:
         self.nav=ttk.Notebook(self.root,height=1)
         self.pages={name:ttk.Frame(self.nav) for name in ('Review','Process','Deliver')}
         for name,page in self.pages.items():self.nav.add(page,text=name)
-        self.nav.pack(side='top',fill='x',before=self.app.task_panel)
+        self.nav.pack(side='top',fill='x',before=self.app.task_dock)
         self.nav.bind('<<NotebookTabChanged>>',self.tab_changed)
         self.statusbar=ttk.Frame(self.root)
-        self.statusbar.pack(side='bottom',fill='x',before=self.app.task_panel)
+        self.statusbar.pack(side='bottom',fill='x',before=self.app.task_dock)
         ttk.Label(self.statusbar,textvariable=self.app.job_status,width=40).pack(side='left',padx=6)
         ttk.Label(self.statusbar,textvariable=self.v.render_note,width=38,anchor='w').pack(side='left',padx=4)
         ttk.Label(self.statusbar,textvariable=self.v.status,width=1,anchor='w').pack(side='left',fill='x',expand=True)
@@ -116,7 +116,7 @@ class WorkspaceLayout:
         ttk.Button(extras,text='Cleanup…',command=self.cleanup.open).pack(side='left',padx=2)
         menu=self.dropdown(extras,'More')
         for label,fn in [('Cloud filters…',self.filters),('Refine current view',v.refine),('Build view cache',v.build_view_cache),
-                         ('Reset detail',lambda:v.load(v.paths) if v.paths else None),('Stop loading',v.stop_loading)]:
+                         ('Reset detail',v.reset_detail),('Stop loading',v.stop_loading)]:
             menu.add_command(label=label,command=fn)
         ttk.Checkbutton(extras,text='Review pane',variable=w.show_dock,command=self.apply_dock).pack(side='right')
 
@@ -155,6 +155,9 @@ class WorkspaceLayout:
         for name in ('Inspect / match',*[s.title for s in self.app.stages]):tasks.add_command(label=name,command=lambda n=name:self.select_task(n))
         tools.add_command(label='Project / trajectory settings',command=self.project_settings)
         tools.add_command(label='Alignment report settings…',command=self.alignment_report_settings)
+        from pyargus.flightline_gui import FlightlineDiagnostics
+        self.flightline_diagnostics=FlightlineDiagnostics(w)
+        tools.add_command(label='Flightline diagnostics…',command=self.flightline_diagnostics.open)
         tools.add_cascade(label='Cross-sections',menu=self.sections_menu)
         tools.add_command(label='Open QA / alignment report…',command=w.review.choose_record)
         tools.add_command(label='Area cleanup…',command=self.cleanup.open)
@@ -178,6 +181,9 @@ class WorkspaceLayout:
         menu=self.dropdown(tools,'Add data');self.add_commands(menu)
         ttk.Button(tools,text='Settings',command=self.project_settings).pack(side='left')
         ttk.Button(w.sidebar,text='LP360 job…',command=self.lp360.open).pack(fill='x',before=w.layer_summary,pady=(0,4))
+        # Visible in every mode: the one control that answers "where do I run a task?".
+        self.process_button=ttk.Button(w.sidebar,text='Process / run a task…',command=self.open_process)
+        self.process_button.pack(fill='x',before=w.layer_summary,pady=(0,4))
         frame=ttk.LabelFrame(w.sidebar,text='Project progress',padding=4);frame.pack(fill='x',before=w.layer_help,pady=5)
         self.progress=ttk.Treeview(frame,columns=('status',),show='tree headings',height=6,selectmode='browse')
         self.progress.heading('#0',text='Stage');self.progress.column('#0',width=100,minwidth=70)
@@ -231,7 +237,9 @@ class WorkspaceLayout:
         if not chosen:return
         path=Path(self.output_paths[chosen[0]])
         if not path.exists():messagebox.showerror('Output','Output is missing: '+str(path),parent=self.root);return
-        os.startfile(str(path if path.is_dir() else path.parent))
+        from pyargus.desktop import open_folder
+        try:open_folder(path if path.is_dir() else path.parent)
+        except OSError as exc:messagebox.showerror('Output folder',str(exc),parent=self.root)
 
     def tab_changed(self,event=None):
         name=next((name for name,page in self.pages.items() if str(page)==self.nav.select()),None)
@@ -246,9 +254,9 @@ class WorkspaceLayout:
             self.mode_docks[self.mode]=self.w.show_dock.get();self.w.show_dock.set(self.mode_docks[name])
             self.w.features.mode.set('Inspect')
         self.mode=name;self.w.review_mode.set(name=='Review')
-        self.nav.select(self.pages[name]);self.app.task_panel.pack_forget();self.deliver.pack_forget()
+        self.nav.select(self.pages[name]);self.app.task_dock.pack_forget();self.deliver.pack_forget()
         if name=='Process':
-            self.app.task_panel.pack(side='right',fill='y',before=self.w.workspace_host)
+            self.app.task_dock.pack(side='right',fill='y',before=self.w.workspace_host)
             self.w.tabs.tab(self.w.project_tab,state='normal')
         else:
             self.w.tabs.hide(self.w.project_tab)
@@ -302,6 +310,9 @@ class WorkspaceLayout:
         self.w.project_panel.tabs.select(self.w.project_panel.reporting.master)
 
     def project_settings(self):self.show_panel(self.w.project_tab)
+    def open_process(self):
+        """Switch to Process and put the keyboard focus on Run; nothing starts."""
+        self.set_mode('Process');self.app.run_button.focus_set()
     def select_task(self,name):self.set_mode('Process');self.app.task_name.set(name);self.w.select_task()
     def draw_section(self):
         self.w.show_section_review();self.w.review.route.stop();self.v.stereo.set(False);self.v.view(0,90)

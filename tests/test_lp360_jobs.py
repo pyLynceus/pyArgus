@@ -120,6 +120,11 @@ def test_full_native_pipeline_retains_records_and_review_states(job,tmp_path):
     assert alignment_report['checkpoint_summary']['supplied']==2
     assert alignment_report['checkpoint_summary']['independent_paired_support']==0
     assert alignment_report['settings']['role']=='reference'
+    audit=alignment_report['control_coverage']
+    assert audit['basis']=='reference' and audit['summary']['reference_records']==2
+    assert audit['summary']['fitting_control_records']==0
+    assert len(audit['points'])==2  # shared Control/check CSV is not duplicated
+    assert (out/'alignment'/'report_controls.csv').read_bytes()==Path(recipe.control).read_bytes()
     assert alignment_report['review_status']=='Needs review'
     assert 'alignment/report.html' in (out/'report.html').read_text()
     tracker=Tracker.load(result['workspace'])
@@ -235,3 +240,15 @@ def test_surface_gaps_preserve_ascii_support_in_cad_and_contours(job,tmp_path):
     assert lines and all(finite.min()<=line.level<=finite.max() for line in lines)
     assert all(not np.any((line.xy[:,0]>1002.5)&(line.xy[:,0]<1004.5)&
                          (line.xy[:,1]>2002.5)&(line.xy[:,1]<2004.5)) for line in lines)
+
+
+def test_alignment_audit_retains_lp360_pids_with_separate_independent_checks(job,tmp_path):
+    _,_,recipe=job
+    check=tmp_path/'asphalt.csv';check.write_text('CHECK1,2040,1050,102.2\n')
+    recipe=replace(recipe,alignment_reporting=dict(checkpoints=str(check),role='independent',surface='pavement'))
+    out=tmp_path/'separate-surveys';run(recipe,out)
+    audit=json.loads((out/'alignment'/'control_coverage.json').read_text())
+    assert audit['basis']=='reference' and audit['summary']['reference_records']==2
+    assert audit['summary']['independent_records']==1 and audit['summary']['fitting_control_records']==0
+    assert {m['id'] for m in audit['points']}=={'1','2','CHECK1'}
+    assert all(f['counts']['fitting_control']['supported']==0 for f in audit['flights'])

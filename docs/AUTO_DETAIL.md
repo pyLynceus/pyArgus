@@ -34,5 +34,18 @@ cache manifests are checked before/after, with shared cache locking.
 Source identities use size and modification time, not content hashes. Cloud
 metadata access can still depend on network availability. Initial overview
 loading still scans the source. Cache builds can take time and are cancellable
-between chunks. Cache refinement does not alter classifications. Optional GPU
-rendering is documented separately in ACCELERATION.md.
+between chunks. No GPU renderer or automatic classification changes are added.
+
+### Example_Project comparison, September 29, 2026
+
+Two local copies, 24,846,264 source points. Top, oblique and stereo viewports
+were each queried twice. All six cached results exactly matched full-scan
+coordinates, classes, line IDs, file IDs and matched counts. Cached queries
+took 1.63–4.69 seconds versus 7.30–10.27 seconds for local scans. These are
+small-view measurements, not a universal performance guarantee.
+
+An interrupted network comparison also completed two exact checks: top
+8.89 versus 78.69 seconds; oblique 1.72 versus 72.53 seconds. These are
+single observations, not a completed repeated network benchmark. Reports:
+`C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-benchmarks/2026-09-29-auto-detail/report.json`
+and `report-network-partial.json` in the same directory.

@@ -35,3 +35,7 @@ def test_packaging_self_test_passes(tmp_path):
     evidence=json.loads(report.read_text(encoding="utf-8"))
     assert evidence["passed"] and evidence["multicore"]["workers"]==2
     assert evidence["multicore"]["peak_tasks"]==2 and "device" in evidence["gpu"]
+    # The gate records whether COPC writing was exercised and that the Geoid18 grid is real (review F-21, F-22).
+    from pyargus.formats import copc, crs
+    assert evidence["copc"]["verified"] is (copc.find_pdal() is not None)
+    assert evidence["geoid"]["sha256"]==crs.GEOID18_SHA256 and abs(evidence["geoid"]["orthometric_ft"]-751.56)<0.5

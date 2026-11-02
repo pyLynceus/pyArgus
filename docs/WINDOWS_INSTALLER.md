@@ -8,8 +8,12 @@ Production LAS, control, imagery, and workspaces are not installation assets.
 
 ## Operator installation
 
-Run the dated windows-x64-setup.exe from dist-installer/0.2.0-2026-10-16.
-Windows 10/11 on x64 is required; this build is not validated on ARM.
+Run the dated windows-x64-setup.exe from the newest dated folder under
+dist-installer/ (0.2.0-review-2026-10-22 at this writing). This corrected
+payload passes the release-content gate. Frozen and relocated runtime checks
+passed; actual installer lifecycle testing remains pending because a Codex copy
+is already registered. See WINDOWS_REVIEW_BUILD_20261022.md. The older October
+16/19 Windows payloads do not pass the content gate and are superseded. Windows 10/11 on x64 is required; this build is not validated on ARM.
 Installation is per user and defaults to:
 %LOCALAPPDATA%/Programs/pyArgus-Codex
 
@@ -89,8 +93,12 @@ Only the exact test target's uninstaller may be run; verify its absolute path.
 No test may change the production project directories or original Claude checkout.
 
 The installed self-test adds a native COPC conversion with extra-dimension and
-CRS checks when private PDAL is present, in addition to existing GUI, workspace,
-classification, DXF, QA, sections, and review checks.
+CRS checks, in addition to existing GUI, workspace, classification, DXF, QA,
+sections, and review checks. Since October 22, 2026 a frozen Windows self-test
+refuses when the private PDAL is absent, records the outcome under `copc`
+(`verified` and the executable used) and records the bundled Geoid18 grid's
+path and SHA-256 plus one NAVD88 transform through it under `geoid`, so a
+payload that lost either cannot pass indistinguishably.
 The acceleration source passed 586 checks with no skips and all 73 Summerville
 reference checks. Frozen installed/relocated checks additionally require actual
 GPU normal/stereo rendering on the RTX A4000, CPU compatibility rendering and a
@@ -100,7 +108,21 @@ Ordinary --self-test permits a supported CPU fallback; normal application launch
 never requires a GPU. The official NOAA Geoid18 grid is included in Python PROJ.
 
 Exact installation results, payload counts/hashes, repair/uninstall and separate
-project preservation are recorded in dist-installer/0.2.0-2026-10-16/installer-validation.json.
+project preservation are recorded in each dated dist-installer folder's
+verification.json, build-info.json and payload-manifest.json; no separate
+installer-validation file exists.
+
+Two read-only checks run against any staged payload. `devtools.payload_manifest
+<payload>` verifies every listed file's presence and size, hashes the executable,
+the source archive, the build record and a fixed sample of the rest (`--full` for
+all), reports unlisted or private files, and checks the executable against
+build-info.json; `tests/test_payload_contract.py` runs it, and the content gate,
+against the 0.2.0 payloads present on this machine and records that both fail
+the gate today. `devtools.installer_cycle` performs one silent install, in-place
+upgrade and uninstall of two dated installers into a spaced test directory, with
+the frozen self-test after each install and an external project checked for
+preservation; because the installers share one AppId it refuses to start while
+pyArgus (Codex) is registered for the user unless told otherwise.
 Windows 11 x64 is the tested OS; AMD/Intel GPUs and Windows 10 need separate hardware
 acceptance. See ACCELERATION.md for measured gains and execution limits.
 
@@ -111,3 +133,32 @@ polygon cleanup, measured coverage and missing-data preservation. Its release
 verification records the current source suite and frozen GPU/multicore tests.
 The older installation/relocation results above remain historical. See
 RELEASE_NOTES.md and the new installer verification for the exact scope.
+
+
+## October 21 release-content gate (passed by the October 22 payload)
+
+Historical installation claims above are not evidence for the pending review-fix
+build. The October 19 control-coverage payload fails the new gate: its
+`Sources/native-packages.json` is absent. No historical executable or installer
+was rewritten as part of this repair.
+
+Use the tracked `packaging/windows/stage_installer.py` with a new output directory.
+It now refuses a reused destination and calls the release-content audit before
+creating the payload manifest. The application source archive excludes private
+HANDOFF/CLAUDE notes; package discovery includes only `pyargus` and `pyargus.*`,
+so a generated `pyargus-job-records` folder cannot become an installed namespace.
+
+The same read-only gate can inspect a separately prepared payload:
+
+```powershell
+& ./.venv/Scripts/python.exe -m devtools.audit_windows_payload <payload-folder>
+```
+
+The gate checks required runtime/source files, the bundled Geoid18 SHA-256,
+native recipe presence, corresponding-source paths/checksums for the identified
+GPL/LGPL/MPL packages plus GDAL/libarchive, and private/unsafe application-source
+archive members. It refuses missing inputs; it does not certify legal compliance,
+prove source-to-binary identity, or replace actual installed/relocated/uninstall
+and native-runtime testing. Bypassing the tracked staging script requires running
+this gate explicitly and retaining its result. Prior ignored release drivers
+that reused an incomplete Sources directory must not be used for the next build.

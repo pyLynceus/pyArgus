@@ -191,8 +191,9 @@ def inspect_recipe(recipe):
             except Exception as exc:issue('trajectories',Path(t['path']).name+': '+str(exc))
         if t.get('time_mode') not in ('same','week'):issue('time_mode','Choose same stored timestamps or GPS week seconds for '+Path(t['path']).name)
     try:
-        from pyargus.qa.alignment_report import settings, read_checks
-        read_checks(settings(recipe.alignment_reporting))
+        from pyargus.qa.alignment_report import settings, read_checks, read_references
+        reporting=settings(recipe.alignment_reporting)
+        read_checks(reporting);read_references(reporting)
     except (ValueError,TypeError,OSError) as exc:issue('alignment_reporting',str(exc))
     if recipe.control:
         try:

@@ -1,7 +1,7 @@
 # Project context and review shortcuts
 
 The project strip remains visible in Review, Process and Deliver. It shows the
-workspace name and directory, the processing input, and the loaded cloud's CRS
+workspace name and directory, the single-cloud task input, and the loaded cloud's CRS
 and axis units. Project details shows full paths and registered version history.
 The directory is the workspace's location; it is not inferred from whichever
 input happens to be selected. Missing version history is labeled unknown rather

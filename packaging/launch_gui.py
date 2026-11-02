@@ -52,9 +52,16 @@ def self_test(*, require_gpu=False, report=None):
         write_contours_dxf(path, lines)
         assert read_breaklines(path)[0].shape == (2,3)
         assert stage_preview.contours(lines).shape[2] == 4
-    if BUNDLED_PDAL is not None:
-        from pyargus.formats.copc import find_pdal, write_copc
-        assert Path(find_pdal()).is_file()
+    from pyargus.formats.copc import find_pdal, write_copc
+    if getattr(sys, "frozen", False) and sys.platform == "win32":
+        # A Windows payload carries its private PDAL; a build that lost it must not pass.
+        assert BUNDLED_PDAL is not None, "native-pdal/Library/bin/pdal.exe is missing from this payload"
+    pdal = find_pdal()
+    if pdal is None:
+        report["copc"] = {"verified": False, "pdal": None,
+                          "reason": "no pdal executable on PATH, in PDAL_EXE or bundled"}
+    else:
+        assert Path(pdal).is_file()
         import laspy
         from pyproj import CRS
         with tempfile.TemporaryDirectory(prefix="pyargus-installed-copc-") as temp:
@@ -74,6 +81,15 @@ def self_test(*, require_gpu=False, report=None):
             assert len(check.points) == 64
             assert "Amplitude" in check.point_format.extra_dimension_names
             assert check.header.parse_crs().to_epsg() == 6447
+        report["copc"] = {"verified": True, "pdal": str(pdal), "bundled": BUNDLED_PDAL is not None,
+                          "points": 64, "extra_dimension": "Amplitude", "crs_epsg": 6447}
+    # The vertical datum must be real: the published Geoid18 grid, and one transform through it.
+    from pyargus.formats import crs as crs_mod
+    grid, digest = crs_mod.geoid18_grid()
+    sbet = {"lon": np.deg2rad([-85.33]), "lat": np.deg2rad([34.47]), "alt": np.array([200.0])}
+    _, _, orthometric = crs_mod.sbet_to_map(sbet, "EPSG:6447", vertical="EPSG:6360")
+    assert abs(float(orthometric[0]) - 751.56) < 0.5, orthometric
+    report["geoid"] = {"grid": str(grid), "sha256": digest, "orthometric_ft": float(orthometric[0])}
     # Ensure native trajectory modules are also present in the frozen bundle.
     import struct
     from pyargus.formats import trj, trajectory
@@ -123,11 +139,11 @@ def self_test(*, require_gpu=False, report=None):
     window.withdraw()
     app = Application(window)
     layout=app.workspace.layout
-    assert layout.mode=='Review' and not app.task_panel.winfo_manager()
+    assert layout.mode=='Review' and not app.task_dock.winfo_manager()
     assert tuple(layout.menus)==('File','View','Tools','Help')
-    layout.set_mode('Process');assert app.task_panel.winfo_manager()=='pack'
+    layout.set_mode('Process');assert app.task_dock.winfo_manager()=='pack'
     layout.set_mode('Deliver');assert layout.deliver.winfo_manager()=='pack'
-    layout.set_mode('Review');assert not app.task_panel.winfo_manager()
+    layout.set_mode('Review');assert not app.task_dock.winfo_manager()
     from pyargus.review_shortcuts import parse_classes
     assert parse_classes('Vegetation')==(3,4,5)
     app.workspace.class_filter.set('Noise');app.workspace.filter()
@@ -361,17 +377,25 @@ def self_test(*, require_gpu=False, report=None):
                 for row in records:stream.write(struct.pack('<7d2i',*row,0,0))
             alignment_tracks.append(project_mod.TrajectoryInput(str(trajectory_file),'same'))
         checkpoint_csv=Path(temp)/'report-checks.csv';checkpoint_csv.write_text('check,400010,2400010,1000.2\n')
-        config=report_settings(dict(checkpoints=str(checkpoint_csv),role='independent',surface='pavement',material='Synthetic smoke-test surface'))
+        reference_csv=Path(temp)/'report-pids.csv';reference_csv.write_text('PID1,400020,2400020,1000.4\n')
+        config=report_settings(dict(checkpoints=str(checkpoint_csv),control_points=str(reference_csv),role='independent',surface='pavement',material='Synthetic smoke-test surface'))
         spec=project_mod.Project(alignment_sources,alignment_tracks,same_vertical=True,alignment_reporting=config)
         report_folder=Path(temp)/'alignment-report-smoke'
         project_mod.align(spec,report_folder,solve_boresight=False)
         comparison=json.loads((report_folder/'alignment_comparison.json').read_text())
         assert comparison['checkpoint_summary']['independent_paired_support']==1
         assert comparison['checkpoint_summary']['after']['rmse']<.001
+        audit=json.loads((report_folder/'control_coverage.json').read_text())
+        assert audit['summary']['flights']==2 and audit['summary']['reference_records']==1
+        assert audit['summary']['independent_records']==1 and audit['summary']['fitting_control_records']==0
+        assert all(f['counts']['fitting_control']['sites']==0 for f in audit['flights'])
+        assert (report_folder/'control_coverage.svg').is_file() and (report_folder/'control_coverage_points.csv').is_file()
+        assert 'window.controlCoverage' in (report_folder/'report.html').read_text()
         assert (report_folder/'report.html').is_file()
         assert 'window.alignmentReportData=' in (report_folder/'report.html').read_text()
         app.workspace.project_panel.reporting.restore(config)
         assert app.workspace.project_panel.snapshot().alignment_reporting==config
+        report['control_coverage']={'native_export':True,'role_separation':True,'flights':2,'packaged_viewer_asset':True,'settings_panel':True}
         app.workspace.project_panel.reporting.restore()
         report['alignment_report']={'native_export':True,'packaged_viewer_asset':True,'independent_checks':1,'after_rmse':comparison['checkpoint_summary']['after']['rmse'],'settings_panel':True}
         assert hasattr(app.workspace,"review_comment")

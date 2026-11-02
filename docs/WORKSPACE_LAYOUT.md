@@ -6,13 +6,18 @@ Use the top tabs to choose the work you are doing:
 | Tab | What appears | Typical next action |
 |---|---|---|
 | Review | Layers, viewer, compact viewing toolbar and project progress | Import clouds or DXF; inspect stereo or a section |
-| Process | The same viewer plus task settings at right | Select a task and its input scope, then Run |
+| Process | The same viewer plus task settings at right; Run/Stop stay fixed at the foot of the task dock and the settings above them scroll | Select a task and its input scope, then Run |
 | Deliver | Existing output list and export actions at right | Open an output folder or export a section/feature file |
 
 Switching tabs preserves camera position, loaded inputs and task settings. It
 does not start processing or approve a stage. Each mode remembers whether its
 lower pane is open during the session. Workspace saves restore the current
 mode, lower-pane visibility and selected page. Older workspaces open in Review.
+
+The sidebar button **Process / run a task…** is visible in every mode and opens
+Process with the keyboard focus on Run; it starts nothing. The main window opens
+at the smaller of 1530×1000 and the screen less its margins (1326×678 on a
+1366×768 display) and cannot shrink below 1024×640.
 
 ## Menus and viewing
 
@@ -33,6 +38,9 @@ default. Stereo settings control depth and eye swapping; picking requires mono.
 Cross-section, QA results, Linework, Job history and Log. Project settings is
 available in Process. Drag the horizontal divider to change the split. Opening
 section review gives the profile additional space without resetting the camera.
+Opening or closing the pane and moving the divider keep the point under the
+centre of the viewer in place; the cloud scales with the viewer, as Fit defines
+it (since October 22, 2026).
 
 ## Layers and linework
 
@@ -41,7 +49,11 @@ reference DXF, control CSV, terrain breaklines, existing outputs and job records
 The sidebar groups Point clouds, Trajectories, Linework, Control and Outputs.
 DXF references remain separate from processing breaklines and cloud inputs.
 
-Select a cloud to set the processing input. Double-click a layer to toggle
+Selecting a row changes nothing about processing. Every cloud in the project
+shows **Project input**; project-scope tasks (Inspect, Strip QA, Align) read all
+of them. Single-cloud tasks read the one row marked **▶ task input** in the Task
+column; set it with right-click → **Use as task input**. The context strip and
+the Task panel name the same file. Double-click a layer to toggle
 visibility; right-click for its available actions. For a DXF reference, choose
 fit, sections or style settings. Select the reference in the sidebar before
 using the lower Linework controls. Import compatibility declarations and source

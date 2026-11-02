@@ -1,25 +1,67 @@
-# Optional spatial section cache: experiment and limits
+# Spatial section-cache experiment — September 24, 2026
 
-The cache is an access optimization. Acceptance requires identical selected
-point identities, XYZ, classifications, line IDs, counts and bounded sampling
-relative to the full-scan implementation; a faster but different answer fails.
+Inputs: 24,846,264 points (see JSON for authoritative per-query totals).
+Two repeats per query, with scan/cache order reversed on the second repeat. cProfile enabled; OS/network caches not flushed.
 
-Use reference.benchmark_section_cache on separately held inputs, with multiple
-narrow and broad corridors, repeated and alternate query orders, and explicit
-source identities. Record build cost, cache disk usage, query times, file
-access and whole-process memory separately. Warm repeated access does not
-establish cold-network performance. Source datasets remain unchanged.
+| Query | Matches | Scan median (s) | Cache median (s) | Speedup | Candidate fraction |
+|---|---:|---:|---:|---:|---:|
+| across_25 | 10,128 | 2.362 | 0.483 | 4.9x | 1.7% |
+| across_50 | 10,393 | 2.249 | 0.295 | 7.6x | 1.3% |
+| across_75 | 15,969 | 2.162 | 0.291 | 7.4x | 1.6% |
+| along | 137,359 | 2.262 | 0.712 | 3.2x | 13.8% |
+| wide_sampled | 9,356,131 | 2.911 | 2.892 | 1.0x | 49.9% |
+| outside | 0 | 2.326 | 0.177 | 13.1x | 0.0% |
 
-Regression tests cover exact-result behavior, changed/damaged cache handling,
-source identity checks and fallback. Real operator acceptance remains scoped
-to the chosen project and hardware. Project-specific benchmark records are
-retained privately and are not included here.
+Cache build: 24.62 seconds; cache disk size: 0.810 GiB.
+Build cost / mean query saving: 15.7 queries for this equal-weight query mix.
 
-Caches use XY cells and replay points in source order. Broad queries can fall
-back to full scans. Building a cache costs a source pass and additional disk
-space; repeated small queries are the intended use. Metadata invalidation is
-not a cryptographic guarantee if file size and modification time are preserved.
+Every query agreed exactly with the reference scan: total/per-file counts, displayed coordinates, classifications, flight-line IDs, original point indices and sampled order. Empty and heavily sampled sections were included.
 
-See SECTION_CACHE_GUI.md for build, cancellation, fallback and cleanup;
-AUTO_DETAIL.md covers viewer refinement. ACCELERATION.md describes the separate
-OpenGL rendering and CPU morphology experiments.
+Largest sampled process RSS: 0.119 GiB. Process-wide 25 ms sampling, not isolated allocation peak.
+
+This is an experimental local sidecar, not a LAS replacement. It stores chunked, spatially sorted XYZ/class/line/original-index records; source-order replay preserves existing sampling behavior.
+
+Limitations: metadata-only invalidation cannot detect content changes with deliberately preserved size/mtime. No cryptographic cache-integrity check, automatic rebuild, eviction, multi-process writer coordination or GUI fallback is implemented. LAZ/COPC, other cell sizes and very large projects have not been benchmarked. The GUI remains unchanged.
+
+Full evidence and profiles: C:\Users\bjordan\Desktop\ClaudeCodeFAA\pyArgus-benchmarks\2026-09-24-section-cache-oriented/report.json
+
+## Development and validation
+
+- 11 focused tests passed. Cases include exact multi-file sampling, negative
+  cell boundaries, reverse direction, empty sections, noise classes, 24 seeded
+  oblique sections at large map coordinates, stale/missing/modified chunks,
+  duplicate sources, and cancellation before/during cache construction.
+- The real-data comparison covered six query geometries, twice each, on both
+  clouds. Each comparison checks all returned arrays and input identities,
+  not just counts. The broad sampled section contained 9,356,131 returns;
+  its retained sample and order matched exactly.
+- Initial bounding-box-only selection was slower than scanning for long and
+  broad queries. Its results are retained at
+  C:/Users/bjordan/Desktop/ClaudeCodeFAA/pyArgus-benchmarks/2026-09-24-section-cache.
+- The revised query projects cell bounds along/across the corridor to reject
+  irrelevant cells conservatively. It restores original order only after the
+  exact corridor filter, then replays reference chunk-wise sampling.
+
+## Decision
+
+Proceed to an optional GUI cache integration with source-change invalidation,
+explicit build/cancel/progress states, disk-space checks, cleanup policy and a
+full-scan fallback. Prefer the cache for selective sections; broad queries
+need a measured selection policy because caching did not consistently help.
+Do not silently rebuild a large cache on every source-version change.
+
+The measured break-even of about 16 queries is for this six-query mix and
+instrumented run, including empty/broad cases. For the three short-section
+medians alone it is about 13 queries. It excludes subsequent invalidation and
+rebuild costs. Two repeats are a local baseline, not a universal speed claim.
+
+Prototype usage (from the isolated checkout):
+
+```powershell
+.venv/Scripts/python.exe -m reference.benchmark_section_cache --cloud C:/data/a.las --cloud C:/data/b.las --out C:/scratch/new-section-experiment --repeats 2
+```
+
+The output directory must be new. Cell size is 50 source map units and source
+chunks are 250,000 points. No production GUI behavior, classifier, surface,
+alignment or source LAS data was changed. The latest executable remains the
+September 24 c747213 build.

@@ -78,9 +78,12 @@ GUI tasks still operate on their selected input cloud.
 - Waveform point formats and COPC inputs require a separate preservation workflow
   and are refused by the edit session. Conversion/reindexing is not automatic.
 
-## Verification boundary
+## 2323 acceptance boundary
 
-Synthetic tests cover exact record preservation, inclusive polygons and height
-limits, class/line filtering, cancellation, input changes, mouse navigation,
-stereo previews, source lineage and dependent-product invalidation. Ground
-quality and project acceptance require separate operator review.
+The two observed spikes remain an open classification-review issue. Adding these
+controls does not reclassify their points, rebuild the approved contours, or
+accept final QA. The cleanup review workspace is a separate copy of the saved
+final review workspace so an older open application cannot overwrite its state.
+Synthetic tests cover exact LAS/LAZ records, inclusive polygons and height limits,
+class/line filtering, cancellation, source changes, stable mouse navigation,
+stereo previews, cloud lineage/bindings, and dependent-result invalidation.

@@ -1,4 +1,4 @@
-Current operator installation: see [WINDOWS_INSTALLER.md](WINDOWS_INSTALLER.md) for the verified October 5 offline installer, which includes native PDAL and training materials. The October 2 rebuild below is retained history.
+Current operator installation: see [WINDOWS_INSTALLER.md](WINDOWS_INSTALLER.md) for the newest dated installer and the release-content gate passed by the October 22 Windows payload. The October 2 rebuild below is retained history; its **Fresh environment** block is the one environment recipe for this checkout, referenced by CLAUDE.md, README.md and VALIDATION_BASELINE.md.
 
 # Windows environment and executable rebuild - October 2, 2026
 
@@ -7,9 +7,11 @@ could not start because its uv-managed Python installation was absent. It was
 preserved in `build/migration-20261002/old-venv`; the replacement `.venv` uses
 Python 3.11.15 and every pin in `requirements-validation-win-py311.txt`.
 
-## Current release
+## Release built by this rebuild (October 2, 2026; superseded)
 
 `C:/Users/bjordan/OneDrive - Platinum Geomatics/pyArgus-Codex/dist/2026-10-02-54986d5/pyArgus/pyArgus.exe`
+
+The current build is named in [GUI_STATUS.md](GUI_STATUS.md).
 
 Run `pyArgus.exe` for the GUI. Keep its containing folder and `_internal`.
 `build-info.json` records exact source, working-content fingerprint, package

@@ -54,7 +54,7 @@ bounded by the existing extraction/display limits. Numerical processing and
 classification engines have not changed.
 
 Validated with synthetic LAS/DXF data and GUI regression tests. Operator review
-on a representative project remains useful for checking comfortable handle placement,
+on Example_Project remains useful for checking comfortable handle placement,
 profile size and repeated section movement with actual project data.
 
 Saved camera views, issue pins and Resume Review are documented in [review memory](REVIEW_MEMORY.md).

@@ -25,3 +25,22 @@ def test_gate_never_calls_skipped_or_changed_run_passed(code,skips,after,want):
 
 def test_empty_results_cannot_pass():
     assert decision([dict(returncode=0)],dict(total=0),'same','same')=='failed_missing_test_results'
+
+
+def test_distribution_inventory_reports_nameless_metadata_without_crashing():
+    from types import SimpleNamespace
+    from devtools.validate import distribution_inventory
+    result = distribution_inventory([
+        SimpleNamespace(metadata={'Name':'numpy'},version='2.4',_path='numpy.dist-info'),
+        SimpleNamespace(metadata={},version=None,_path='pyargus-0.1.0.dist-info'),
+        SimpleNamespace(metadata={'Name':'laspy'},version='2.7',_path='laspy.dist-info')])
+    assert [row['name'] for row in result['packages']] == ['laspy','numpy']
+    assert result['environment_warnings'] == [dict(
+        location='pyargus-0.1.0.dist-info', error='ValueError: missing distribution Name')]
+
+
+def test_environment_warning_cannot_get_clean_pass_but_does_not_hide_failure():
+    tests = dict(total=1,counts=dict(passed=1,skipped=0,failure=0,error=0))
+    warnings = [dict(location='bad.dist-info',error='bad metadata')]
+    assert decision([dict(returncode=0)],tests,'same','same',warnings) == 'needs_environment_review'
+    assert decision([dict(returncode=1)],tests,'same','same',warnings) == 'failed'

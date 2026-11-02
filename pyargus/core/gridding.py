@@ -9,12 +9,47 @@ rows; nothing else reorients.
 import numpy as np
 
 
+MAX_GRID_CELLS = 25_000_000
+"""Admission ceiling for dense rasters; not a guarantee about process RSS."""
+
+
+def check_grid_shape(nx, ny, *, extent=None, cell=None):
+    """Refuse excessive rasters before allocating edges, tiles or surfaces."""
+    nx, ny = int(nx), int(ny)
+    if nx < 1 or ny < 1:
+        raise ValueError("Grid dimensions must be positive")
+    cells = nx * ny  # Python integers, so the product cannot overflow.
+    if cells > MAX_GRID_CELLS:
+        detail = f"; XY extent {extent}, cell {cell:g}" if extent is not None else ""
+        raise ValueError(
+            f"Grid requires {nx:,} x {ny:,} = {cells:,} cells{detail}; "
+            f"the dense-grid safety limit is {MAX_GRID_CELLS:,}. "
+            "Check XY outliers and stale header bounds, increase the cell "
+            "size, or select a smaller block. Tiling does not remove the "
+            "global raster allocation.")
+    return nx, ny
+
+
 def grid_edges(x, y, cell):
-    """Cell edges covering the data, aligned to multiples of ``cell``."""
-    x0 = np.floor(x.min() / cell) * cell
-    y0 = np.floor(y.min() / cell) * cell
-    nx = int(np.ceil((x.max() - x0) / cell)) or 1
-    ny = int(np.ceil((y.max() - y0) / cell)) or 1
+    """Cell edges covering finite data, with admission before allocation."""
+    x, y = np.asarray(x), np.asarray(y)
+    if not np.isfinite(cell) or cell <= 0:
+        raise ValueError("cell must be positive and finite")
+    if not x.size or not y.size:
+        raise ValueError("Grid coordinates must be nonempty and finite")
+    xmin, xmax = float(x.min()), float(x.max())
+    ymin, ymax = float(y.min()), float(y.max())
+    # Min/max propagate NaNs and expose infinities without allocating a
+    # full-cloud boolean mask just to admit a raster.
+    if not np.isfinite([xmin, xmax, ymin, ymax]).all():
+        raise ValueError("Grid coordinates must be nonempty and finite")
+    x0 = np.floor(xmin / cell) * cell
+    y0 = np.floor(ymin / cell) * cell
+    widths = np.array([(xmax - x0) / cell, (ymax - y0) / cell])
+    if not np.isfinite(widths).all():
+        raise ValueError("Grid extent/cell ratio is not finite")
+    nx, ny = max(1, int(np.ceil(widths[0]))), max(1, int(np.ceil(widths[1])))
+    check_grid_shape(nx, ny, extent=(xmin, ymin, xmax, ymax), cell=cell)
     return x0 + np.arange(nx + 1) * cell, y0 + np.arange(ny + 1) * cell
 
 
@@ -31,6 +66,7 @@ def cell_indices(x, y, x_edges, y_edges):
 
 def min_grid(x, y, z, x_edges, y_edges):
     """Per-cell minimum z; empty cells are NaN."""
+    check_grid_shape(len(x_edges) - 1, len(y_edges) - 1)
     ix, iy = cell_indices(x, y, x_edges, y_edges)
     grid = np.full((len(x_edges) - 1, len(y_edges) - 1), np.inf)
     np.minimum.at(grid, (ix, iy), z)
@@ -40,6 +76,7 @@ def min_grid(x, y, z, x_edges, y_edges):
 
 def max_grid(x, y, z, x_edges, y_edges):
     """Per-cell maximum z; empty cells are NaN. The DSM primitive."""
+    check_grid_shape(len(x_edges) - 1, len(y_edges) - 1)
     ix, iy = cell_indices(x, y, x_edges, y_edges)
     grid = np.full((len(x_edges) - 1, len(y_edges) - 1), -np.inf)
     np.maximum.at(grid, (ix, iy), z)
@@ -49,6 +86,7 @@ def max_grid(x, y, z, x_edges, y_edges):
 
 def mean_grid(x, y, z, x_edges, y_edges):
     """Per-cell mean z; empty cells are NaN."""
+    check_grid_shape(len(x_edges) - 1, len(y_edges) - 1)
     ix, iy = cell_indices(x, y, x_edges, y_edges)
     shape = (len(x_edges) - 1, len(y_edges) - 1)
     total = np.zeros(shape)
@@ -69,6 +107,7 @@ def inpaint_nearest(grid, max_distance=None):
     from scipy.ndimage import distance_transform_edt
 
     grid = np.asarray(grid, dtype=float)
+    check_grid_shape(*grid.shape)
     missing = ~np.isfinite(grid)
     if not missing.any():
         return grid.copy()

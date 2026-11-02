@@ -55,5 +55,5 @@ its classifications are edited by these tools.
 
 Assisted extraction, profile-based vertex snapping, persistent review presets,
 feature-aligned cross-section stepping and surface breakline integration remain
-future work. Validate manual linework on representative wall,
+future work. Validate manual linework on representative Example_Project wall,
 barrier and pavement sections before advancing to automated extraction.

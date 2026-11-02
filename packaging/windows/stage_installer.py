@@ -58,8 +58,7 @@ def source_bundle(stage):
         [GIT, "-c", f"safe.directory={ROOT.as_posix()}", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         cwd=ROOT).decode().split("\0")
     allowed = ("pyargus/", "tests/", "packaging/", "docs/", "devtools/", "reference/")
-    top = {"LICENSE", "README.md", "pyproject.toml", "requirements-validation-win-py311.txt",
-           "HANDOFF.md", "CLAUDE.md"}
+    top = {"LICENSE", "README.md", "pyproject.toml", "requirements-validation-win-py311.txt"}
     files = sorted({n for n in names if n and (n.startswith(allowed) or n in top)})
     files += [p.relative_to(ROOT).as_posix() for p in (ROOT / "packaging/windows").glob("*.py")
               if p.relative_to(ROOT).as_posix() not in files]
@@ -166,7 +165,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     stage = args.output_dir.resolve()
-    stage.mkdir(parents=True, exist_ok=True)
+    stage.mkdir(parents=True, exist_ok=False)
     copy_tree(args.app_dir, stage)
     for sub in ("Sources", "Documentation", "Licenses", "Examples", "Training"):
         (stage / sub).mkdir(exist_ok=True)
@@ -264,6 +263,10 @@ def main():
              "exe_sha256": digest(stage / "pyArgus.exe"), "video_sha256": digest(stage / "Training/pyArgus-Step-by-Step.mp4"),
              "native_package_count": len(native), "packages": packages}
     dump(stage / "build-info.json", build)
+    # A release is refused if required sources, metadata or runtime data are missing.
+    sys.path.insert(0, str(ROOT))
+    from devtools.audit_windows_payload import audit_payload
+    dump(stage / "payload-audit.json", audit_payload(stage))
     files = [{"path": p.relative_to(stage).as_posix(), "bytes": p.stat().st_size, "sha256": digest(p)}
              for p in sorted(stage.rglob("*")) if p.is_file() and p.name != "payload-manifest.json"]
     dump(stage / "payload-manifest.json", {"release": args.release, "files": files})

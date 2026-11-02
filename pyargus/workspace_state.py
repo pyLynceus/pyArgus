@@ -127,13 +127,8 @@ class Tracker:
         return job
 
     def save(self,path):
-        path=Path(path); path.parent.mkdir(parents=True,exist_ok=True)
-        temp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
-        try:
-            with temp.open('x',encoding='utf-8') as f:
-                json.dump(self.data,f,indent=2,allow_nan=False); f.flush(); os.fsync(f.fileno())
-            os.replace(temp,path)
-        finally: temp.unlink(missing_ok=True)
+        from pyargus.publication import atomic_write_json
+        atomic_write_json(path, self.data)
 
     @classmethod
     def load(cls,path):

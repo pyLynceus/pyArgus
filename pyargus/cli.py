@@ -279,7 +279,8 @@ def _cmd_classify_above(args):
         points, ground, model, ignore_mask=noise, cell=args.cell)
     classification[noise] = 7
     las_data.classification = classification
-    las_data.write(str(dst))
+    from pyargus.formats.las import write_preserving
+    write_preserving(las_data, dst)
     u, c = np.unique(classification, return_counts=True)
     print(f"classes: { {int(k): int(v) for k, v in zip(u, c)} }")
     if unclassifiable:
@@ -916,6 +917,8 @@ def build_parser():
 
     from pyargus.project_cli import register as register_project_commands
     register_project_commands(sub)
+    from pyargus.flightline_cli import register as register_flightline_commands
+    register_flightline_commands(sub)
 
     p_gui = sub.add_parser(
         "gui", help="open the desktop application (tkinter; no extra "

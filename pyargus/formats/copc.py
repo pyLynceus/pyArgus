@@ -103,8 +103,11 @@ def write_copc(src, dst, *, pdal=None, timeout=None):
                "--writers.copc.forward=all",
                # without this, extra dimensions are dropped in silence
                "--writers.copc.extra_dims=all"]
+    # A frozen Linux build must not hand PyInstaller's LD_LIBRARY_PATH to the
+    # system pdal, or it loads the bundled sqlite/crypto/z instead of its own.
+    from pyargus.desktop import external_environment
     result = subprocess.run(command, capture_output=True, text=True,
-                            timeout=timeout)
+                            timeout=timeout, env=external_environment())
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise ValueError(f"pdal failed to write {dst.name}: "

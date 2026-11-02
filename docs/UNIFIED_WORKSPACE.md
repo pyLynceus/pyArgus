@@ -2,10 +2,12 @@
 
 Current delivered/pending checklist: [GUI status](GUI_STATUS.md).
 
-The main window has one Project files sidebar, a central 3D viewer, and a
-Task panel on the right. The lower dock contains Progress/history, Project
-settings, QA/cross-sections, and Log. Drag the dividers to resize the viewer
-and dock. Processing uses the existing shared stage and project functions.
+The main window has Review, Process and Deliver modes, a Layers sidebar, a
+central 3D viewer, and a Task panel on the right in Process. The lower dock
+holds Cross-section, QA results, Linework, Job history and Log, with Project
+settings available in Process; see the [operator guide](WORKSPACE_LAYOUT.md).
+Drag the dividers to resize the viewer and dock. Processing uses the existing
+shared stage and project functions.
 
 ## Start a project
 
@@ -18,7 +20,7 @@ and dock. Processing uses the existing shared stage and project functions.
    The sidebar identifies trajectories that still need their time base. A
    configured clock is not a claim that matching or alignment has passed.
 3. Choose **Inspect / match** in the Task panel, check its project scope, and
-   run it. Review Matching results in Project settings. Choose Strip QA or
+   run it. Matching results open in Project settings when it finishes. Choose Strip QA or
    Align next, and provide a new output folder in the Task panel. Project CRS,
    vertical datum, point limits and alignment options remain in Settings.
 4. Choose Classify, DTM / DSM, Contours, Above ground or Colorize for a
@@ -40,8 +42,12 @@ does not turn existing algorithms into whole-project batch implementations.
 
 Stages are Inspect, Initial QA, Classification, Alignment, Surface, Contours,
 Colorization, Final QA and Delivery. Select Initial QA or Final QA before a
-QA run. Successful processing means Needs review. Accept and Needs review
-require a note. Optional steps may be explicitly skipped with a reason.
+QA run. Successful processing means Needs review. The Job history panel has
+an optional Comment box beneath the review controls. Leave it empty to Accept,
+return work to Needs review, or Skip stage without a note prompt. A supplied
+comment is saved with that decision and cleared after the decision succeeds.
+Optional steps may be explicitly skipped. Decision timestamps and history are
+retained even when no comment is supplied.
 Imported artifacts without a verified job history remain Unverified import.
 Historical attempts and decisions are retained rather than overwritten.
 
@@ -68,7 +74,8 @@ chosen files for review; it does not transmit or publish them.
 - Refine view scans all loaded clouds within the current orthographic view
   footprint and retains a bounded uniform sample. It runs in the background
   with cancellation; zoom alone does not automatically scan a network drive.
-  Reset detail restores the overview. There is no spatial index yet.
+  Reset detail returns to the overview sample already in memory without
+  reloading or moving the camera. There is no spatial index yet.
 - In Top view, Ctrl-click A then B to place a section. In QA / cross-sections,
   set full width and Extract section. It scans full files using the previously
   implemented bounded section extractor. The only 2D inspection plot is the
@@ -106,20 +113,32 @@ Downstream dependencies include every current classification attempt, not just
 the last flight. The stage summary reports accepted/recorded input counts;
 this is not a claim that every project flight has been processed. The history
 shows cloud filenames, source paths and explicit reasons for stale results.
-Successful ground classification now promotes its result as described below;
-other processing stages do not yet share the full version-promotion model.
+Successful ground classification promotes its result as described below. Since
+October 21, 2026, alignment results are promoted the same way: a project Align
+replaces each flight's input with its corrected cloud (from `alignment.json`),
+and a single-cloud Align with a "Corrected cloud out" replaces that one input.
+The camera is kept across every promotion, when a version is switched by hand,
+when a retained cloud is shown beside the loaded ones, and when the review pane
+or a dock split changes the viewer's size: the point under the centre of the
+viewer stays put (since October 22, 2026).
 
-## Active processing versions — September 23
+## Active processing versions — September 23 (labels revised October 21, 2026)
 
 A successful Classify run now promotes its new cloud into the project's input
 list for that flight and displays the active project inputs. The original
-stays in the sidebar as a Retained version; Active input labels identify what
+stays in the sidebar as a Retained version; **Project input** labels identify what
 project QA/alignment will read. Trajectory bindings move with the active
 version. Failed/cancelled runs do not promote outputs. Activation does not
 accept classification quality or independent accuracy.
 
 Right-click one cloud and choose Use this version for processing to switch
-back. Showing retained files for comparison does not re-add them to project
+back. A file that is not a registered version of a project input is refused
+there (it would otherwise join the project beside the flight it replaces); add
+new inputs with Add data. The single-cloud **task input** is separate from the
+project input list: it is set only by right-click → Use as task input, shown as
+**▶ task input** in the Task column, and follows its own flight when that flight's
+version changes. Selecting a row never changes either input.
+Showing retained files for comparison does not re-add them to project
 inputs. Explicit Section source selection remains separate. Old workspaces
 recover source/result links only from unambiguous completed classification
 records with matching file metadata; their active inputs do not change on
@@ -149,7 +168,3 @@ Cross-sections now offer Build section cache, Use cache when available and
 Clear all section caches. Builds are explicit; selective queries reuse valid
 local data and other queries fall back to a full scan. See
 [section cache workflow](SECTION_CACHE_GUI.md).
-
-## Version 0.2.0
-
-Version 0.2.0 includes File > LP360 job, Tools > Area cleanup, and Tools > Alignment report settings. See LP360_JOBS.md, AREA_CLEANUP.md and ALIGNMENT_REPORTS.md.

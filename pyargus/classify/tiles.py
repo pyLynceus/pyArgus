@@ -266,6 +266,15 @@ def tiled_surface(read, mins, maxs, *, cell=1.0, slope=0.15, window=18.0,
     tiles = plan_tiles(x_edges, y_edges, cell, halo, tile_size)
 
     shape = (x_edges.size - 1, y_edges.size - 1)
+    gridding.check_grid_shape(*shape)
+    if not np.isfinite(memory_mb) or memory_mb <= 0:
+        raise ValueError("tile memory budget must be positive and finite")
+    global_estimate = int(shape[0]) * int(shape[1]) * 18
+    if global_estimate > memory_mb * 1024**2:
+        raise ValueError(
+            f"Global ground rasters alone require {global_estimate / 1024**2:.1f} MiB; "
+            f"the tile memory estimate is {memory_mb:g} MiB. Increase cell size, "
+            "select a smaller area, or increase the budget. No rasters allocated.")
     dem = np.full(shape, np.nan)
     dem_slope = np.full(shape, np.nan)
     object_cells = np.zeros(shape, dtype=bool)

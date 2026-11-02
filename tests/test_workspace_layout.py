@@ -10,12 +10,12 @@ def test_modes_preserve_view_inputs_and_task_routing(application,tmp_path,monkey
     path=tmp_path/'cloud.las';cloud(path);w.add_files([str(path)]);wait(app.root,v);w.poll()
     scene=v.scene;camera=(v.yaw,v.pitch,v.zoom,v.center.copy(),v.pan.copy());paths=tuple(w.project_panel.clouds)
     calls=[];monkeypatch.setattr(app,'run',lambda:calls.append('single'))
-    assert layout.mode=='Review' and not app.task_panel.winfo_manager()
+    assert layout.mode=='Review' and not app.task_dock.winfo_manager()
     layout.nav.select(layout.pages['Process']);app.root.update()
-    assert layout.mode=='Process' and app.task_panel.winfo_manager()=='pack'
+    assert layout.mode=='Process' and app.task_dock.winfo_manager()=='pack'
     layout.select_task('Classify');app.stages[1].slope.set('0.21')
-    w.run_task();assert calls==['single']
-    layout.set_mode('Deliver');assert layout.deliver.winfo_manager()=='pack' and not app.task_panel.winfo_manager()
+    w.set_active_cloud(str(path));w.run_task();assert calls==['single']
+    layout.set_mode('Deliver');assert layout.deliver.winfo_manager()=='pack' and not app.task_dock.winfo_manager()
     layout.set_mode('Review');assert not layout.deliver.winfo_manager()
     assert app.stages[1].slope.get()=='0.21' and paths==tuple(w.project_panel.clouds)
     assert v.scene is scene and (v.yaw,v.pitch,v.zoom)==camera[:3]

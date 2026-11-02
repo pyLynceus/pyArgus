@@ -1,11 +1,22 @@
 # pyArgus release notes
 
+## 0.2.0 review-fix Windows build - October 22, 2026
+
+The newest Windows executable includes the combined backend reliability and
+GUI integration repairs. Source acceptance: 783 passes, one Linux-only skip;
+reference acceptance: 73/73. Frozen/relocated GPU, multicore, PDAL and Geoid18
+checks passed. The complete source/recipe payload passes the release-content
+gate. Installer lifecycle testing remains pending; existing installations are
+unchanged. See [build acceptance](WINDOWS_REVIEW_BUILD_20261022.md).
+
 ## 0.2.0 — October 16, 2026
 
 This development release brings the Review / Process / Deliver desktop,
 LP360 job processing and alignment reporting under a consistent version.
-The application title, Help > About this build, CLI, Windows executable
-properties, installer and job records identify version 0.2.0.
+The application title, Help > About this build, the `pyargus --version`
+command of a source or Arch install, Windows executable properties, installer
+and job records identify version 0.2.0. The frozen Windows executable has no
+command line beyond `--self-test`.
 
 ### Included capabilities
 
@@ -40,7 +51,16 @@ No numerical processing algorithm is changed by the version-label update.
 
 Portable application: `dist/0.2.0-2026-10-16/pyArgus/`.
 Installer: `dist-installer/0.2.0-2026-10-16/`.
-Keep the entire portable folder together, including `_internal` and `native-pdal`.
+A later 0.2.0 build, `0.2.0-control-coverage-2026-10-19` (portable folder,
+installer and the Arch package `0.2.0-archlinux-control-coverage-2026-10-19`),
+adds the control-coverage audit; see `CONTROL_COVERAGE.md` beside that installer.
+Neither 0.2.0 payload passes the October 21 release-content gate described in
+WINDOWS_INSTALLER.md. The 16 October payload's `Sources/pyArgus-source.zip`
+contains internal working notes (HANDOFF.md and CODEX_WORKTREE.md, with client
+names and server paths): do not distribute that installer further, and if it
+has already left this workstation, send its recipients the next build, whose
+source archive excludes those files. The 19 October archive is clean. Keep the
+entire portable folder together, including `_internal` and `native-pdal`.
 See the adjacent build information, payload manifest and release verification
 for exact source identity, dependency reuse and completed validation.
 Existing installations and older dated releases are retained.

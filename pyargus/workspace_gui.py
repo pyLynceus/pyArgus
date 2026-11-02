@@ -12,6 +12,7 @@ from pyargus.workspace_state import Tracker, STAGES
 
 NAMES={'Strip QA':'Initial QA','Classify':'Classification','Above ground':'Classification',
        'Align':'Alignment','DTM':'Surface','DTM / DSM':'Surface','Contours':'Contours','Colorize':'Colorization'}
+TASK_BADGE='▶ task input'   # shown on exactly the cloud single-cloud tasks will read
 
 
 class Workspace:
@@ -114,9 +115,9 @@ class Workspace:
         if hasattr(self,"layout"):
             self.layout.set_mode("Review" if self.review_mode.get() else "Process");return
         if self.review_mode.get():
-            self.app.task_panel.pack_forget()
+            self.app.task_dock.pack_forget()
             self.tabs.select(self.features_tab)
-        else:self.app.task_panel.pack(side='right',fill='y',before=self.workspace_host)
+        else:self.app.task_dock.pack(side='right',fill='y',before=self.workspace_host)
         visible=str(self.review_bottom) in self.review_panes.panes()
         if self.show_dock.get() and not visible:self.review_panes.add(self.review_bottom,weight=1)
         elif not self.show_dock.get() and visible:self.review_panes.forget(self.review_bottom)
@@ -173,14 +174,15 @@ class Workspace:
         ttk.Button(tools,text='Settings',command=lambda:self.show_panel(self.project_tab)).pack(side='left')
         self.file_summary=tk.StringVar()
         self.layer_summary=ttk.Label(panel,textvariable=self.file_summary,wraplength=260);self.layer_summary.pack(fill='x')
-        self.layer_tree=ttk.Treeview(panel,columns=('kind',),show='tree headings',selectmode='extended',height=16)
-        self.layer_tree.heading('#0',text='File / visibility');self.layer_tree.column('#0',width=185,minwidth=120)
-        self.layer_tree.heading('kind',text='State');self.layer_tree.column('kind',width=105,minwidth=80)
+        self.layer_tree=ttk.Treeview(panel,columns=('kind','task'),show='tree headings',selectmode='extended',height=8)
+        self.layer_tree.heading('#0',text='File / visibility');self.layer_tree.column('#0',width=150,minwidth=110)
+        self.layer_tree.heading('kind',text='State');self.layer_tree.column('kind',width=95,minwidth=80)
+        self.layer_tree.heading('task',text='Task');self.layer_tree.column('task',width=70,minwidth=60)
         self.layer_tree.pack(fill='both',expand=True)
         self.layer_tree.bind('<<TreeviewSelect>>',self.select_layer)
         self.layer_tree.bind('<Double-1>',lambda e:self.toggle_layer())
         self.layer_tree.bind('<Button-3>',self.layer_menu)
-        self.layer_help=ttk.Label(panel,text='Select a cloud for processing. Double-click to show / hide. Right-click for actions.',wraplength=250);self.layer_help.pack(fill='x',pady=6)
+        self.layer_help=ttk.Label(panel,text='Selecting a row never changes processing. Right-click a cloud → Use as task input for single-cloud tasks; project tasks read every Project input. Double-click to show / hide.',wraplength=250);self.layer_help.pack(fill='x',pady=6)
         self.layer_note=tk.StringVar()
         self.layer_note_label=ttk.Label(panel,textvariable=self.layer_note,wraplength=270);self.layer_note_label.pack(fill='x')
         self.sync_project_layers()
@@ -246,10 +248,18 @@ class Workspace:
         self.app.trj_time.set(track.time_mode if track and track.time_mode else 'Select TRJ time')
 
     def set_active_cloud(self,path):
+        """Set the single-cloud task input. Only explicit actions call this; tree selection does not."""
         self.app.cloud_path.set(path)
         for stage in self.app.stages:
             if hasattr(stage,'cloud_override'):stage.cloud_override.set(path)
         self.update_scope()
+        if hasattr(self,'layer_tree'):self.refresh_layers()
+
+    def set_task_input_from_selection(self):
+        layers=self.selected_layers()
+        if len(layers)!=1 or Path(layers[0]['path']).suffix.lower() not in ('.las','.laz'):
+            messagebox.showinfo('Task input','Select exactly one cloud row, then choose Use as task input.',parent=self.root);return
+        self.set_active_cloud(layers[0]['path']);self.persist();self.refresh()
 
     def selected_reference(self):
         ids=[i[4:] for i in self.layer_tree.selection() if i.startswith("dxf:")]
@@ -270,8 +280,8 @@ class Workspace:
         for i,track in enumerate(p.tracks):
             if track.path in selected:p.track_box.selection_set(i)
         if len(layers)==1:
+            # Selection is for viewing and settings; the task input changes only by explicit action.
             layer=layers[0];self.layer_note.set(layer['path'])
-            if Path(layer['path']).suffix.lower() in ('.las','.laz'):self.set_active_cloud(layer['path'])
             if layer['kind']=='trajectory':
                 track=next((t for t in p.tracks if t.path==layer['path']),None)
                 if track:
@@ -286,7 +296,8 @@ class Workspace:
             for label,fn in [('Show / hide',self.linework.toggle),('Fit layer',self.linework.fit),('Sections along line…',self.linework.sections),('Layer style',self.layout.linework_settings),('Remove reference layer',self.linework.remove)]:
                 menu.add_command(label=label,command=lambda f=fn:self.linework.run(f))
             menu.tk_popup(event.x_root,event.y_root);return
-        for label,cmd in [('Show / hide',self.toggle_layer),('Fit visible clouds',self.viewer.fit_selected),
+        for label,cmd in [('Use as task input (single-cloud tasks)',self.set_task_input_from_selection),
+                ('Show / hide',self.toggle_layer),('Fit visible clouds',self.viewer.fit_selected),
                 ('Use this version for processing',self.activate_selected_version),
                 ('Trajectory settings',lambda:self.show_panel(self.project_tab)),
                 ('Add folder…',self.add_folder),('Load analysis project…',self.load_analysis_project),('Save analysis project…',self.project_panel.save_project),('Import existing output…',self.import_output),('Select as deliverables',self.delivery),('Remove from project',self.remove_layers)]:
@@ -298,38 +309,66 @@ class Workspace:
         selected=self.selected_layers()
         if len(selected)!=1 or Path(selected[0]['path']).suffix.lower() not in ('.las','.laz'):
             messagebox.showinfo('Processing version','Select one cloud version.',parent=self.root);return
-        try:self.activate_cloud_version(selected[0]['path'])
+        try:self.activate_cloud_version(selected[0]['path'],preserve_view=True)
         except (OSError,ValueError) as exc:messagebox.showerror('Processing version',str(exc),parent=self.root)
 
     def activate_cloud_version(self,path,*,preserve_view=False):
-        path=str(Path(path).resolve())
-        if not Path(path).is_file():raise ValueError('Cloud version is missing: '+path)
-        camera=self.viewer.camera_state() if preserve_view and self.viewer.scene is not None else None
-        panel=self.project_panel;root=self.tracker.cloud_root(path)
-        previous=[p for p in panel.clouds if self.tracker.cloud_root(p)==root]
-        bindings={panel.bindings[p] for p in previous if p in panel.bindings}
-        if len(bindings)>1:raise ValueError('Conflicting trajectory bindings for this flight')
-        updated=[]
-        for old in panel.clouds:
-            candidate=path if old in previous else old
-            if candidate not in updated:updated.append(candidate)
-        if path not in updated:updated.append(path)
+        self.activate_cloud_versions([path],preserve_view=preserve_view)
+
+    def activate_cloud_versions(self,paths,*,preserve_view=False):
+        """Make each path the project input for its flight.
+
+        A path must be a registered version of a project input (or already an
+        input): an unregistered file would otherwise join the project beside
+        the flight it replaces, leaving two inputs for one flight. The task
+        input follows its own flight's new version and never jumps to another.
+        """
+        panel=self.project_panel;versions=self.tracker.data.get('cloud_versions',{});targets=[]
+        for raw in paths:
+            path=str(Path(raw).resolve())
+            if not Path(path).is_file():raise ValueError('Cloud version is missing: '+path)
+            root=self.tracker.cloud_root(path)
+            if root==path and path not in panel.clouds and path not in versions:
+                raise ValueError(f'{Path(path).name} is not a registered version of a project input. Add a new input with Add data, or import its job record so its source flight is known.')
+            targets.append((root,path))
+        if not targets:return
+        task=self.app.cloud_path.get();updated=list(panel.clouds)
+        for root,path in targets:
+            previous=[p for p in updated if self.tracker.cloud_root(p)==root]
+            bindings={panel.bindings[p] for p in previous if p in panel.bindings}
+            if len(bindings)>1:raise ValueError('Conflicting trajectory bindings for this flight')
+            replaced=[]
+            for old in updated:
+                candidate=path if old in previous else old
+                if candidate not in replaced:replaced.append(candidate)
+            if path not in replaced:replaced.append(path)
+            updated=replaced
+            for old in previous:panel.bindings.pop(old,None)
+            if bindings:panel.bindings[path]=next(iter(bindings))
+            self.add_layer(path,'cloud','Selected processing version')
+            if not task or self.tracker.cloud_root(task)==root:task=path
         panel.clouds=updated
-        for old in previous:panel.bindings.pop(old,None)
-        if bindings:panel.bindings[path]=next(iter(bindings))
-        self.add_layer(path,'cloud','Selected processing version')
-        self.set_active_cloud(path)
+        self.set_active_cloud(task)
         panel.refresh()
-        if self.viewer.busy:
-            self.pending_version_view=True
-        else:
-            if camera is None:self.viewer.load(list(panel.clouds))
-            else:
-                from pyargus.viewer3d import sample_clouds
-                paths=tuple(panel.clouds)
-                self.viewer.launch(lambda:('cloud',paths,sample_clouds(paths,cancel=self.viewer.cancel,
-                    progress=lambda s:self.viewer.messages.put(('progress',s))),camera))
+        if self.viewer.busy:self.pending_version_view=dict(keep_camera=preserve_view)
+        else:self.load_clouds(panel.clouds,keep_camera=preserve_view)
         self.persist();self.refresh();self.refresh_layers()
+
+    def load_clouds(self,paths,*,keep_camera):
+        """Load these clouds for viewing.
+
+        With keep_camera the view carries over from the scene on screen (center,
+        yaw, pitch, zoom, span and pan in map units), so activating a new
+        version or showing another cloud does not move what the operator was
+        looking at. Without a scene, or without keep_camera, the load fits.
+        """
+        paths=tuple(dict.fromkeys(str(p) for p in paths))
+        if not paths:return
+        camera=self.viewer.camera_state() if keep_camera and self.viewer.scene is not None else None
+        if camera is None:self.viewer.load(paths);return
+        from pyargus.viewer3d import sample_clouds
+        self.viewer.launch(lambda:('cloud',paths,sample_clouds(paths,cancel=self.viewer.cancel,
+            progress=lambda s:self.viewer.messages.put(('progress',s))),camera))
 
     def toggle_layer(self):
         if self.viewer.busy:return
@@ -347,7 +386,8 @@ class Workspace:
             elif Path(path).suffix.lower() in ('.las','.laz'):to_load.append(path)
             else:self.overlay(layer)
         if to_load:
-            self.viewer.load(list(dict.fromkeys([*self.viewer.paths,*to_load])))
+            # A cloud shown beside the loaded ones joins the scene without moving the camera.
+            self.load_clouds([*self.viewer.paths,*to_load],keep_camera=True)
             if tracks:self.viewer.status.set('Loading clouds first. Show the selected trajectories after loading finishes.')
         elif tracks:self.viewer.track(tracks)
         self.viewer.draw();self.refresh_layers()
@@ -392,7 +432,7 @@ class Workspace:
         app=self.app
         if app.task_scope.get()=='Entire project':
             app.scope_summary.set(f'{len(self.project_panel.clouds)} clouds · {len(self.project_panel.tracks)} trajectories')
-        else:app.scope_summary.set('Input: '+(Path(app.cloud_path.get()).name if app.cloud_path.get() else 'Select one cloud in Project files'))
+        else:app.scope_summary.set('Task input: '+(Path(app.cloud_path.get()).name if app.cloud_path.get() else 'none. Right-click a cloud in Layers → Use as task input.'))
         if hasattr(self,'task_hint'):
             missing=sum(t.time_mode not in ('same','week') for t in self.project_panel.tracks)
             hint=f'{missing} trajectories need a time base. Select them in the sidebar, then open Settings.' if missing else 'Inspect checks inventory and trajectory matches. Review the results before QA or alignment.'
@@ -408,10 +448,10 @@ class Workspace:
         self.single_trajectory.pack_forget()
         if name=='Inspect / match' or (app.task_scope.get()=='Entire project' and name!='Classify'):
             app.notebook.pack_forget()
-            self.project_task.pack(fill='x',before=app.run_button.master)
+            self.project_task.pack(fill='x',before=app.task_anchor)
         else:
             self.project_task.pack_forget()
-            app.notebook.pack(fill='x',before=app.run_button.master,pady=(8,0))
+            app.notebook.pack(fill='x',before=app.task_anchor,pady=(8,0))
             if name in ('Strip QA','Align'):self.single_trajectory.pack(fill='x',before=app.notebook)
         app.run_button.configure(text='Run '+name)
         self.update_scope()
@@ -427,7 +467,7 @@ class Workspace:
             if mode:self.project_panel.start(mode)
             return
         if not app.cloud_path.get():
-            messagebox.showinfo('Select input','Select one cloud in the Project files sidebar.',parent=self.root);return
+            messagebox.showinfo('Task input','Right-click one cloud in Layers and choose Use as task input.',parent=self.root);return
         app.run()
 
     def save_classify_batch(self):
@@ -503,7 +543,9 @@ class Workspace:
 
     def project_settings(self,mode):
         p=self.project_panel
-        return dict(project=asdict(p.snapshot()),mode=mode,cell=p.cell.get(),min_points=p.min_points.get(),boresight=p.boresight.get())
+        values=dict(project=asdict(p.snapshot()),mode=mode,cell=p.cell.get(),min_points=p.min_points.get(),boresight=p.boresight.get())
+        if mode=='diagnostics':values['flightline_diagnostics']=dict(self.tracker.data['settings'].get('flightline_diagnostics',{}))
+        return values
 
     def begin_stage(self,stage):
         if self.active is not None and not self.app.runner.running:self.complete(self.app.runner)
@@ -518,9 +560,17 @@ class Workspace:
 
     def begin_project(self,mode,spec,out):
         if self.active is not None and not self.app.runner.running:self.complete(self.app.runner)
-        title={'inspect':'Inspect','qa':self.qa_phase.get(),'align':'Alignment'}[mode]
+        title={'inspect':'Inspect','qa':self.qa_phase.get(),'align':'Alignment','diagnostics':'Initial QA'}[mode]
         inputs=list(spec.clouds)+[t.path for t in spec.trajectories]
-        if mode=='align' and spec.alignment_reporting.get('checkpoints'):inputs.append(spec.alignment_reporting['checkpoints'])
+        if mode in ('align','diagnostics'):
+            inputs += [spec.alignment_reporting[key] for key in ('checkpoints','control_points')
+                       if spec.alignment_reporting.get(key)]
+        if mode=='diagnostics':
+            candidate_path=self.tracker.data['settings'].get('flightline_diagnostics',{}).get('candidate','')
+            if candidate_path:
+                from pyargus.project import Project
+                candidate=Project.load(candidate_path)
+                inputs += [candidate_path]+list(candidate.clouds)+[t.path for t in candidate.trajectories]
         self.active=self.tracker.begin(title,self.project_settings(mode),inputs)
         self.active.update(source='project',mode=mode);self.expected=[out] if mode!='inspect' else []
         self.persist();self.refresh()
@@ -530,9 +580,29 @@ class Workspace:
             path=line.split('job record: ',1)[1].strip()
             if path not in self.active['records']:self.active['records'].append(path)
 
+    def promoted_versions(self,job,products,expected):
+        """Source -> new-cloud pairs a completed job may promote; empty when nothing is written."""
+        written=[str(p) for kind,p in products if kind=='classified' and Path(p).is_file()]
+        source=job.get('settings',{}).get('cloud')
+        if job.get('stage_class') in ('ClassifyStage','AlignStage'):
+            return [(source,written[0])] if source and len(written)==1 else []
+        if job.get('source')=='project' and job.get('mode')=='align':
+            pairs=[]
+            for out in expected:
+                summary=Path(out)/'alignment.json'
+                if not summary.is_file():continue
+                try:data=json.loads(summary.read_text(encoding='utf-8'))
+                except (OSError,ValueError):continue
+                for item in data.get('outputs',[]):
+                    output=Path(out)/str(item.get('output',''))
+                    if item.get('source') and output.is_file():pairs.append((str(item['source']),str(output)))
+            return pairs
+        return []
+
     def complete(self,runner):
         if self.active is None:return
-        paths=[str(p) for _,p in runner.products]+[p for p in self.expected if Path(p).exists()]
+        expected=list(self.expected)
+        paths=[str(p) for _,p in runner.products]+[p for p in expected if Path(p).exists()]
         for record in self.active['records']:
             try:
                 data=json.loads(Path(record).read_text(encoding='utf-8'))
@@ -544,17 +614,18 @@ class Workspace:
         for p in dict.fromkeys(paths):self.add_layer(p,'output',self.active['id'])
         completed=self.active
         self.active=None
-        if status=='Needs review' and completed.get('stage_class')=='ClassifyStage':
-            results=[str(p) for kind,p in runner.products if kind=='classified' and Path(p).is_file()]
-            source=completed.get('settings',{}).get('cloud')
-            if source and len(results)==1:
-                self.tracker.register_cloud_result(source,results[0],completed['id'])
-                try:
-                    self.activate_cloud_version(results[0])
-                    self.viewer.mode.set('Classification')
-                    self.app.runner.log('Active processing version: '+results[0])
-                except (OSError,ValueError) as exc:
-                    self.app.runner.log('Result saved; automatic activation failed: '+str(exc))
+        promotions=self.promoted_versions(completed,runner.products,expected) if status=='Needs review' else []
+        if promotions:
+            # Classification and alignment results become the project inputs for
+            # their flights; the originals stay as retained versions and the
+            # camera stays where the operator left it.
+            for source,output in promotions:self.tracker.register_cloud_result(source,output,completed['id'])
+            try:
+                self.activate_cloud_versions([output for _,output in promotions],preserve_view=True)
+                if completed.get('stage_class')=='ClassifyStage':self.viewer.mode.set('Classification')
+                self.app.runner.log('Active processing version: '+', '.join(output for _,output in promotions))
+            except (OSError,ValueError) as exc:
+                self.app.runner.log('Result saved; automatic activation failed: '+str(exc))
         self.persist();self.refresh();self.refresh_layers();self.history()
         self.complete_classify_batch(completed,status)
 
@@ -645,20 +716,21 @@ class Workspace:
         self.layer_tree.delete(*self.layer_tree.get_children())
         for name in ('Point clouds','Trajectories','Linework','Control','Outputs'):
             self.layer_tree.insert('','end',iid='group:'+name,text=name,open=opened.get('group:'+name,True))
-        tracks={t.path:t for t in self.project_panel.tracks}
+        tracks={t.path:t for t in self.project_panel.tracks};task=self.app.cloud_path.get()
         for i,layer in enumerate(self.tracker.data['layers']):
             var=self.visible_var(layer['path']);mark='●' if var is not None and var.get() else '○'
-            state=layer['kind']
-            if layer['path'] in self.project_panel.clouds:state='Active input'
+            state=layer['kind'];cloud=Path(layer['path']).suffix.lower() in ('.las','.laz')
+            if layer['path'] in self.project_panel.clouds:state='Project input'
             elif layer['path'] in self.tracker.data.get('cloud_versions',{}):state='Retained version'
             elif layer['path'] in self.viewer.review_only_paths:state='Review only'
             if layer['path'] in tracks:
                 t=tracks[layer['path']];state='Set time base' if t.time_mode not in ('same','week') else 'Time: '+t.time_mode
-            group='Point clouds' if Path(layer['path']).suffix.lower() in ('.las','.laz') else 'Trajectories' if layer['kind']=='trajectory' else 'Linework' if layer['kind']=='breaklines' else 'Control' if layer['kind']=='control' else 'Outputs'
-            self.layer_tree.insert('group:'+group,'end',iid=str(i),text=mark+' '+Path(layer['path']).name,values=(state,))
+            group='Point clouds' if cloud else 'Trajectories' if layer['kind']=='trajectory' else 'Linework' if layer['kind']=='breaklines' else 'Control' if layer['kind']=='control' else 'Outputs'
+            badge=TASK_BADGE if cloud and task and layer['path']==task else ''
+            self.layer_tree.insert('group:'+group,'end',iid=str(i),text=mark+' '+Path(layer['path']).name,values=(state,badge))
             if layer['path'] in selected:self.layer_tree.selection_add(str(i))
         for layer in self.linework.layers:
-            item='dxf:'+layer['id'];self.layer_tree.insert('group:Linework','end',iid=item,text=('● ' if layer['visible'] else '○ ')+layer['name'],values=('DXF reference',))
+            item='dxf:'+layer['id'];self.layer_tree.insert('group:Linework','end',iid=item,text=('● ' if layer['visible'] else '○ ')+layer['name'],values=('DXF reference',''))
             if item in reference_selection:self.layer_tree.selection_add(item)
         self.file_summary.set(self.project_panel.counts.get())
 
@@ -708,13 +780,7 @@ class Workspace:
             elif Path(layer['path']).suffix.lower() in ('.dxf','.geojson'):self.overlay(dict(layer,kind='breaklines'))
             elif Path(layer['path']).suffix.lower()=='.asc':self.overlay(dict(layer,kind='surface'))
 
-    def use_cloud(self):
-        layers=self.selected_layers()
-        if len(layers)==1 and Path(layers[0]['path']).suffix.lower() in ('.las','.laz'):
-            self.app.cloud_path.set(layers[0]['path'])
-            for s in self.app.stages:
-                if hasattr(s,'cloud_override'):s.cloud_override.set(layers[0]['path'])
-            self.persist();self.refresh()
+    def use_cloud(self):self.set_task_input_from_selection()
 
     def add_control(self):
         path=filedialog.askopenfilename(parent=self.root,filetypes=(('Control CSV','*.csv'),))
@@ -886,9 +952,10 @@ class Workspace:
 
     def poll(self):
         if self.closed:return
-        if getattr(self,'pending_version_view',False) and not self.viewer.busy:
-            self.pending_version_view=False
-            self.viewer.load(list(self.project_panel.clouds))
+        pending=getattr(self,'pending_version_view',None)
+        if pending and not self.viewer.busy:
+            self.pending_version_view=None
+            self.load_clouds(self.project_panel.clouds,keep_camera=bool(pending.get('keep_camera')))
         v=self.viewer
         if not v.busy and v.scene is not None and (v.scene is not self.last_scene or self.review.record is not self.last_record):
             live={str(var) for _,var in v.extra_points}|{str(var) for _,_,var in v.extra_layers}

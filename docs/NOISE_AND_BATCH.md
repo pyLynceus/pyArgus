@@ -32,7 +32,7 @@ This is not a general statistical or neighborhood-based noise detector.
 
 Example CLI options: `classify-ground ... --noise-min 100 --noise-max 500`.
 Choose limits from verified project units and terrain bounds; these example
-values are not recommendations for any project.
+values are not recommendations for Example_Project or another project.
 
 ## Failure, memory and review
 

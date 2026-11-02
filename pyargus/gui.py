@@ -47,10 +47,34 @@ PALETTE = {
     "teal": "#2E7D6E",
 }
 
+from .suite_theme import active as suite_theme_active, apply as apply_suite_theme, select_palette
+
+PALETTE = select_palette(PALETTE)
+
 ASSETS = Path(__file__).resolve().parent / "assets"
+
+PREFERRED_WINDOW = (1530, 1000)
+MIN_WINDOW = (1024, 640)
+SCREEN_MARGIN = (40, 90)   # window frame plus a taskbar; measured on Windows 11
+
+
+def initial_geometry(screen_width, screen_height, preferred=PREFERRED_WINDOW,
+                     margin=SCREEN_MARGIN):
+    """Main-window size that fits the screen it opens on.
+
+    The preferred size is used when it fits; otherwise the screen less the
+    margin. A fixed 1530x1000 window put the Run/Stop row and the status
+    bar below the edge of a 1366x768 laptop display, which is where
+    "cannot find Process" came from.
+    """
+    width = max(1, min(int(preferred[0]), int(screen_width) - margin[0]))
+    height = max(1, min(int(preferred[1]), int(screen_height) - margin[1]))
+    return width, height
 
 
 def apply_theme(root):
+    if suite_theme_active():
+        return apply_suite_theme(root)
     palette = PALETTE
     style = ttk.Style(root)
     style.theme_use("clam")
@@ -645,7 +669,8 @@ class AboveStage:
                     return
                 _refuse_existing(out, "output")
                 data.classification = classification
-                data.write(out)
+                from pyargus.formats.las import write_preserving
+                write_preserving(data, out)
                 runner.log(f"Without ground coverage: {missing:,} points left class 1")
                 runner.products.append(("classified", Path(out)))
                 from pyargus import stage_preview
@@ -1036,7 +1061,9 @@ class Application:
         self.root = root
         from pyargus import __version__
         root.title("pyArgus " + __version__)
-        root.geometry("1530x1000")
+        width, height = initial_geometry(root.winfo_screenwidth(), root.winfo_screenheight())
+        root.geometry(f"{width}x{height}")
+        root.minsize(min(MIN_WINDOW[0], width), min(MIN_WINDOW[1], height))
         root.protocol("WM_DELETE_WINDOW", self._confirm_close)
 
         self.runner = StageRunner()
@@ -1050,9 +1077,28 @@ class Application:
         self._view_after = None
         self._drawn = None      # the report array last put on the canvas
 
-        left = ttk.Frame(root, padding=8)
-        left.pack(side="right", fill="y")
+        # The task dock keeps Run/Stop and the job line fixed at its foot; the
+        # task settings above them scroll, so a short screen clips nothing an
+        # operator needs to reach.
+        dock = ttk.Frame(root)
+        dock.pack(side="right", fill="y")
+        self.task_dock = dock
+        self._build_run_panel(dock)
+        scroller = tk.Canvas(dock, highlightthickness=0, borderwidth=0,
+                             background=PALETTE["ground"])
+        bar = ttk.Scrollbar(dock, orient="vertical", command=scroller.yview)
+        scroller.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        scroller.pack(side="left", fill="both", expand=True)
+        left = ttk.Frame(scroller, padding=8)
+        window = scroller.create_window(0, 0, window=left, anchor="nw")
+        left.bind("<Configure>", lambda e: scroller.configure(
+            scrollregion=scroller.bbox("all"), width=left.winfo_reqwidth()))
+        scroller.bind("<Configure>", lambda e: scroller.itemconfigure(
+            window, width=max(e.width, left.winfo_reqwidth())))
+        scroller.bind("<MouseWheel>", lambda e: scroller.yview_scroll(-1 if e.delta > 0 else 1, "units"))
         self.task_panel = left
+        self.task_scroller = scroller
         ttk.Label(left, text="Task", font=("Segoe UI", 12, "bold")).pack(anchor="w")
         self.task_name = tk.StringVar(value="Inspect / match")
         task_choice = ttk.Combobox(left, textvariable=self.task_name, state="readonly",
@@ -1104,7 +1150,10 @@ class Application:
             self.notebook.add(tab, text=stage_class.title)
             self.stages.append(stage_class(tab, self))
 
-        self._build_run_panel(left)
+        # Task panes are packed before this anchor so their order is kept
+        # while the run controls live in the dock's fixed footer.
+        self.task_anchor = ttk.Frame(left)
+        self.task_anchor.pack(fill="x")
         from pyargus.workspace_gui import Workspace
         self.workspace = Workspace(self, right)
         self.workspace.select_task()
@@ -1114,8 +1163,16 @@ class Application:
         self.root.after(PREVIEW_MS, self._tick)
 
     def _build_run_panel(self, parent):
+        """Run/Stop/progress and the job line, fixed at the foot of ``parent``.
+
+        Packed bottom-first so they are allocated before anything that can
+        scroll; the job line sits below the buttons as before.
+        """
+        self.job_status = tk.StringVar(value="Ready | Elapsed 00:00:00")
+        ttk.Label(parent, textvariable=self.job_status, wraplength=360,
+                  font=("Segoe UI", 10, "bold")).pack(side="bottom", fill="x", padx=8, pady=(6, 8))
         box = ttk.Frame(parent)
-        box.pack(fill="x", pady=(8, 0))
+        box.pack(side="bottom", fill="x", padx=8, pady=(8, 0))
         self.run_button = ttk.Button(box, text="Run task", command=lambda: self.workspace.run_task())
         self.run_button.pack(side="left")
         self.stop_button = ttk.Button(box, text="Stop", state="disabled",
@@ -1124,17 +1181,13 @@ class Application:
         self.progress = ttk.Progressbar(box, length=110, mode="determinate")
         self.progress.pack(side="left", padx=6)
         # External application launch remains available through the application API.
-
-        self.job_status = tk.StringVar(value="Ready | Elapsed 00:00:00")
-        ttk.Label(parent, textvariable=self.job_status, wraplength=420,
-                  font=("Segoe UI", 10, "bold")).pack(fill="x", pady=(6, 0))
         self._busy_animation = False
 
         self.log = tk.Text(self.root, height=8, width=46, state="disabled",
                            font=("Consolas", 8),
-                           background=PALETTE["ink"],
-                           foreground=PALETTE["ground"],
-                           insertbackground=PALETTE["ground"],
+                           background=PALETTE.get("canvas", PALETTE["ink"]),
+                           foreground=PALETTE.get("canvas_text", PALETTE["ground"]),
+                           insertbackground=PALETTE.get("canvas_text", PALETTE["ground"]),
                            highlightthickness=0)
         # Packed into the workspace Log dock after workspace construction.
 
@@ -1378,6 +1431,8 @@ def main():
         raise SystemExit(
             "tkinter is not available in this Python; the GUI needs it "
             "(the library does not)")
+    from pyargus.desktop import register_wsl_browser
+    register_wsl_browser()
     root = tk.Tk()
     apply_theme(root)
     apply_branding(root)
